@@ -5,7 +5,6 @@ import { PARAM_CONFIG } from "./data/config";
 import { getStats } from "./utils/math";
 import MappingModal from "./components/MappingModal";
 import DetailedView from "./components/DetailedView";
-import MultiDashboard from "./components/MultiDashboard";
 import ComparisonsView from "./components/ComparisonsView";
 import PamphletView from "./components/PamphletView";
 import BulletinView from "./components/BulletinView";
@@ -17,6 +16,7 @@ import GisMapView from "./components/GisMapView";
 import HydrochemistryView from "./components/HydrochemistryView";
 import { CombinationAnalysisView } from "./components/CombinationAnalysisView";
 import PcaAnalysisView from "./components/PcaAnalysisView";
+import FortnightlyAlertsView from "./components/FortnightlyAlertsView";
 import { generateOfflineChartBase64 } from "./utils/chartHelpers";
 
 import {
@@ -93,7 +93,7 @@ if (typeof Highcharts === "object") {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<
-    "single" | "master" | "multi" | "bar" | "aisummary" | "bulletin" | "about" | "guidelines" | "ussl" | "ranking" | "monsoon" | "gis" | "hydrochemistry" | "combination" | "pca"
+    "single" | "master" | "multi" | "bar" | "aisummary" | "bulletin" | "about" | "guidelines" | "ussl" | "ranking" | "monsoon" | "gis" | "hydrochemistry" | "combination" | "pca" | "fortnightly"
   >("single");
 
   // State values for uploaded records
@@ -963,11 +963,11 @@ export default function App() {
               </svg>
             </div>
 
-            {/* 2. Bilingual Text Group with cursive British style typography */}
+            {/* 2. Header Branding */}
             <div className="text-center sm:text-left">
               <div className="flex flex-col sm:flex-row sm:items-center gap-x-5 gap-y-1">
-                {/* Hindi Title in elegant cursive-style Devanagari */}
-                <h1 className="text-3xl font-bold text-blue-650 tracking-wide font-['Yatra_One']" style={{ fontFamily: "'Yatra One', 'Noto Serif Devanagari', 'Mukta', sans-serif" }}>
+                {/* Main Title 'भूजल गुणवत्ता' (Bhujal Gunvaatta in Devanagari Cursive) */}
+                <h1 className="text-4xl font-bold text-blue-700 tracking-wide font-cursive-devanagari select-none" style={{ fontFamily: "'Kalam', 'Yatra One', cursive" }}>
                   भूजल गुणवत्ता
                 </h1>
                 {/* English Title styled in British Cursive Script */}
@@ -1108,10 +1108,10 @@ export default function App() {
             <option value="gis">🌍 Geospatial Map Module</option>
             <option value="master">📋 Master Summary Matrix</option>
             <option value="monsoon">🌧️ Dynamic Impact of Monsoon</option>
-            <option value="multi">📈 All Parameters Dashboard</option>
             <option value="bar">📊 Comparative Exceedance (Bar)</option>
             <option value="aisummary">📄 District Pamphlet</option>
             <option value="bulletin">📰 Annual Ground Water Quality Report</option>
+            <option value="fortnightly">🔔 Fortnightly Quality Alerts</option>
           </select>
         </div>
 
@@ -1127,10 +1127,10 @@ export default function App() {
             { id: "gis", label: "Geospatial Map Module", icon: Globe, baseColor: "teal" },
             { id: "master", label: "Master Summary", icon: Table2, baseColor: "amber" },
             { id: "monsoon", label: "Dynamic Monsoon Impact", icon: Database, baseColor: "emerald" },
-            { id: "multi", label: "All Parameters Dashboard", icon: BarChart3, baseColor: "pink" },
             { id: "bar", label: "Comparative Exceedance (Bar)", icon: BarChart3, baseColor: "orange" },
             { id: "aisummary", label: "District Pamphlet", icon: LayoutTemplate, baseColor: "fuchsia" },
             { id: "bulletin", label: "Annual Ground Water Quality Report", icon: FileText, baseColor: "red" },
+            { id: "fortnightly", label: "Fortnightly Quality Alerts", icon: AlertTriangle, baseColor: "rose" },
           ].map((tabItem) => {
             const IconComponent = tabItem.icon;
             const isActive = activeTab === tabItem.id;
@@ -1286,17 +1286,6 @@ export default function App() {
             />
           )}
 
-          {activeTab === "multi" && (
-            <MultiDashboard
-              rawData={yearSeasonFilteredData}
-              headers={headers}
-              headerMap={headerMap}
-              selectedState={selectedState}
-              selectedDistrict={selectedDistrict}
-              reportingLevel={reportingLevel}
-            />
-          )}
-
           {activeTab === "bar" && (
             <ComparisonsView
               rawData={yearSeasonFilteredData}
@@ -1328,13 +1317,24 @@ export default function App() {
             />
           )}
 
+          {activeTab === "fortnightly" && (
+            <FortnightlyAlertsView
+              rawData={yearFilteredData}
+              headers={headers}
+              headerMap={headerMap}
+              selectedState={selectedState}
+            />
+          )}
+
           {activeTab === "combination" && (
             <CombinationAnalysisView
-              rawData={yearSeasonFilteredData}
+              rawData={rawData}
               headers={headers}
               headerMap={headerMap}
               selectedState={selectedState}
               selectedDistrict={selectedDistrict}
+              selectedYear={selectedYear}
+              selectedSeason={selectedSeason}
             />
           )}
 

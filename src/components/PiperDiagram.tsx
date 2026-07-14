@@ -489,7 +489,7 @@ export const PiperDiagram = React.memo(({
         <svg
           ref={svgRef}
           viewBox="-20 -20 340 300"
-          className="w-full h-auto max-h-[720px] overflow-visible mt-6"
+          className="w-full h-auto max-h-[1080px] overflow-visible mt-6"
           style={{ fontFamily: "'Inter', sans-serif", touchAction: "none" }}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}

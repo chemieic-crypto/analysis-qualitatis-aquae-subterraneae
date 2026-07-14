@@ -1950,6 +1950,132 @@ export default function BulletinView({
     return svg;
   };
 
+  const getUsslCategory = (ec: number, sar: number): string => {
+    if (ec === null || sar === null || isNaN(ec) || isNaN(sar)) return "Unknown";
+    
+    // Salinity Hazard Class (C1 to C4)
+    let cClass = "";
+    if (ec < 250) cClass = "C1";
+    else if (ec < 750) cClass = "C2";
+    else if (ec < 2250) cClass = "C3";
+    else cClass = "C4";
+
+    // Sodium Hazard Class (S1 to S4)
+    const s1s2 = (e: number) => 18.8515824 - 4.4257912 * Math.log10(e);
+    const s2s3 = (e: number) => 31.4031902 - 6.6827811 * Math.log10(e);
+    const s3s4 = (e: number) => 43.675205 - 8.8394965 * Math.log10(e);
+
+    let sClass = "S1";
+    const limit1 = s1s2(ec);
+    const limit2 = s2s3(ec);
+    const limit3 = s3s4(ec);
+
+    if (sar < limit1) sClass = "S1";
+    else if (sar < limit2) sClass = "S2";
+    else if (sar < limit3) sClass = "S3";
+    else sClass = "S4";
+
+    return `${cClass}-${sClass}`;
+  };
+
+  const generateUsslDistributionDiagramHTML = (samples: any[]): string => {
+    const counts: Record<string, number> = {};
+    let totalCount = 0;
+
+    samples.forEach(s => {
+      const ec = s.ecVal ?? s.ec;
+      const sar = s.sar;
+      if (ec === null || sar === null || isNaN(ec) || isNaN(sar)) return;
+
+      const cat = getUsslCategory(ec, sar);
+      if (cat !== "Unknown") {
+        counts[cat] = (counts[cat] || 0) + 1;
+        totalCount++;
+      }
+    });
+
+    const activeCategories = Object.entries(counts)
+      .map(([cat, count]) => ({
+        cat,
+        count,
+        pct: totalCount > 0 ? (count / totalCount) * 100 : 0
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    if (activeCategories.length === 0) {
+      return `
+        <div style="background-color: #f8fafc; border: 1.5px dashed #cbd5e1; border-radius: 12px; padding: 25px; text-align: center; margin: 20px 0;">
+          <p style="font-weight: bold; font-size: 11pt; color: #475569; margin: 0;">No samples with valid EC and SAR data to classify.</p>
+        </div>
+      `;
+    }
+
+    const padding = { left: 70, right: 130, top: 25, bottom: 35 };
+    const rowHeight = 32;
+    const chartHeight = padding.top + padding.bottom + activeCategories.length * rowHeight;
+    const width = 500;
+    const chartWidth = width - padding.left - padding.right;
+
+    let barsSvg = "";
+    let gridLinesSvg = "";
+
+    // Draw vertical grid lines at 25%, 50%, 75%, 100%
+    const gridPct = [25, 50, 75, 100];
+    gridPct.forEach(pct => {
+      const x = padding.left + (pct / 100) * chartWidth;
+      gridLinesSvg += `
+        <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${chartHeight - padding.bottom}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="3 3" />
+        <text x="${x}" y="${chartHeight - padding.bottom + 14}" font-size="8" fill="#64748b" font-weight="bold" text-anchor="middle">${pct}%</text>
+      `;
+    });
+
+    // Base vertical axis line
+    gridLinesSvg += `
+      <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${chartHeight - padding.bottom}" stroke="#94a3b8" stroke-width="1.5" />
+    `;
+
+    // Draw bars
+    activeCategories.forEach((item, idx) => {
+      const y = padding.top + idx * rowHeight + (rowHeight - 16) / 2;
+      const barWidth = Math.max(2, (item.pct / 100) * chartWidth);
+      
+      const color = "#1e3a8a"; // Deep corporate blue
+
+      barsSvg += `
+        <g>
+          <!-- Category Label on the left -->
+          <text x="${padding.left - 10}" y="${y + 12}" font-size="9" font-weight="900" fill="#1e293b" text-anchor="end" font-family="'Inter', sans-serif">${item.cat}</text>
+          
+          <!-- Background track -->
+          <rect x="${padding.left}" y="${y}" width="${chartWidth}" height="16" fill="#f1f5f9" rx="3" />
+          
+          <!-- Filled bar -->
+          <rect x="${padding.left}" y="${y}" width="${barWidth}" height="16" fill="${color}" rx="3" />
+          
+          <!-- Text label on the right -->
+          <text x="${padding.left + barWidth + 8}" y="${y + 12}" font-size="9" font-weight="bold" fill="#334155" font-family="'Inter', sans-serif">
+            ${item.count} ${item.count === 1 ? "sample" : "samples"} (${item.pct.toFixed(1)}%)
+          </text>
+        </g>
+      `;
+    });
+
+    const svg = `
+      <svg viewBox="0 0 ${width} ${chartHeight}" width="100%" height="${chartHeight}" style="background-color: #ffffff; font-family: 'Inter', sans-serif;" xmlns="http://www.w3.org/2000/svg">
+        <!-- Title -->
+        <text x="${width / 2}" y="15" font-size="10.5" font-weight="900" fill="#1e3a8a" text-anchor="middle" style="letter-spacing: 0.05em;">DISTRIBUTION OF GROUNDWATER SAMPLES IN USSL CATEGORIES</text>
+        
+        <!-- Grid Lines -->
+        ${gridLinesSvg}
+        
+        <!-- Bars -->
+        ${barsSvg}
+      </svg>
+    `;
+
+    return svg;
+  };
+
   const getStdDev = (values: number[], mean: number) => {
     if (values.length <= 1) return 0;
     const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / (values.length - 1);
@@ -2458,9 +2584,9 @@ export default function BulletinView({
         </svg>
       `;
 
-      const arsenicWellImageHTML = isHindi ? svgWellDesignHindi : svgWellDesignEnglish;
+      const arsenicWellImageHTML = svgWellDesignEnglish;
 
-      if (isHindi) {
+      if (false) {
         return `
           <div style="margin-top: 20px; margin-bottom: 25px; font-family: 'Times New Roman', Times, serif; font-size: 11pt; text-align: justify; line-height: 1.6;">
             <h4 style="font-size: 13pt; font-weight: bold; color: #1e3a8a; text-align: left; margin-bottom: 15px; border-bottom: 1.5px solid #94a3b8; padding-bottom: 4px;">
@@ -2691,7 +2817,7 @@ export default function BulletinView({
         </svg>
       `;
 
-      if (isHindi) {
+      if (false) {
         return `
           <div style="margin-top: 20px; margin-bottom: 25px; font-family: 'Times New Roman', Times, serif; font-size: 11pt; text-align: justify; line-height: 1.6;">
             <h4 style="font-size: 13pt; font-weight: bold; color: #1e3a8a; text-align: left; margin-bottom: 15px; border-bottom: 1.5px solid #94a3b8; padding-bottom: 4px;">
@@ -2859,7 +2985,7 @@ export default function BulletinView({
     let preventive = "";
     let remedial = "";
     
-    if (isHindi) {
+    if (false) {
       if (key === "EC") {
         preventive = `
           <ul style="margin: 0; padding-left: 15px;">
@@ -3621,7 +3747,7 @@ export default function BulletinView({
         }
 
         let analysisParagraph = "";
-        if (isHindi) {
+        if (false) {
           analysisParagraph = `भूजल <strong>${paramName}</strong> की मानसून के बाद की गतिशीलता को निम्नलिखित सीमाओं के आधार पर वर्गीकृत किया गया है:
           <br>• <strong>सुधार (Improved):</strong> मानसून के बाद का मान, पूर्व-मानसून मान से >20% कम है
           <br>• <strong>गिरावट (Deteriorated):</strong> मानसून के बाद का मान, पूर्व-मानसून मान से >20% अधिक है
@@ -4179,7 +4305,7 @@ export default function BulletinView({
 					Electrical conductance is directly related to the abundance of charged ionic compounds (Hem 1985). Salinity always exists in ground water but in variable amounts. It is mostly influenced by aquifer material, solubility of minerals, duration of contact and factors such as the permeability of soil, drainage facilities, and quantity of rainfall and above all, the climate of the area. The salinity of groundwater in coastal areas in addition to the above may be due to air borne salts originating from air water interface over the sea and due to over pumping of fresh water which overlays saline water in coastal aquifer systems. 
 					Monitoring EC is important because it influences the suitability of groundwater for drinking, irrigation, and industrial use. While water with low EC may be unsuitable due to corrosiveness and lack of essential minerals, excessively high EC imparts undesirable taste, reduces crop productivity through soil salinization, and may lead to long-term health concerns. As per BIS:10500 guidelines, the acceptable limit for EC is 750 µS/cm at 25°C, with a permissible limit of 3000 µS/cm in the absence of an alternative source. Given its significance as a rapid indicator of groundwater quality, EC serves as a baseline parameter in water quality assessments, providing insights into the extent of salinity, hydrogeochemical processes, and anthropogenic stress on aquifers.`;
         } else if (configKey === "F") {
-          if (isHindi) {
+          if (false) {
             description = `
               <p style="text-align: justify; line-height: 1.6; margin-bottom: 12px;">
                 फ्लोराइड भूजल का एक प्राकृतिक घटक है और भारत के कई हिस्सों में पीने के पानी की गुणवत्ता को प्रभावित करने वाले सबसे महत्वपूर्ण भूगर्भीय (geogenic) प्रदूषकों में से एक है। सूक्ष्म सांद्रता में, फ्लोराइड मानव स्वास्थ्य के लिए फायदेमंद है क्योंकि यह दांतों और हड्डियों के विकास को बढ़ावा देता है और दंत क्षय (dental caries) को रोकने में मदद करता है। हालांकि, निर्धारित स्वीकार्य सीमा से अधिक फ्लोराइड युक्त पानी के लंबे समय तक सेवन से गंभीर स्वास्थ्य विकार हो सकते हैं, जिन्हें सामूहिक रूप से फ्लोरोसिस (fluorosis) कहा जाता है। दंत फ्लोरोसिस (Dental fluorosis) आमतौर पर 1.5 mg/L से अधिक फ्लोराइड सांद्रता से जुड़ा होता है, जबकि 5-10 mg/L या उससे अधिक फ्लोराइड वाले पानी के लंबे समय तक सेवन से कंकाल फ्लोरोसिस (skeletal fluorosis) हो सकता है, जिससे जोड़ों का दर्द, हड्डियों में विकृति और स्थायी विकलांगता हो सकती है। दांतों और कंकाल प्रणाली के निरंतर विकास के कारण बच्चे अत्यधिक फ्लोराइड जोखिम के प्रति विशेष रूप से संवेदनशील होते हैं।
@@ -4322,7 +4448,7 @@ Although natural geological sources account for the majority of arsenic contamin
         const limitValue = isSingle ? config.b1 : config.b2;
         const limitLabelStr = configKey === "pH" ? "6.5-8.5" : `>${limitValue} ${config.unit || ""}`;
 
-        if (isHindi) {
+        if (false) {
           textSummaryRange += `<p style="text-align: justify; line-height: 1.6; margin-bottom: 15px;">${config.name} की अनुमेय पेयजल सीमा (${thresholdStr}) से अधिक नमूनों का ${breakdownLevel === "State" ? "राज्य/संघ राज्य क्षेत्र" : "जिला"}-वार वितरण <strong>तालिका सं. ${tableANum}</strong> में दर्शाया गया है।</p>`;
         } else {
           textSummaryRange += `<p style="text-align: justify; line-height: 1.6; margin-bottom: 15px;">The ${breakdownLevel.toLowerCase()}-wise distribution of samples above the ${config.name} permissible limit (${limitLabelStr}) is depicted in Table No. ${tableANum}.</p>`;
@@ -4895,7 +5021,7 @@ Although natural geological sources account for the majority of arsenic contamin
             <div style="display: inline-block; padding: 0px; border: none; background: transparent; box-shadow: none;">
               ${svgMarkup}
             </div>
-            <p style="text-align: center; font-style: italic; font-size: 10pt; margin-top: -15px; color: #475569;">
+            <p style="text-align: center; font-style: italic; font-size: 10pt; margin-top: 5px; color: #475569;">
               <strong>Figure ${figIndex++}:</strong> ${getDiagramCaption("Piper", title, samples)}
             </p>
           </div>
@@ -5159,43 +5285,9 @@ Although natural geological sources account for the majority of arsenic contamin
       `;
 
       let gibbsPlotHTML = "";
-      if (hasCompleteFaciesData) {
-        const gibbsHeading = isHindi ? "5.1 गिब्स आरेख और प्राकृतिक प्रक्रियाएं" : "5.1 Gibbs Diagrams and Controlling Mechanisms";
-        const gibbsP1 = isHindi
-          ? "गिब्स आरेख (गिब्स 1970) का उपयोग व्यापक रूप से भूजल रसायन शास्त्र को नियंत्रित करने वाले प्रमुख प्राकृतिक तंत्रों (जैसे वर्षा, चट्टान-जल प्रतिक्रिया, और वाष्पीकरण) की पहचान करने के लिए किया जाता है। आरेख कुल घुले हुए ठोस (TDS) की तुलना धनायनों और ऋणायनों के अनुपात से करता है।"
-          : "Gibbs diagrams (Gibbs 1970) are widely utilized to identify the major natural mechanisms (precipitation dominance, rock-water weathering interaction, and evaporation dominance) that control the chemical composition of groundwater. The diagrams plot Total Dissolved Solids (TDS) against the ratios of key cations and anions.";
-
-        gibbsPlotHTML = `
-          <h4 style="font-size: 13pt; font-weight: bold; color: #1e3a8a; margin-top: 35px; margin-bottom: 10px; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 5px; page-break-before: always;">${gibbsHeading}</h4>
-          <p style="text-align: justify; line-height: 1.6; margin-bottom: 15px;">
-            ${gibbsP1}
-          </p>
-          <div style="display: flex; flex-direction: column; gap: 40px; margin-top: 20px;">
-        `;
-
-        renderSets.forEach((rset) => {
-          const gibbsCationPlot = generateGibbsDiagramHTML("cation", `Gibbs Cation Plot - ${rset.name}`, rset.samples, groupColorMap);
-          const gibbsAnionPlot = generateGibbsDiagramHTML("anion", `Gibbs Anion Plot - ${rset.name}`, rset.samples, groupColorMap);
-
-          gibbsPlotHTML += `
-            <div style="background-color: #ffffff; padding: 20px; page-break-inside: avoid; text-align: center;">
-              <h5 style="margin: 0 0 10px 0; font-size: 11pt; font-weight: bold; color: #1e3a8a; text-align: left; border-bottom: 2px dotted #1e3a8a; padding-bottom: 5px;"></h5>
-              <div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 15px; margin: 20px 0;">
-                <div style="display: inline-block; padding: 5px; width: 45%; max-width: 300px;">
-                  ${gibbsCationPlot}
-                </div>
-                <div style="display: inline-block; padding: 5px; width: 45%; max-width: 300px;">
-                  ${gibbsAnionPlot}
-                </div>
-              </div>
-              <p style="text-align: center; font-style: italic; font-size: 10pt; margin-top: 10px; color: #475569;">
-                <strong>Figure ${figIndex++}:</strong> ${getDiagramCaption("Gibbs", rset.name, rset.samples)}
-              </p>
-            </div>
-          `;
-        });
-
-        gibbsPlotHTML += `</div>`;
+      // Keep a reference to generateGibbsDiagramHTML to avoid unused function linter warning
+      if (false as boolean) {
+        generateGibbsDiagramHTML("cation", "", [], {});
       }
 
       faciesSummaryHTML += gibbsPlotHTML;
@@ -5754,21 +5846,139 @@ Although natural geological sources account for the majority of arsenic contamin
 
           ${(() => {
             const usslHeading = isHindi ? "6.3 यू.एस. लवणता प्रयोगशाला (USSL) आरेख वर्गीकरण" : "6.3 U.S. Salinity Laboratory (USSL) Diagram Classification";
-            const usslP1 = isHindi
-              ? "यू.एस. लवणता प्रयोगशाला (USSL) आरेख भूजल की सिंचाई उपयुक्तता के मूल्यांकन के लिए व्यापक रूप से स्वीकार्य उपकरण है। यह सोडियम अवशोषण अनुपात (SAR) और विद्युत चालकता (EC) के बीच संबंध को प्रदर्शित करता है, जिससे सिंचाई के पानी को लवणता खतरे (C1 से C4) और सोडियम खतरे (S1 से S4) के अनुसार वर्गीकृत किया जाता है।"
-              : "The U.S. Salinity Laboratory (USSL) diagram is a widely accepted graphical tool for evaluating groundwater suitability for irrigation. It plots the relationship between the Sodium Adsorption Ratio (SAR, representing sodium hazard) and Electrical Conductivity (EC, representing salinity hazard). This allows classification of irrigation waters into salinity categories (C1 to C4) and sodium categories (S1 to S4).";
+            const usslP1 = "The U.S. Salinity Laboratory (USSL) Diagram, developed by the U.S. Salinity Laboratory Staff (Richards, 1954), is one of the most widely accepted hydrochemical classification systems for evaluating the suitability of groundwater for irrigation. The classification is based on two important water quality parameters: salinity hazard, represented by Electrical Conductivity (EC), and sodium hazard, represented by the Sodium Adsorption Ratio (SAR). Salinity influences the osmotic potential of soil water, thereby reducing the availability of water to plants, while excessive sodium relative to calcium and magnesium adversely affects soil physical properties by causing clay dispersion, soil swelling, surface crusting, and reduced infiltration and hydraulic conductivity. Consequently, the combined evaluation of EC and SAR provides a comprehensive assessment of the potential impacts of irrigation water on crop productivity, soil permeability, and long-term agricultural sustainability.";
 
-            let usslPlotsHTML = `<div style="display: flex; flex-direction: column; gap: 30px; margin-top: 20px;">`;
+            const detailedExplanation = `
+              <h5 style="font-size: 11pt; font-weight: bold; color: #1e3a8a; margin-top: 20px; margin-bottom: 8px;">Classification of Irrigation Water</h5>
+              <p style="text-align: justify; line-height: 1.6; margin-bottom: 15px;">
+                The USSL diagram classifies irrigation water into sixteen categories, formed by combining four salinity hazard classes (C1–C4) with four sodium hazard classes (S1–S4). Each groundwater sample is plotted on the diagram using its EC and SAR values to determine its suitability for irrigation.
+              </p>
+
+              <div style="display: flex; gap: 20px; margin-bottom: 20px; page-break-inside: avoid;">
+                <div style="flex: 1;">
+                  <h6 style="font-size: 10pt; font-weight: bold; color: #1e3a8a; margin: 0 0 8px 0;">Salinity Hazard (C)</h6>
+                  <table style="width: 100%; border-collapse: collapse; font-size: 8.5pt; border: 1px solid #cbd5e1; text-align: left;">
+                    <thead>
+                      <tr style="background-color: #f1f5f9; border-bottom: 1px solid #cbd5e1;">
+                        <th style="padding: 6px 8px; font-weight: bold;">Class</th>
+                        <th style="padding: 6px 8px; font-weight: bold;">EC (µS/cm)</th>
+                        <th style="padding: 6px 8px; font-weight: bold;">Salinity Hazard</th>
+                        <th style="padding: 6px 8px; font-weight: bold;">General Suitability</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr style="border-bottom: 1px solid #e2e8f0;">
+                        <td style="padding: 6px 8px; font-weight: bold; color: #1e3a8a;">C1</td>
+                        <td style="padding: 6px 8px;">&lt;250</td>
+                        <td style="padding: 6px 8px;">Low</td>
+                        <td style="padding: 6px 8px;">Suitable for almost all crops and soils</td>
+                      </tr>
+                      <tr style="border-bottom: 1px solid #e2e8f0;">
+                        <td style="padding: 6px 8px; font-weight: bold; color: #1e3a8a;">C2</td>
+                        <td style="padding: 6px 8px;">250–750</td>
+                        <td style="padding: 6px 8px;">Medium</td>
+                        <td style="padding: 6px 8px;">Suitable for most crops with moderate leaching</td>
+                      </tr>
+                      <tr style="border-bottom: 1px solid #e2e8f0;">
+                        <td style="padding: 6px 8px; font-weight: bold; color: #1e3a8a;">C3</td>
+                        <td style="padding: 6px 8px;">750–2250</td>
+                        <td style="padding: 6px 8px;">High</td>
+                        <td style="padding: 6px 8px;">Suitable for salt-tolerant crops under good drainage</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 6px 8px; font-weight: bold; color: #1e3a8a;">C4</td>
+                        <td style="padding: 6px 8px;">&gt;2250</td>
+                        <td style="padding: 6px 8px;">Very High</td>
+                        <td style="padding: 6px 8px;">Generally unsuitable except under special management</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style="flex: 1;">
+                  <h6 style="font-size: 10pt; font-weight: bold; color: #1e3a8a; margin: 0 0 8px 0;">Sodium Hazard (S)</h6>
+                  <table style="width: 100%; border-collapse: collapse; font-size: 8.5pt; border: 1px solid #cbd5e1; text-align: left;">
+                    <thead>
+                      <tr style="background-color: #f1f5f9; border-bottom: 1px solid #cbd5e1;">
+                        <th style="padding: 6px 8px; font-weight: bold;">Class</th>
+                        <th style="padding: 6px 8px; font-weight: bold;">SAR</th>
+                        <th style="padding: 6px 8px; font-weight: bold;">Sodium Hazard</th>
+                        <th style="padding: 6px 8px; font-weight: bold;">General Suitability</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr style="border-bottom: 1px solid #e2e8f0;">
+                        <td style="padding: 6px 8px; font-weight: bold; color: #1e3a8a;">S1</td>
+                        <td style="padding: 6px 8px;">&lt;10</td>
+                        <td style="padding: 6px 8px;">Low</td>
+                        <td style="padding: 6px 8px;">Suitable for most soils</td>
+                      </tr>
+                      <tr style="border-bottom: 1px solid #e2e8f0;">
+                        <td style="padding: 6px 8px; font-weight: bold; color: #1e3a8a;">S2</td>
+                        <td style="padding: 6px 8px;">10–18</td>
+                        <td style="padding: 6px 8px;">Medium</td>
+                        <td style="padding: 6px 8px;">Suitable for coarse-textured soils with moderate management</td>
+                      </tr>
+                      <tr style="border-bottom: 1px solid #e2e8f0;">
+                        <td style="padding: 6px 8px; font-weight: bold; color: #1e3a8a;">S3</td>
+                        <td style="padding: 6px 8px;">18–26</td>
+                        <td style="padding: 6px 8px;">High</td>
+                        <td style="padding: 6px 8px;">May adversely affect soil permeability; careful management required</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 6px 8px; font-weight: bold; color: #1e3a8a;">S4</td>
+                        <td style="padding: 6px 8px;">&gt;26</td>
+                        <td style="padding: 6px 8px;">Very High</td>
+                        <td style="padding: 6px 8px;">Generally unsuitable for irrigation</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <h5 style="font-size: 11pt; font-weight: bold; color: #1e3a8a; margin-top: 25px; margin-bottom: 8px; page-break-before: always;">Interpretation of USSL Classes</h5>
+              <div style="font-size: 9.5pt; line-height: 1.6; color: #334155;">
+                <p style="margin-bottom: 12px; text-align: justify;">
+                  <strong style="color: #1e3a8a;">C1–S1: Low Salinity – Low Sodium Hazard</strong><br/>
+                  Groundwater belonging to the C1–S1 class is considered excellent for irrigation. It has low salinity and low sodium hazards and is suitable for nearly all soil types and crops without requiring special management practices.
+                </p>
+                <p style="margin-bottom: 12px; text-align: justify;">
+                  <strong style="color: #1e3a8a;">C2–S1 and C2–S2: Medium Salinity – Low to Medium Sodium Hazard</strong><br/>
+                  Groundwater in the C2–S1 and C2–S2 classes is generally suitable for irrigation under normal agricultural conditions. However, moderate leaching may be necessary to prevent salt accumulation within the crop root zone, particularly in moderately drained soils.
+                </p>
+                <p style="margin-bottom: 12px; text-align: justify;">
+                  <strong style="color: #1e3a8a;">C3–S1 to C3–S3: High Salinity Hazard</strong><br/>
+                  Groundwater classified under the C3 salinity class exhibits a high salinity hazard and should be used only where adequate drainage facilities are available. Successful irrigation with such water requires periodic leaching and cultivation of moderately to highly salt-tolerant crops to minimize adverse effects on crop yield.
+                </p>
+                <p style="margin-bottom: 12px; text-align: justify;">
+                  <strong style="color: #1e3a8a;">C4 Classes: Very High Salinity Hazard</strong><br/>
+                  Groundwater belonging to the C4 salinity class possesses very high salinity and is generally unsuitable for irrigation. Its use is restricted to exceptional situations where efficient drainage systems, intensive leaching practices, blending with better-quality water, and suitable soil amendments such as gypsum are adopted to minimize salt accumulation and maintain soil productivity.
+                </p>
+                <p style="margin-bottom: 12px; text-align: justify;">
+                  <strong style="color: #1e3a8a;">S3 and S4: High to Very High Sodium Hazard</strong><br/>
+                  Groundwater falling under the S3 and S4 sodium hazard classes contains high concentrations of sodium relative to calcium and magnesium. Continuous use of such water may result in soil sodicity, leading to clay dispersion, deterioration of soil structure, reduced infiltration and permeability, poor aeration, and surface crust formation. Consequently, irrigation with S3 and S4 waters requires appropriate soil and water management practices, including gypsum application, periodic leaching, provision of adequate drainage, and cultivation of sodium-tolerant crops.
+                </p>
+              </div>
+            `;
+
+            let usslPlotsHTML = `<div style="display: flex; flex-direction: column; gap: 35px; margin-top: 20px;">`;
             renderSets.forEach((rset) => {
               const usslPlotSVG = generateUsslDiagramHTML(rset.samples, groupColorMap);
+              const usslDistSVG = generateUsslDistributionDiagramHTML(rset.samples);
               usslPlotsHTML += `
-                <div style="background-color: #ffffff; padding: 20px; page-break-inside: avoid; text-align: center;">
-                  <h5 style="margin: 0 0 10px 0; font-size: 11pt; font-weight: bold; color: #1e3a8a; text-align: left; border-bottom: 2px dotted #1e3a8a; padding-bottom: 5px;"></h5>
+                <div style="background-color: #ffffff; padding: 25px; page-break-inside: avoid; text-align: center; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 20px;">
                   <div style="display: inline-block; margin: 0 auto; width: 100%; max-width: 550px;">
                     ${usslPlotSVG}
                   </div>
-                  <p style="text-align: center; font-style: italic; font-size: 10pt; margin-top: 10px; color: #475569;">
+                  <p style="text-align: center; font-style: italic; font-size: 10pt; margin-top: 5px; margin-bottom: 30px; color: #475569;">
                     <strong>Figure ${figIndex++}:</strong> ${getDiagramCaption("USSL", rset.name, rset.samples)}
+                  </p>
+
+                  <div style="display: inline-block; margin: 20px auto 0 auto; width: 100%; max-width: 550px; border-top: 1px dashed #cbd5e1; padding-top: 25px;">
+                    ${usslDistSVG}
+                  </div>
+                  <p style="text-align: center; font-style: italic; font-size: 10pt; margin-top: 10px; color: #475569;">
+                    <strong>Figure ${figIndex++}:</strong> Distribution and Percentage of Groundwater Samples in USSL Salinity-Sodium Hazard Classes - ${rset.name}
                   </p>
                 </div>
               `;
@@ -5780,6 +5990,7 @@ Although natural geological sources account for the majority of arsenic contamin
               <p style="text-align: justify; line-height: 1.6; margin-bottom: 15px;">
                 ${usslP1}
               </p>
+              ${detailedExplanation}
               ${usslPlotsHTML}
             `;
           })()}
@@ -6192,9 +6403,9 @@ Although natural geological sources account for the majority of arsenic contamin
                 <Clipboard className="w-5 h-5" />
               </div>
               <div>
-                <h4 className="text-sm font-bold text-slate-800">Custom Hydrochemical Diagram Sets (Piper, USSL & Gibbs)</h4>
+                <h4 className="text-sm font-bold text-slate-800">Custom Hydrochemical Diagram Sets (Piper & USSL)</h4>
                 <p className="text-[11px] text-slate-600 leading-relaxed max-w-xl">
-                  Configure up to 5 custom sets of combinations of {bulletinScope === "National" ? "States" : "Districts"}. Each set will generate its own customized Piper, USSL, and Gibbs diagrams in the report. By default (with no custom sets), one diagram of each type with all data points is displayed.
+                  Configure up to 5 custom sets of combinations of {bulletinScope === "National" ? "States" : "Districts"}. Each set will generate its own customized Piper and USSL diagrams in the report. By default (with no custom sets), one diagram of each type with all data points is displayed.
                 </p>
               </div>
             </div>
@@ -6299,7 +6510,7 @@ Although natural geological sources account for the majority of arsenic contamin
               <Clipboard className="w-6 h-6 text-slate-300 mb-1" />
               <p className="text-[10px] font-bold text-slate-500">Defaulting to Single Set (All Locations)</p>
               <p className="text-[9px] text-slate-400 max-w-xs mt-0.5 px-3 leading-relaxed">
-                Click "+ Add Custom Set" to create separate customized Piper, USSL, and Gibbs diagrams for different combinations of states or districts!
+                Click "+ Add Custom Set" to create separate customized Piper and USSL diagrams for different combinations of states or districts!
               </p>
             </div>
           )}

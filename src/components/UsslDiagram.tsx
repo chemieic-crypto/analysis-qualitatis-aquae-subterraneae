@@ -48,9 +48,9 @@ export const UsslDiagram = React.memo(({
   const height = 400;
 
   const [labelsConfig, setLabelsConfig] = useState<Record<string, LabelConfig>>({
-    title: { text: customTitle || "USSL Classification Matrix", size: 14, color: "#cbd5e1", isBold: true, isItalic: false },
-    xAxis: { text: "EC (μS/cm)", size: 12, color: "#94a3b8", isBold: true, isItalic: false },
-    yAxis: { text: "SAR", size: 12, color: "#94a3b8", isBold: true, isItalic: false },
+    title: { text: customTitle || "USSL Classification Matrix", size: 14, color: "#1e293b", isBold: true, isItalic: false },
+    xAxis: { text: "EC (μS/cm)", size: 12, color: "#475569", isBold: true, isItalic: false },
+    yAxis: { text: "SAR", size: 12, color: "#475569", isBold: true, isItalic: false },
   });
 
   React.useEffect(() => {
@@ -98,9 +98,9 @@ export const UsslDiagram = React.memo(({
     { id: "C4", val: Math.pow(10, (Math.log10(2250) + Math.log10(10000)) / 2) },
   ];
 
-  const gridLineColor = "rgba(56, 189, 248, 0.25)"; // luminous neon cyan
-  const axisPathColor = "#06b6d4"; // bright cyan boundary lines
-  const axisColor = "#94a3b8"; // bright silver
+  const gridLineColor = "rgba(100, 116, 139, 0.15)"; // slate-500 with 15% opacity
+  const axisPathColor = "#0891b2"; // slightly darker cyan boundary lines
+  const axisColor = "#64748b"; // dark slate for crisp lines
 
   // Crop states
   const [isCropActive, setIsCropActive] = useState<boolean>(false);
@@ -216,7 +216,7 @@ export const UsslDiagram = React.memo(({
     try {
       const canvas = await safeHtml2canvas(el, {
         scale: 3,
-        backgroundColor: "transparent",
+        backgroundColor: "#ffffff",
         logging: false,
         useCORS: true,
         onclone: (clonedDoc) => {
@@ -394,7 +394,7 @@ export const UsslDiagram = React.memo(({
         <div className="flex flex-col items-center justify-center p-4 w-full">
         <svg
           viewBox={`0 0 ${width} ${height}`}
-          className="w-full h-auto max-w-[720px] overflow-visible"
+          className="w-full h-auto max-w-full overflow-visible"
           style={{ fontFamily: "'Inter', sans-serif" }}
           onClick={() => setEditingKey(null)}
         >
@@ -436,18 +436,16 @@ export const UsslDiagram = React.memo(({
             )}
           </defs>
 
-          {/* Luminous Dark 3D-effect background for the plot area */}
+          {/* Clean Light-effect background for the plot area */}
           <rect
             x={margin.left}
             y={margin.top}
             width={width - margin.left - margin.right}
             height={height - margin.top - margin.bottom}
             rx="12"
-            fill="radial-gradient(circle, #1e293b 0%, #0f172a 100%)"
-            style={{ fill: "#0f172a" }}
-            stroke="#1e293b"
+            fill="#ffffff"
+            stroke="#cbd5e1"
             strokeWidth="1.5"
-            filter="url(#3d-deboss)"
           />
 
           <text
@@ -514,16 +512,16 @@ export const UsslDiagram = React.memo(({
 
           {xCentroids.map((xC) => (
             <g key={xC.id} opacity="0.9">
-              <text x={getX(xC.val)} y={getY(s1s2(xC.val) / 2)} textAnchor="middle" fontSize="8.5" fill="#38bdf8" fontWeight="bold">
+              <text x={getX(xC.val)} y={getY(s1s2(xC.val) / 2)} textAnchor="middle" fontSize="8.5" fill="#0284c7" fontWeight="bold">
                 {xC.id}-S1
               </text>
-              <text x={getX(xC.val)} y={getY((s1s2(xC.val) + s2s3(xC.val)) / 2)} textAnchor="middle" fontSize="8.5" fill="#38bdf8" fontWeight="bold">
+              <text x={getX(xC.val)} y={getY((s1s2(xC.val) + s2s3(xC.val)) / 2)} textAnchor="middle" fontSize="8.5" fill="#0284c7" fontWeight="bold">
                 {xC.id}-S2
               </text>
-              <text x={getX(xC.val)} y={getY((s2s3(xC.val) + s3s4(xC.val)) / 2)} textAnchor="middle" fontSize="8.5" fill="#38bdf8" fontWeight="bold">
+              <text x={getX(xC.val)} y={getY((s2s3(xC.val) + s3s4(xC.val)) / 2)} textAnchor="middle" fontSize="8.5" fill="#0284c7" fontWeight="bold">
                 {xC.id}-S3
               </text>
-              <text x={getX(xC.val)} y={getY((s3s4(xC.val) + 32) / 2)} textAnchor="middle" fontSize="8.5" fill="#f43f5e" fontWeight="bold">
+              <text x={getX(xC.val)} y={getY((s3s4(xC.val) + 32) / 2)} textAnchor="middle" fontSize="8.5" fill="#be123c" fontWeight="bold">
                 {xC.id}-S4
               </text>
             </g>
@@ -535,7 +533,7 @@ export const UsslDiagram = React.memo(({
           {[100, 250, 750, 2250, 5000, 10000].map((v) => (
             <g key={v}>
               <line x1={getX(v)} y1={height - margin.bottom} x2={getX(v)} y2={height - margin.bottom + 5} stroke={axisColor} />
-              <text x={getX(v)} y={height - margin.bottom + 15} textAnchor="middle" fontSize="8" fill="#94a3b8" fontWeight="bold">
+              <text x={getX(v)} y={height - margin.bottom + 15} textAnchor="middle" fontSize="8" fill="#475569" fontWeight="bold">
                 {v}
               </text>
             </g>
@@ -543,7 +541,7 @@ export const UsslDiagram = React.memo(({
           {[0, 10, 20, 30].map((v) => (
             <g key={v}>
               <line x1={margin.left - 5} y1={getY(v)} x2={margin.left} y2={getY(v)} stroke={axisColor} />
-              <text x={margin.left - 10} y={getY(v) + 3} textAnchor="end" fontSize="8" fill="#94a3b8" fontWeight="bold">
+              <text x={margin.left - 10} y={getY(v) + 3} textAnchor="end" fontSize="8" fill="#475569" fontWeight="bold">
                 {v}
               </text>
             </g>
@@ -556,12 +554,12 @@ export const UsslDiagram = React.memo(({
 
       {/* Full Screen Modal View */}
       {isFullscreen && (
-        <div className="fixed inset-0 z-[9999] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 md:p-8">
-          <div className="bg-slate-900 rounded-3xl shadow-2xl p-6 w-full max-w-4xl max-h-[92vh] flex flex-col relative border border-slate-800">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4 mb-4">
+        <div className="fixed inset-0 z-[9999] bg-slate-900/40 backdrop-blur-md flex items-center justify-center p-4 md:p-8">
+          <div className="bg-white rounded-3xl shadow-2xl p-6 w-full max-w-4xl max-h-[92vh] flex flex-col relative border border-slate-200">
+            <div className="flex items-center justify-between border-b border-slate-150 pb-4 mb-4">
               <div>
-                <h3 className="text-base font-black text-slate-100 uppercase tracking-wider flex items-center gap-2">
-                  <i className="ph ph-corners-out text-lg text-cyan-500 animate-pulse"></i>
+                <h3 className="text-base font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                  <i className="ph ph-corners-out text-lg text-indigo-600 animate-pulse"></i>
                   USSL Classification Matrix (Full Screen)
                 </h3>
                 <p className="text-[10px] text-slate-400 font-extrabold uppercase mt-0.5">
@@ -571,7 +569,7 @@ export const UsslDiagram = React.memo(({
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => downloadChartHD("ussl-chart-export-fs", "USSL_Diagram_HD")}
-                  className="bg-cyan-950 text-cyan-400 hover:bg-cyan-600 hover:text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all border-b-4 border-cyan-800 hover:border-cyan-950 active:border-b-0 active:translate-y-1"
+                  className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all border-b-4 border-indigo-200 hover:border-indigo-800 active:border-b-0 active:translate-y-1"
                   title="Download HD JPEG"
                 >
                   <i className="ph ph-camera text-lg"></i>
@@ -579,7 +577,7 @@ export const UsslDiagram = React.memo(({
                 </button>
                 <button
                   onClick={() => setIsFullscreen(false)}
-                  className="bg-slate-800 text-slate-300 hover:bg-rose-600 hover:text-white p-2 rounded-xl text-xs font-bold transition-all border-b-4 border-slate-700 hover:border-rose-800 active:border-b-0 active:translate-y-1"
+                  className="bg-slate-100 text-slate-600 hover:bg-rose-600 hover:text-white p-2 rounded-xl text-xs font-bold transition-all border-b-4 border-slate-200 hover:border-rose-800 active:border-b-0 active:translate-y-1"
                   title="Close Full Screen"
                 >
                   <i className="ph ph-x text-lg font-bold"></i>
@@ -588,7 +586,7 @@ export const UsslDiagram = React.memo(({
             </div>
 
             <div className="flex-1 overflow-auto flex items-center justify-center p-4 min-h-[400px]">
-              <div id="ussl-chart-export-fs" className="flex flex-col items-center justify-center p-6 w-full max-w-[650px] bg-slate-950 rounded-2xl relative border border-slate-800">
+              <div id="ussl-chart-export-fs" className="flex flex-col items-center justify-center p-6 w-full max-w-[650px] bg-transparent rounded-2xl relative">
                 <svg
                   viewBox={`0 0 ${width} ${height}`}
                   className="w-full h-auto max-h-[60vh] overflow-visible"
@@ -632,17 +630,16 @@ export const UsslDiagram = React.memo(({
                     )}
                   </defs>
 
-                  {/* Luminous Dark 3D-effect background for the plot area */}
+                  {/* Clean Light-effect background for the plot area */}
                   <rect
                     x={margin.left}
                     y={margin.top}
                     width={width - margin.left - margin.right}
                     height={height - margin.top - margin.bottom}
                     rx="12"
-                    fill="#0f172a"
-                    stroke="#1e293b"
+                    fill="#ffffff"
+                    stroke="#cbd5e1"
                     strokeWidth="1.5"
-                    filter="url(#3d-deboss-fs)"
                   />
 
                   <text
@@ -650,7 +647,7 @@ export const UsslDiagram = React.memo(({
                     y={margin.top - 20}
                     textAnchor="middle"
                     fontSize={labelsConfig.title.size}
-                    fill="#f1f5f9"
+                    fill="#1e293b"
                     fontWeight={labelsConfig.title.isBold ? "900" : "400"}
                     fontStyle={labelsConfig.title.isItalic ? "italic" : "normal"}
                     fontFamily={labelsConfig.title.fontFamily || "sans-serif"}
@@ -664,7 +661,7 @@ export const UsslDiagram = React.memo(({
                     y={height - margin.bottom + 35}
                     textAnchor="middle"
                     fontSize={labelsConfig.xAxis.size}
-                    fill="#94a3b8"
+                    fill="#475569"
                     fontWeight={labelsConfig.xAxis.isBold ? "900" : "400"}
                     fontStyle={labelsConfig.xAxis.isItalic ? "italic" : "normal"}
                     fontFamily={labelsConfig.xAxis.fontFamily || "sans-serif"}
@@ -678,20 +675,18 @@ export const UsslDiagram = React.memo(({
 
                   <path d={ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s1s2(ec))}`).join(" ")} fill="none" stroke={axisPathColor} strokeWidth="2.0" />
                   <path d={ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s2s3(ec))}`).join(" ")} fill="none" stroke={axisPathColor} strokeWidth="2.0" />
-                  <path d={ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s3s4(ec))}`).join(" ")} fill="none" stroke={axisPathColor} strokeWidth="2.0" />
-
-                  {xCentroids.map((xC) => (
+                  <path d={ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s3s4(ec))}`).join(" ")} fill="none" stroke={axisPathColor} strokeWidth="2.0" />                   {xCentroids.map((xC) => (
                     <g key={xC.id} opacity="0.9">
-                      <text x={getX(xC.val)} y={getY(s1s2(xC.val) / 2)} textAnchor="middle" fontSize="8.5" fill="#38bdf8" fontWeight="bold">
+                      <text x={getX(xC.val)} y={getY(s1s2(xC.val) / 2)} textAnchor="middle" fontSize="8.5" fill="#0284c7" fontWeight="bold">
                         {xC.id}-S1
                       </text>
-                      <text x={getX(xC.val)} y={getY((s1s2(xC.val) + s2s3(xC.val)) / 2)} textAnchor="middle" fontSize="8.5" fill="#38bdf8" fontWeight="bold">
+                      <text x={getX(xC.val)} y={getY((s1s2(xC.val) + s2s3(xC.val)) / 2)} textAnchor="middle" fontSize="8.5" fill="#0284c7" fontWeight="bold">
                         {xC.id}-S2
                       </text>
-                      <text x={getX(xC.val)} y={getY((s2s3(xC.val) + s3s4(xC.val)) / 2)} textAnchor="middle" fontSize="8.5" fill="#38bdf8" fontWeight="bold">
+                      <text x={getX(xC.val)} y={getY((s2s3(xC.val) + s3s4(xC.val)) / 2)} textAnchor="middle" fontSize="8.5" fill="#0284c7" fontWeight="bold">
                         {xC.id}-S3
                       </text>
-                      <text x={getX(xC.val)} y={getY((s3s4(xC.val) + 32) / 2)} textAnchor="middle" fontSize="8.5" fill="#f43f5e" fontWeight="bold">
+                      <text x={getX(xC.val)} y={getY((s3s4(xC.val) + 32) / 2)} textAnchor="middle" fontSize="8.5" fill="#be123c" fontWeight="bold">
                         {xC.id}-S4
                       </text>
                     </g>
@@ -703,7 +698,7 @@ export const UsslDiagram = React.memo(({
                   {[100, 250, 750, 2250, 5000, 10000].map((v) => (
                     <g key={v}>
                       <line x1={getX(v)} y1={height - margin.bottom} x2={getX(v)} y2={height - margin.bottom + 5} stroke={axisColor} />
-                      <text x={getX(v)} y={height - margin.bottom + 15} textAnchor="middle" fontSize="8" fill="#94a3b8" fontWeight="bold">
+                      <text x={getX(v)} y={height - margin.bottom + 15} textAnchor="middle" fontSize="8" fill="#475569" fontWeight="bold">
                         {v}
                       </text>
                     </g>
@@ -711,7 +706,7 @@ export const UsslDiagram = React.memo(({
                   {[0, 10, 20, 30].map((v) => (
                     <g key={v}>
                       <line x1={margin.left - 5} y1={getY(v)} x2={margin.left} y2={getY(v)} stroke={axisColor} />
-                      <text x={margin.left - 10} y={getY(v) + 3} textAnchor="end" fontSize="8" fill="#94a3b8" fontWeight="bold">
+                      <text x={margin.left - 10} y={getY(v) + 3} textAnchor="end" fontSize="8" fill="#475569" fontWeight="bold">
                         {v}
                       </text>
                     </g>

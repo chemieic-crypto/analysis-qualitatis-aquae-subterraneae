@@ -447,6 +447,9 @@ export function buildColumnsChartOptions(title: string, categories: string[], da
 export function buildDonutChartOptions(title: string, dataPoints: any[], size = "80%", isDarkTheme = false): Highcharts.Options {
   const finalSize = size; // Use the specified size directly to match detailed analysis and look larger
   const textColor = isDarkTheme ? "#f8fafc" : "#1e293b";
+  const isSarOrRsc = /SAR|RSC|Sodium Adsorption Ratio|Residual Sodium Carbonate/i.test(title);
+  const titleFontSize = isSarOrRsc ? "18pt" : "12pt"; // 50% increase from 12pt is 18pt
+  const labelFontSize = isSarOrRsc ? "16pt" : "12pt"; // Crisper and 50% larger than 10pt base
   
   return {
     chart: {
@@ -466,7 +469,7 @@ export function buildDonutChartOptions(title: string, dataPoints: any[], size = 
     title: {
       text: title,
       style: { 
-        fontSize: "12pt", 
+        fontSize: titleFontSize, 
         fontWeight: "bold", 
         color: textColor, 
         fontFamily: "'Times New Roman', Times, serif" 
@@ -493,7 +496,7 @@ export function buildDonutChartOptions(title: string, dataPoints: any[], size = 
           connectorPadding: 8,
           style: { 
             fontFamily: "'Times New Roman', Times, serif",
-            fontSize: "10pt", // Compressed text size to prevent clipping
+            fontSize: labelFontSize, 
             fontWeight: "bold",
             fontStyle: "italic", // Bold + Italic as requested
             color: isDarkTheme ? "#f8fafc" : "#0f172a",
@@ -522,5 +525,5 @@ export function buildDonutChartOptions(title: string, dataPoints: any[], size = 
  */
 export async function generateParamDonutChart(title: string, dataPoints: any[], isDarkTheme = false): Promise<string> {
   const options = buildDonutChartOptions(title, dataPoints, "80%", isDarkTheme);
-  return generateOfflineChartBase64(options, 1020, 580);
+  return generateOfflineChartBase64(options, 1224, 620); // Width increased 20% from 1020 to 1224 to prevent label clipping
 }

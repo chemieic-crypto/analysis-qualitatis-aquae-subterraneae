@@ -16,6 +16,7 @@ interface DonutChartProps {
   onColorChange?: (key: string, color: string) => void;
   onSizeChange?: (key: string, size: number) => void;
   onNameChange?: (key: string, name: string) => void;
+  compact?: boolean;
 }
 
 export const DonutChart = React.memo(({
@@ -26,6 +27,7 @@ export const DonutChart = React.memo(({
   onColorChange,
   onSizeChange,
   onNameChange,
+  compact = false,
 }: DonutChartProps) => {
   const [titleConfig, setTitleConfig] = useState<LabelConfig>({
     text: defaultTitle,
@@ -215,8 +217,8 @@ export const DonutChart = React.memo(({
   };
 
   return (
-    <div className="bg-white p-6 rounded-[2.5rem] border border-slate-200 flex flex-col items-center shadow-lg transition-colors duration-300 relative group w-full">
-      <div className="absolute top-4 right-4 opacity-80 group-hover:opacity-100 transition-opacity z-10 flex gap-2">
+    <div className={`bg-white rounded-3xl border border-slate-200 flex flex-col items-center shadow-md transition-colors duration-300 relative group w-full ${compact ? "p-2.5" : "p-4"}`}>
+      <div className="absolute top-4 right-4 opacity-80 group-hover:opacity-100 transition-opacity z-10 flex gap-1.5">
         <button
           onClick={() => setIsCropActive(!isCropActive)}
           className={`p-1 bg-white/80 rounded-lg shadow-sm border-b-4 active:border-b-0 active:translate-y-1 transition-all ${
@@ -288,12 +290,12 @@ export const DonutChart = React.memo(({
             </div>
           </div>
         )}
-        <div className="flex flex-col items-center p-4 w-full">
+        <div className={`flex flex-col items-center w-full ${compact ? "p-1.5" : "p-3"}`}>
         <h3
-          className="tracking-[0.2em] mb-6 text-center cursor-pointer hover:opacity-70 transition-opacity uppercase"
+          className="tracking-[0.15em] mb-3 text-center cursor-pointer hover:opacity-70 transition-opacity uppercase"
           style={{
             fontFamily: titleConfig.fontFamily || "'Times New Roman', Times, serif",
-            fontSize: `${titleConfig.size}px`,
+            fontSize: `${compact ? titleConfig.size * 0.75 : titleConfig.size * 0.9}px`,
             color: titleConfig.color,
             fontWeight: titleConfig.isBold ? "900" : "400",
             fontStyle: titleConfig.isItalic ? "italic" : "normal",
@@ -302,7 +304,7 @@ export const DonutChart = React.memo(({
         >
           {titleConfig.text}
         </h3>
-        <div className="relative w-40 h-40 mb-6 drop-shadow-md">
+        <div className={`relative mb-3 drop-shadow-md ${compact ? "w-20 h-20" : "w-28 h-28"}`}>
           <svg viewBox="-1 -1 2 2" className="w-full h-full -rotate-90">
             {data.map((slice, i) => {
               if (slice.count === 0) return null;
@@ -326,24 +328,24 @@ export const DonutChart = React.memo(({
             <circle r="0.75" fill={innerCircleFill} className="transition-colors duration-300" />
           </svg>
         </div>
-        <div className="w-full space-y-1 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+        <div className={`w-full space-y-1 overflow-y-auto custom-scrollbar pr-1 ${compact ? "max-h-36" : "max-h-48"}`}>
           {data.map((slice, i) => (
             <div
               key={i}
-              className="flex justify-between items-center px-3 py-2 bg-slate-50 rounded-xl mb-1.5 border border-slate-100 hover:bg-slate-100 transition-colors"
-              style={{ fontFamily: "'Times New Roman', Times, serif", fontSize: "12px" }}
+              className={`flex justify-between items-center bg-slate-50 border border-slate-100 hover:bg-slate-100 transition-colors ${compact ? "px-2 py-1.5 rounded-lg mb-1" : "px-3 py-2 rounded-xl mb-1.5"}`}
+              style={{ fontFamily: "'Times New Roman', Times, serif", fontSize: compact ? "10.5px" : "12px" }}
             >
-              <div className="flex items-center gap-2 truncate flex-1 pr-2">
+              <div className="flex items-center gap-1.5 truncate flex-1 pr-1.5">
                 <label
                   title="Change Point Color"
-                  className="cursor-pointer relative w-3 h-3 rounded-full border border-slate-200 shrink-0 shadow-sm overflow-hidden flex ring-offset-1 hover:ring-2 ring-blue-400 transition-all"
+                  className="cursor-pointer relative w-2.5 h-2.5 rounded-full border border-slate-200 shrink-0 shadow-sm overflow-hidden flex ring-offset-1 hover:ring-2 ring-blue-400 transition-all"
                   style={{ backgroundColor: colors[slice.key] || "#334155" }}
                 >
                   <input
                     type="color"
                     value={colors[slice.key] || "#334155"}
                     onChange={(e) => onColorChange && onColorChange(slice.key, e.target.value)}
-                    className="opacity-0 absolute -inset-2 w-10 h-10 cursor-pointer"
+                    className="opacity-0 absolute -inset-2 w-8 h-8 cursor-pointer"
                   />
                 </label>
                 <input
@@ -354,8 +356,8 @@ export const DonutChart = React.memo(({
                   title="Change Point Size"
                   value={sizes ? sizes[slice.key] || 1.3 : 1.3}
                   onChange={(e) => onSizeChange && onSizeChange(slice.key, parseFloat(e.target.value) || 1.3)}
-                  className="w-10 py-0.5 px-0.5 bg-transparent border-b border-slate-300 focus:outline-none focus:border-slate-500 text-center shrink-0"
-                  style={{ fontFamily: "'Times New Roman', Times, serif", fontSize: "12px" }}
+                  className="w-8 py-0 px-0.5 bg-transparent border-b border-slate-300 focus:outline-none focus:border-slate-500 text-center shrink-0"
+                  style={{ fontFamily: "'Times New Roman', Times, serif", fontSize: compact ? "11px" : "12px" }}
                 />
                 {onNameChange ? (
                   <input
@@ -363,14 +365,14 @@ export const DonutChart = React.memo(({
                     value={slice.name}
                     title="Rename Category"
                     onChange={(e) => onNameChange(slice.key, e.target.value)}
-                    className="flex-1 min-w-0 ml-1 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-500 focus:outline-none font-bold text-slate-700 truncate"
+                    className="flex-1 min-w-0 ml-0.5 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-500 focus:outline-none font-bold text-slate-700 truncate"
                     style={{ fontFamily: "'Times New Roman', Times, serif", fontSize: getCompressedFontSize(slice.name) }}
                   />
                 ) : (
-                  <span className="text-slate-700 font-bold truncate pl-1 flex-1 min-w-0" style={{ fontFamily: "'Times New Roman', Times, serif", fontSize: getCompressedFontSize(slice.name) }}>{slice.name}</span>
+                  <span className="text-slate-700 font-bold truncate pl-0.5 flex-1 min-w-0" style={{ fontFamily: "'Times New Roman', Times, serif", fontSize: getCompressedFontSize(slice.name) }}>{slice.name}</span>
                 )}
               </div>
-              <div className="flex gap-3 shrink-0" style={{ fontFamily: "'Times New Roman', Times, serif", fontSize: "12px" }}>
+              <div className="flex gap-2 shrink-0" style={{ fontFamily: "'Times New Roman', Times, serif", fontSize: compact ? "11px" : "12px" }}>
                 <span className="text-slate-400">n={slice.count}</span>
                 <span className="text-slate-600 font-black">
                   {total ? ((slice.count / total) * 100).toFixed(0) : 0}%

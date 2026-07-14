@@ -539,6 +539,10 @@ export default function UsslPiperAnalysisView({
   const [piperLeftVal, setPiperLeftVal] = useState<string>("");
   const [piperRightVal, setPiperRightVal] = useState<string>("");
 
+  const isUsslComparisonActive = usslCompareBy !== "none" && usslLeftVal && usslRightVal;
+  const isPiperComparisonActive = piperCompareBy !== "none" && piperLeftVal && piperRightVal;
+  const isComparisonActive = viewMode === "ussl" ? !!isUsslComparisonActive : (viewMode === "piper" ? !!isPiperComparisonActive : false);
+
   // Comparison States for Gibbs Tab
   const [gibbsCompareBy, setGibbsCompareBy] = useState<CompareByType>("none");
   const [gibbsLeftVal, setGibbsLeftVal] = useState<string>("");
@@ -3024,8 +3028,8 @@ export default function UsslPiperAnalysisView({
 
       {processedData.length > 0 || !["ussl", "piper", "gibbs"].includes(viewMode) ? (
         ["ussl", "piper", "gibbs"].includes(viewMode) ? (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 w-full items-start">
-            <div className={`${viewMode === "gibbs" ? "lg:col-span-12" : "lg:col-span-8"} space-y-6`}>
+          <div className="flex flex-col gap-6 w-full items-stretch animate-fadeIn">
+            <div className="w-full space-y-6">
               {/* Aqueous Styling, Color-by & 3D Settings Panel */}
               <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-200 flex flex-col gap-4">
                 <div className="flex flex-wrap items-center gap-4 justify-between">
@@ -3175,7 +3179,7 @@ export default function UsslPiperAnalysisView({
               {viewMode === "ussl" && (
                 <div className="space-y-6">
                   {usslCompareBy === "none" ? (
-                    <div className="bg-transparent p-5 rounded-3xl">
+                    <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md flex justify-center w-full">
                       <UsslDiagram
                         data={validData}
                         pointColors={getActiveColorsForMode("ussl")}
@@ -3188,7 +3192,7 @@ export default function UsslPiperAnalysisView({
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="bg-transparent p-5 rounded-3xl relative">
+                      <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md relative w-full">
                         <div className="absolute top-4 left-4 bg-indigo-50 text-indigo-700 text-[9px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wider border border-indigo-200 z-10 shadow-xs">
                           {usslCompareBy.charAt(0).toUpperCase() + usslCompareBy.slice(1)}: {usslLeftVal}
                         </div>
@@ -3203,7 +3207,7 @@ export default function UsslPiperAnalysisView({
                           customTitle={`USSL Matrix (${usslLeftVal})`}
                         />
                       </div>
-                      <div className="bg-transparent p-5 rounded-3xl relative">
+                      <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md relative w-full">
                         <div className="absolute top-4 left-4 bg-indigo-50 text-indigo-700 text-[9px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wider border border-indigo-200 z-10 shadow-xs">
                           {usslCompareBy.charAt(0).toUpperCase() + usslCompareBy.slice(1)}: {usslRightVal}
                         </div>
@@ -3226,7 +3230,7 @@ export default function UsslPiperAnalysisView({
               {viewMode === "piper" && (
                 <div className="space-y-6">
                   {piperCompareBy === "none" ? (
-                    <div className="bg-transparent p-5 rounded-3xl">
+                    <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md flex justify-center w-full">
                       <PiperDiagram
                         data={validData}
                         pointColors={getActiveColorsForMode("piper")}
@@ -3239,7 +3243,7 @@ export default function UsslPiperAnalysisView({
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="bg-transparent p-5 rounded-3xl relative">
+                      <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md relative w-full">
                         <div className="absolute top-4 left-4 bg-indigo-50 text-indigo-700 text-[9px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wider border border-indigo-200 z-10 shadow-xs">
                           {piperCompareBy.charAt(0).toUpperCase() + piperCompareBy.slice(1)}: {piperLeftVal}
                         </div>
@@ -3254,7 +3258,7 @@ export default function UsslPiperAnalysisView({
                           customTitle={`Piper Diagram (${piperLeftVal})`}
                         />
                       </div>
-                      <div className="bg-transparent p-5 rounded-3xl relative">
+                      <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md relative w-full">
                         <div className="absolute top-4 left-4 bg-indigo-50 text-indigo-700 text-[9px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wider border border-indigo-200 z-10 shadow-xs">
                           {piperCompareBy.charAt(0).toUpperCase() + piperCompareBy.slice(1)}: {piperRightVal}
                         </div>
@@ -3389,7 +3393,7 @@ export default function UsslPiperAnalysisView({
             </div>
 
             {viewMode !== "gibbs" && (
-              <div className="lg:col-span-4 space-y-6">
+              <div className={isComparisonActive ? "w-full grid grid-cols-1 lg:grid-cols-2 gap-6 items-start" : "w-full max-w-xl mx-auto space-y-6"}>
                 {(() => {
                   const isUsslComparisonActive = usslCompareBy !== "none" && usslLeftVal && usslRightVal;
                   const isPiperComparisonActive = piperCompareBy !== "none" && piperLeftVal && piperRightVal;
@@ -3397,12 +3401,12 @@ export default function UsslPiperAnalysisView({
 
                   if (isComparisonActive) {
                     return (
-                      <div className="space-y-6">
+                      <div className="contents">
                         <div className="bg-slate-50 p-4 rounded-3xl border border-slate-200 shadow-sm space-y-4">
                           <h4 className="text-xs font-black uppercase text-indigo-700 tracking-wider">
                             Comparison Donut Charts
                           </h4>
-                          <div className="grid grid-cols-1 gap-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             {viewMode === "ussl" ? (
                               <>
                                 <DonutChart
@@ -3412,6 +3416,7 @@ export default function UsslPiperAnalysisView({
                                   onColorChange={(k, c) => setUsslColors((p) => ({ ...p, [k]: c }))}
                                   onSizeChange={(k, s) => setUsslSizes((p) => ({ ...p, [k]: s }))}
                                   defaultTitle={`${usslLeftVal} - USSL Classes`}
+                                  compact={true}
                                 />
                                 <DonutChart
                                   data={rightStats.ussl}
@@ -3420,6 +3425,7 @@ export default function UsslPiperAnalysisView({
                                   onColorChange={(k, c) => setUsslColors((p) => ({ ...p, [k]: c }))}
                                   onSizeChange={(k, s) => setUsslSizes((p) => ({ ...p, [k]: s }))}
                                   defaultTitle={`${usslRightVal} - USSL Classes`}
+                                  compact={true}
                                 />
                               </>
                             ) : (
@@ -3432,6 +3438,7 @@ export default function UsslPiperAnalysisView({
                                   onSizeChange={(k, s) => setFaciesSizes((p) => ({ ...p, [k]: s }))}
                                   onNameChange={(k, n) => setFaciesNames((p) => ({ ...p, [k]: n }))}
                                   defaultTitle={`${piperLeftVal} - Water Hydro-Facies`}
+                                  compact={true}
                                 />
                                 <DonutChart
                                   data={rightStats.facies}
@@ -3441,6 +3448,7 @@ export default function UsslPiperAnalysisView({
                                   onSizeChange={(k, s) => setFaciesSizes((p) => ({ ...p, [k]: s }))}
                                   onNameChange={(k, n) => setFaciesNames((p) => ({ ...p, [k]: n }))}
                                   defaultTitle={`${piperRightVal} - Water Hydro-Facies`}
+                                  compact={true}
                                 />
                               </>
                             )}
@@ -3448,57 +3456,57 @@ export default function UsslPiperAnalysisView({
                         </div>
 
                         {/* Class distribution comparison table */}
-                        <div className="bg-white p-5 rounded-[2.5rem] border border-slate-200 shadow-lg space-y-4">
-                          <div className="border-b border-slate-100 pb-3">
-                            <h4 className="text-xs font-black uppercase text-slate-800 tracking-wider">
+                        <div className="bg-white p-2.5 rounded-3xl border border-slate-200 shadow-md space-y-2.5">
+                          <div className="border-b border-slate-100 pb-1.5">
+                            <h4 className="text-[11px] font-black uppercase text-slate-800 tracking-wider">
                               Distribution Comparison Table
                             </h4>
-                            <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+                            <p className="text-[9px] text-slate-400 font-bold mt-0.5">
                               Total samples and percentage comparison
                             </p>
                           </div>
 
                           <div className="overflow-hidden rounded-xl border border-slate-200">
-                            <table className="w-full text-left text-xs border-collapse">
-                              <thead className="bg-slate-50 text-slate-600 font-bold text-[10px] tracking-wider border-b border-slate-200">
+                            <table className="w-full text-left text-[10px] border-collapse">
+                              <thead className="bg-slate-50 text-slate-600 font-bold text-[8.5px] tracking-wider border-b border-slate-200">
                                 <tr>
-                                  <th className="p-2.5">Category / Class</th>
-                                  <th className="p-2.5 text-center bg-indigo-50/50 text-indigo-900">
+                                  <th className="px-2 py-1">Category / Class</th>
+                                  <th className="px-2 py-1 text-center bg-indigo-50/50 text-indigo-900">
                                     {viewMode === "ussl" ? usslLeftVal : piperLeftVal}
                                   </th>
-                                  <th className="p-2.5 text-center bg-amber-50/50 text-amber-900">
+                                  <th className="px-2 py-1 text-center bg-amber-50/50 text-amber-900">
                                     {viewMode === "ussl" ? usslRightVal : piperRightVal}
                                   </th>
                                 </tr>
                               </thead>
-                              <tbody className="divide-y divide-slate-150 text-slate-700 font-medium">
+                              <tbody className="divide-y divide-slate-150 text-slate-700 font-medium text-[10px]">
                                 {comparisonTableData.map((row) => (
                                   <tr key={row.key} className="hover:bg-slate-50 transition-colors">
-                                    <td className="p-2.5 font-bold text-slate-800 flex items-center gap-2">
+                                    <td className="px-2 py-1 font-bold text-slate-800 flex items-center gap-1.5">
                                       <span 
-                                        className="w-2.5 h-2.5 rounded-full border border-slate-300 shadow-xs shrink-0" 
+                                        className="w-1.5 h-1.5 rounded-full border border-slate-300 shadow-xs shrink-0" 
                                         style={{ backgroundColor: (viewMode === "ussl" ? usslColors : faciesColors)[row.key] || "#94a3b8" }}
                                       />
                                       {row.name}
                                     </td>
-                                    <td className="p-2.5 text-center font-mono text-slate-650 bg-indigo-50/10">
+                                    <td className="px-2 py-1 text-center font-mono text-slate-650 bg-indigo-50/10">
                                       <span className="font-extrabold text-slate-900">{row.leftCount}</span>{" "}
-                                      <span className="text-[10px] text-indigo-650">({row.leftPct.toFixed(1)}%)</span>
+                                      <span className="text-[8px] text-indigo-650">({row.leftPct.toFixed(1)}%)</span>
                                     </td>
-                                    <td className="p-2.5 text-center font-mono text-slate-650 bg-amber-50/10">
+                                    <td className="px-2 py-1 text-center font-mono text-slate-650 bg-amber-50/10">
                                       <span className="font-extrabold text-slate-900">{row.rightCount}</span>{" "}
-                                      <span className="text-[10px] text-amber-650">({row.rightPct.toFixed(1)}%)</span>
+                                      <span className="text-[8px] text-amber-650">({row.rightPct.toFixed(1)}%)</span>
                                     </td>
                                   </tr>
                                 ))}
                               </tbody>
-                              <tfoot className="bg-slate-100 font-black text-slate-900 border-t border-slate-300">
+                              <tfoot className="bg-slate-100 font-black text-slate-900 border-t border-slate-300 text-[10px]">
                                 <tr>
-                                  <td className="p-2.5">Total Samples</td>
-                                  <td className="p-2.5 text-center font-mono">
+                                  <td className="px-2 py-1">Total Samples</td>
+                                  <td className="px-2 py-1 text-center font-mono">
                                     {comparisonTableData.reduce((sum, r) => sum + r.leftCount, 0)}
                                   </td>
-                                  <td className="p-2.5 text-center font-mono">
+                                  <td className="px-2 py-1 text-center font-mono">
                                     {comparisonTableData.reduce((sum, r) => sum + r.rightCount, 0)}
                                   </td>
                                 </tr>
@@ -3520,6 +3528,7 @@ export default function UsslPiperAnalysisView({
                           onColorChange={(k, c) => setUsslColors((p) => ({ ...p, [k]: c }))}
                           onSizeChange={(k, s) => setUsslSizes((p) => ({ ...p, [k]: s }))}
                           defaultTitle="Irrigation USSL Classes"
+                          compact={true}
                         />
                       )}
                       {viewMode === "piper" && (
@@ -3531,6 +3540,7 @@ export default function UsslPiperAnalysisView({
                           onSizeChange={(k, s) => setFaciesSizes((p) => ({ ...p, [k]: s }))}
                           onNameChange={(k, n) => setFaciesNames((p) => ({ ...p, [k]: n }))}
                           defaultTitle="Water Hydro-Facies"
+                          compact={true}
                         />
                       )}
                     </>
