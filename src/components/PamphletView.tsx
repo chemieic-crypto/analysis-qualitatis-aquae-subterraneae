@@ -15,7 +15,8 @@ import {
   PlusCircle,
   Sparkles,
   Droplets,
-  Sprout
+  Sprout,
+  Globe
 } from "lucide-react";
 
 function darkenColor(hex: string, percent = 30): string {
@@ -1612,9 +1613,9 @@ export default function PamphletView({
     }
   };
 
-  const handleExportWord = async () => {
+  const handleExportWord = async (format: "doc" | "html" | "docx" = "doc") => {
     const titleVal = selectedDistrict || selectedState || "India";
-    await downloadMhtmlWordDoc(pamphletHtml, `GWQ_Assessment_Pamphlet_${titleVal}`);
+    await downloadMhtmlWordDoc(pamphletHtml, `GWQ_Assessment_Pamphlet_${titleVal}`, format);
   };
 
   const selectSummaryOptionsLength = selectedPamphletParams.length;
@@ -1643,12 +1644,29 @@ export default function PamphletView({
               <FileCheck2 className="w-4 h-4" /> Generate Pamphlet
             </button>
             {hasGenerated && (
-              <button
-                onClick={handleExportWord}
-                className="glossy-btn-emerald px-6 py-3 rounded-2xl font-black text-sm flex items-center gap-2 whitespace-nowrap"
-              >
-                <FileDown className="w-4 h-4" /> Export to Word (DOCX)
-              </button>
+              <>
+                <button
+                  onClick={() => handleExportWord("docx")}
+                  className="glossy-btn-emerald px-6 py-3 rounded-2xl font-black text-sm flex items-center gap-2 whitespace-nowrap cursor-pointer"
+                  title="Best for modern Microsoft Word, Google Docs, and WPS Office."
+                >
+                  <FileDown className="w-4 h-4" /> Export DOCX (.docx)
+                </button>
+                <button
+                  onClick={() => handleExportWord("doc")}
+                  className="glossy-btn-emerald/80 px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 whitespace-nowrap cursor-pointer"
+                  title="Legacy format for Microsoft Word."
+                >
+                  <FileDown className="w-4 h-4" /> Export Word (.doc)
+                </button>
+                <button
+                  onClick={() => handleExportWord("html")}
+                  className="glossy-btn-indigo px-6 py-3 rounded-2xl font-black text-sm flex items-center gap-2 whitespace-nowrap cursor-pointer"
+                  title="Best for Google Docs, Google Drive, and Mobile WPS Office."
+                >
+                  <Globe className="w-4 h-4" /> Export Google Docs/WPS (.html)
+                </button>
+              </>
             )}
           </div>
         </div>

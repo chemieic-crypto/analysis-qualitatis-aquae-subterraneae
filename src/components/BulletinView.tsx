@@ -4,7 +4,7 @@ import { DataHeaders } from "../types";
 import { PARAM_CONFIG } from "../data/config";
 import { getStats } from "../utils/math";
 import { generateParamDonutChart, generateOfflineChartBase64, buildColumnsChartOptions } from "../utils/chartHelpers";
-import { downloadMhtmlWordDoc, convertHtmlToWordDocHtml } from "../utils/export";
+import { downloadMhtmlWordDoc, convertHtmlToWordDocHtml, convertHtmlToMhtml, convertHtmlToDocxBlob } from "../utils/export";
 import {
   FileText,
   DownloadCloud,
@@ -17,7 +17,8 @@ import {
   Trash2,
   Map,
   Clipboard,
-  X
+  X,
+  Globe
 } from "lucide-react";
 
 interface BulletinViewProps {
@@ -3351,13 +3352,13 @@ export default function BulletinView({
           "HCO3": "HCO<sub>3</sub><sup>-</sup>",
           "CO3": "CO<sub>3</sub><sup>2-</sup>",
           "SO4": "SO<sub>4</sub><sup>2-</sup>",
-          "Fe": "Fe<sup>2+</sup>",
+          "Fe": "Fe",
           "As": "As",
           "U": "U",
-          "Zn": "Zn<sup>2+</sup>",
-          "Cu": "Cu<sup>2+</sup>",
-          "Pb": "Pb<sup>2+</sup>",
-          "Cd": "Cd<sup>2+</sup>",
+          "Zn": "Zn",
+          "Cu": "Cu",
+          "Pb": "Pb",
+          "Cd": "Cd",
           "Cr": "Cr",
           "Hg": "Hg",
           "Ni": "Ni",
@@ -6709,6 +6710,193 @@ Although natural geological sources account for the majority of arsenic contamin
             </div>
           `;
         }
+
+        // --- Landscape Multi-Parameter Exceedance Summary Table (Section 2) ---
+        if (paramMappings.length > 0) {
+          const romanNum = getRomanNumeral(annexureIndex);
+          annexureIndex++;
+
+          // Group data strictly by state and district
+          const distParamGroupData: Record<string, {
+            stateName: string;
+            districtName: string;
+            totalAnalysed: number;
+            paramStats: Record<string, { above: number; analysed: number }>;
+          }> = {};
+
+          filteredData.forEach((d) => {
+            const sVal = String(d[stateHeader] || "").trim() || "N/A";
+            const dVal = String(d[districtHeader] || "").trim() || "N/A";
+            const key = `${sVal} | ${dVal}`;
+
+            if (!distParamGroupData[key]) {
+              distParamGroupData[key] = {
+                stateName: sVal,
+                districtName: dVal,
+                totalAnalysed: 0,
+                paramStats: {}
+              };
+              paramMappings.forEach(({ configKey }) => {
+                distParamGroupData[key].paramStats[configKey] = { above: 0, analysed: 0 };
+              });
+            }
+
+            const group = distParamGroupData[key];
+            group.totalAnalysed++;
+
+            paramMappings.forEach(({ configKey, config, mappedHeader }) => {
+              const val = parseFloat(d[mappedHeader]);
+              if (!isNaN(val)) {
+                group.paramStats[configKey].analysed++;
+                const isSingleLimit = config.b1 === config.b2 && configKey !== "pH";
+                const limit = isSingleLimit ? config.b1 : config.b2;
+                let exceeds = false;
+                if (configKey === "pH") {
+                  if (val < config.b1 || val > config.b2) exceeds = true;
+                } else if (val > limit) {
+                  exceeds = true;
+                }
+                if (exceeds) {
+                  group.paramStats[configKey].above++;
+                }
+              }
+            });
+          });
+
+          const sortedDistKeys = Object.keys(distParamGroupData).sort((a, b) => {
+            const gA = distParamGroupData[a];
+            const gB = distParamGroupData[b];
+            const stateComp = gA.stateName.localeCompare(gB.stateName);
+            if (stateComp !== 0) return stateComp;
+            return gA.districtName.localeCompare(gB.districtName);
+          });
+
+          let headerRow1HTML = "";
+          let headerRow2HTML = "";
+
+          paramMappings.forEach(({ configKey, config }) => {
+            headerRow1HTML += `
+              <th colspan="2" style="border: 1px solid #7f7f7f; padding: 4px; font-weight: bold; text-align: center; background-color: #1e3a8a; color: white; font-size: 8.5pt;">
+                ${config.name} (${formatChemicalFormula(configKey)})
+              </th>
+            `;
+            headerRow2HTML += `
+              <th style="border: 1px solid #7f7f7f; padding: 4px; font-weight: bold; text-align: center; background-color: #f2f2f2; color: #000000; font-size: 8pt; width: 60px;">No. Above</th>
+              <th style="border: 1px solid #7f7f7f; padding: 4px; font-weight: bold; text-align: center; background-color: #f2f2f2; color: #000000; font-size: 8pt; width: 60px;">% Above</th>
+            `;
+          });
+
+          let tableRowsHTML = "";
+          let dIdx = 0;
+
+          // Grand Total Accumulators
+          let grandTotalAnalysed = 0;
+          const grandParamStats: Record<string, { above: number; analysed: number }> = {};
+          paramMappings.forEach(({ configKey }) => {
+            grandParamStats[configKey] = { above: 0, analysed: 0 };
+          });
+
+          sortedDistKeys.forEach((key) => {
+            const g = distParamGroupData[key];
+            dIdx++;
+
+            grandTotalAnalysed += g.totalAnalysed;
+
+            let paramColsHTML = "";
+            paramMappings.forEach(({ configKey }) => {
+              const stats = g.paramStats[configKey];
+              const above = stats.above;
+              const totalForParam = stats.analysed;
+              const pctText = totalForParam > 0 ? `${((above / totalForParam) * 100).toFixed(1)}%` : "N/A";
+              
+              const valColor = above > 0 ? "color: #b91c1c; font-weight: bold;" : "color: #1e293b;";
+              const pctColor = above > 0 ? "color: #b91c1c; font-weight: bold;" : "color: #475569;";
+
+              paramColsHTML += `
+                <td style="border: 1px solid #7f7f7f; padding: 4px; text-align: center; ${valColor}">${above}</td>
+                <td style="border: 1px solid #7f7f7f; padding: 4px; text-align: center; ${pctColor}">${pctText}</td>
+              `;
+
+              // Accumulate grand totals
+              grandParamStats[configKey].above += above;
+              grandParamStats[configKey].analysed += totalForParam;
+            });
+
+            const rowBg = dIdx % 2 === 0 ? 'background-color: #f8fafc;' : 'background-color: #ffffff;';
+
+            tableRowsHTML += `
+              <tr style="font-family: 'Times New Roman', Times, serif; font-size: 9pt; ${rowBg}">
+                <td style="border: 1px solid #7f7f7f; padding: 4px; vertical-align: middle; text-align: center;">${dIdx}</td>
+                <td style="border: 1px solid #7f7f7f; padding: 4px; vertical-align: middle; text-align: left;">${toProperCase(g.stateName)}</td>
+                <td style="border: 1px solid #7f7f7f; padding: 4px; vertical-align: middle; text-align: left; font-weight: bold;">${toProperCase(g.districtName)}</td>
+                <td style="border: 1px solid #7f7f7f; padding: 4px; vertical-align: middle; text-align: center;">${g.totalAnalysed}</td>
+                ${paramColsHTML}
+              </tr>
+            `;
+          });
+
+          // Generate Grand Total columns
+          let grandParamColsHTML = "";
+          paramMappings.forEach(({ configKey }) => {
+            const stats = grandParamStats[configKey];
+            const above = stats.above;
+            const totalForParam = stats.analysed;
+            const pctText = totalForParam > 0 ? `${((above / totalForParam) * 100).toFixed(1)}%` : "N/A";
+
+            const valColor = above > 0 ? "color: #b91c1c; font-weight: bold;" : "color: #1e293b;";
+            const pctColor = above > 0 ? "color: #b91c1c; font-weight: bold;" : "color: #475569;";
+
+            grandParamColsHTML += `
+              <td style="border: 1px solid #7f7f7f; padding: 4px; text-align: center; font-weight: bold; background-color: #f1f5f9; ${valColor}">${above}</td>
+              <td style="border: 1px solid #7f7f7f; padding: 4px; text-align: center; font-weight: bold; background-color: #f1f5f9; ${pctColor}">${pctText}</td>
+            `;
+          });
+
+          // Append Grand Total Row to tableRowsHTML
+          tableRowsHTML += `
+            <tr style="font-family: 'Times New Roman', Times, serif; font-size: 9pt; background-color: #e2e8f0; font-weight: bold;">
+              <td colspan="3" style="border: 1px solid #7f7f7f; padding: 4px; vertical-align: middle; text-align: right; font-weight: bold; background-color: #f1f5f9;">Grand Total</td>
+              <td style="border: 1px solid #7f7f7f; padding: 4px; vertical-align: middle; text-align: center; font-weight: bold; background-color: #f1f5f9;">${grandTotalAnalysed}</td>
+              ${grandParamColsHTML}
+            </tr>
+          `;
+
+          annexuresHTML += `
+            </div> <!-- Close default Section1 portrait block for MS Word page-split -->
+            <div class="Section2" style="font-family: 'Times New Roman', Times, serif; margin-top: 35px;">
+              <h3 style="page-break-before: always; font-family: 'Times New Roman', Times, serif; font-size: 14pt; font-weight: bold; border-bottom: 1.5px solid #1e3a8a; padding-bottom: 5px; color: #1e3a8a; text-transform: uppercase; margin-bottom: 15px; text-align: center;">
+                ANNEXURE ${romanNum} (LANDSCAPE)
+              </h3>
+              <p style="font-family: 'Times New Roman', Times, serif; font-size: 11pt; font-weight: bold; margin-bottom: 10px; text-align: center; color: #334155;">
+                State & District-Wise Multiple Parameter Exceedance Matrix - Season: ${displaySeasonText}, Year: ${displayYearText}
+              </p>
+              <p style="font-family: 'Times New Roman', Times, serif; font-size: 10pt; text-align: justify; line-height: 1.6; margin-bottom: 15px; color: #475569;">
+                The following landscape table presents a consolidated district-wise monitoring compliance matrix for all selected groundwater quality parameters during the <strong>${displaySeasonText} (${displayYearText})</strong> period. It provides the total number of samples analyzed, alongside parameter-specific counts and percentages exceeding Bureau of Indian Standards (BIS IS 10500:2012) permissible thresholds.
+              </p>
+
+              <div style="overflow-x: auto; width: 100%;">
+                <table border="1" cellpadding="4" cellspacing="0" style="width: 100%; border-collapse: collapse; font-family: 'Times New Roman', Times, serif; font-size: 9pt; text-align: left; margin-bottom: 25px; border: 1.5pt solid #1e3a8a;">
+                  <thead>
+                    <tr style="background-color: #1e3a8a; color: white; text-align: center; height: 35px;">
+                      <th rowspan="2" style="border: 1px solid #7f7f7f; padding: 4px; font-weight: bold; text-align: center; background-color: #1e3a8a; color: white; width: 45px;">Sl. No.</th>
+                      <th rowspan="2" style="border: 1px solid #7f7f7f; padding: 4px; font-weight: bold; text-align: left; background-color: #1e3a8a; color: white; width: 110px;">State</th>
+                      <th rowspan="2" style="border: 1px solid #7f7f7f; padding: 4px; font-weight: bold; text-align: left; background-color: #1e3a8a; color: white; width: 110px;">District</th>
+                      <th rowspan="2" style="border: 1px solid #7f7f7f; padding: 4px; font-weight: bold; text-align: center; background-color: #1e3a8a; color: white; width: 65px;">Total Samples Analysed</th>
+                      ${headerRow1HTML}
+                    </tr>
+                    <tr style="text-align: center; height: 30px;">
+                      ${headerRow2HTML}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${tableRowsHTML}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="Section1"> <!-- Re-open Section1 portrait block to maintain original container layout -->
+          `;
+        }
       }
 
       const mainTitle = isHindi 
@@ -6788,28 +6976,28 @@ Although natural geological sources account for the majority of arsenic contamin
     }
   };
 
-  const handleExportWord = async () => {
+  const handleExportWord = async (format: "doc" | "html" | "docx" = "doc") => {
     const titleVal = bulletinScope === "National" ? "National" : bulletinScope;
     const seasonString = bulletinSeason.replace(/\s+/g, "_");
     
     setIsGenerating(true);
-    setGenerationProgress("Re-assembling and preparing latest annual report with current maps...");
+    setGenerationProgress(`Re-assembling and preparing latest annual report in ${format.toUpperCase()} format...`);
     try {
       const latestHtml = await handleGenerateBulletin();
       if (latestHtml) {
-        await downloadMhtmlWordDoc(latestHtml, `GWQ_AnnualReport_${titleVal}_${seasonString}`);
+        await downloadMhtmlWordDoc(latestHtml, `GWQ_AnnualReport_${titleVal}_${seasonString}`, format);
       } else {
-        await downloadMhtmlWordDoc(bulletinHtml, `GWQ_AnnualReport_${titleVal}_${seasonString}`);
+        await downloadMhtmlWordDoc(bulletinHtml, `GWQ_AnnualReport_${titleVal}_${seasonString}`, format);
       }
     } catch (err) {
       console.error("Export compilation failed, falling back to cached HTML:", err);
-      await downloadMhtmlWordDoc(bulletinHtml, `GWQ_AnnualReport_${titleVal}_${seasonString}`);
+      await downloadMhtmlWordDoc(bulletinHtml, `GWQ_AnnualReport_${titleVal}_${seasonString}`, format);
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const handleDownloadAllStatesZip = async () => {
+  const handleDownloadAllStatesZip = async (format: "doc" | "docx" = "docx") => {
     if (!scopeStates || scopeStates.length === 0) {
       setErrorMessage("No states found in the current dataset to generate reports for.");
       return;
@@ -6830,13 +7018,20 @@ Although natural geological sources account for the majority of arsenic contamin
         
         const stateHtml = await handleGenerateBulletin(stateName);
         if (stateHtml) {
-          setGenerationProgress(`[Batch ${i + 1}/${scopeStates.length}] Formatting ${stateName} bulletin for Microsoft Word (.doc)...`);
+          setGenerationProgress(`[Batch ${i + 1}/${scopeStates.length}] Formatting ${stateName} bulletin for Microsoft Word (.${format})...`);
           await new Promise((resolve) => setTimeout(resolve, 50));
           
           const docFileName = `GWQ_Bulletin_${stateName.replace(/\s+/g, "_")}_${seasonString}`;
           const wordHtml = await convertHtmlToWordDocHtml(stateHtml, docFileName);
           
-          zip.file(`${docFileName}.doc`, wordHtml);
+          if (format === "docx") {
+            console.log(`[Batch] Converting ${stateName} HTML to native .docx...`);
+            const docxBlob = await convertHtmlToDocxBlob(wordHtml, docFileName);
+            zip.file(`${docFileName}.docx`, docxBlob);
+          } else {
+            const mhtmlContent = convertHtmlToMhtml(wordHtml, docFileName);
+            zip.file(`${docFileName}.doc`, mhtmlContent);
+          }
         }
       }
       
@@ -6847,7 +7042,7 @@ Although natural geological sources account for the majority of arsenic contamin
       const url = URL.createObjectURL(zipContent);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `GWQ_State_Bulletins_All_${seasonString}.zip`;
+      link.download = `GWQ_State_Bulletins_All_${seasonString}_${format.toUpperCase()}.zip`;
       
       document.body.appendChild(link);
       link.click();
@@ -7004,22 +7199,47 @@ Although natural geological sources account for the majority of arsenic contamin
                 Assemble Annual Report
               </button>
               {scopeStates && scopeStates.length > 0 && (
-                <button
-                  onClick={handleDownloadAllStatesZip}
-                  disabled={isGenerating || parsedParamsLength === 0}
-                  className="glossy-btn-emerald px-5 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 w-full disabled:opacity-50 hover:scale-[1.02] active:scale-95 transition-all cursor-pointer"
-                  title="Generate, format, and package comprehensive water quality reports for all individual states/UTs into a single ZIP archive containing MS Word documents."
-                >
-                  <DownloadCloud className="w-4 h-4" /> Generate All States (.ZIP)
-                </button>
+                <>
+                  <button
+                    onClick={() => handleDownloadAllStatesZip("docx")}
+                    disabled={isGenerating || parsedParamsLength === 0}
+                    className="glossy-btn-emerald px-5 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 w-full disabled:opacity-50 hover:scale-[1.02] active:scale-95 transition-all cursor-pointer"
+                    title="Generate, format, and package comprehensive water quality reports for all individual states/UTs into a single ZIP archive containing modern MS Word (.docx) documents."
+                  >
+                    <DownloadCloud className="w-4 h-4" /> Generate All States (.ZIP of .docx)
+                  </button>
+                  <button
+                    onClick={() => handleDownloadAllStatesZip("doc")}
+                    disabled={isGenerating || parsedParamsLength === 0}
+                    className="glossy-btn-emerald/75 px-5 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 w-full disabled:opacity-50 hover:scale-[1.02] active:scale-95 transition-all cursor-pointer"
+                    title="Generate ZIP archive containing legacy MS Word (.doc) documents."
+                  >
+                    <DownloadCloud className="w-4 h-4" /> All States ZIP (.doc Legacy)
+                  </button>
+                </>
               )}
               {hasGenerated && (
                 <>
                   <button
-                    onClick={handleExportWord}
+                    onClick={() => handleExportWord("docx")}
                     className="glossy-btn-emerald px-5 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 w-full hover:scale-[1.02] active:scale-95 transition-all cursor-pointer"
+                    title="Best for modern Microsoft Word, Google Docs, and WPS Office."
                   >
-                    <DownloadCloud className="w-4 h-4" /> Download Word Document
+                    <DownloadCloud className="w-4 h-4" /> Download MS Word (.docx)
+                  </button>
+                  <button
+                    onClick={() => handleExportWord("doc")}
+                    className="glossy-btn-emerald/75 px-5 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 w-full hover:scale-[1.02] active:scale-95 transition-all cursor-pointer"
+                    title="Legacy MS Word format."
+                  >
+                    <DownloadCloud className="w-4 h-4" /> Download Word (.doc Legacy)
+                  </button>
+                  <button
+                    onClick={() => handleExportWord("html")}
+                    className="glossy-btn-indigo px-5 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 w-full hover:scale-[1.02] active:scale-95 transition-all cursor-pointer"
+                    title="Download as standard HTML with base64 images - highly compatible with web browsers and Google Drive."
+                  >
+                    <Globe className="w-4 h-4" /> Download Google Docs/WPS (.html)
                   </button>
                   {Object.keys(compiledMapImages).length > 0 && (
                     <button

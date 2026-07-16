@@ -143,7 +143,7 @@ export default function LimitsManagerView({ onLimitsChanged }: LimitsManagerView
                 </span>
               </h2>
               <p className="text-xs text-slate-500 mt-1">
-                Customize Acceptable and Permissible standards. All downstream charts, GIS maps, matrices, and PDF reports will dynamically recompute.
+                Customize Acceptable and Permissible standards. All downstream charts, GIS maps, matrices, and generated reports will dynamically recompute.
               </p>
             </div>
           </div>

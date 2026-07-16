@@ -597,6 +597,17 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
   div.Section1 {
     page: Section1;
   }
+  @page Section2 {
+    size: 11.69in 8.27in; /* Landscape A4 Size */
+    margin: 0.6in 0.6in 0.6in 0.6in;
+    mso-header-margin: 0.3in;
+    mso-footer-margin: 0.3in;
+    mso-paper-source: 0;
+  }
+  div.Section2 {
+    page: Section2;
+    mso-page-orientation: landscape;
+  }
   body {
     font-family: 'Times New Roman', Times, serif;
     font-size: 11.5pt;
@@ -690,23 +701,142 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
   return completeHtml;
 }
 
-export async function downloadMhtmlWordDoc(contentHtml: string, fileName: string) {
-  console.log("[Export] Starting True DOCX (OOXML) Export Pipeline...");
+export function convertHtmlToMhtml(completeHtml: string, fileName: string): string {
+  const boundary = "----=_NextPart_01D1A_BULLETIN_EXPORT";
+  
+  // Use DOMParser to parse the full HTML document (keeps head, style, body intact)
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(completeHtml, "text/html");
+  
+  const imgs = Array.from(doc.getElementsByTagName("img"));
+  const attachments: Array<{ filename: string; mimeType: string; data: string }> = [];
+  
+  imgs.forEach((img, index) => {
+    const src = img.getAttribute("src") || "";
+    if (src.startsWith("data:")) {
+      const match = src.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        const mimeType = match[1];
+        const base64Data = match[2];
+        const ext = mimeType.split("/")[1] || "png";
+        const filename = `img_${index}.${ext}`;
+        
+        // Replace src in HTML with the relative filename
+        img.setAttribute("src", filename);
+        
+        attachments.push({
+          filename,
+          mimeType,
+          data: base64Data
+        });
+      }
+    }
+  });
+  
+  // Serialize the updated DOM back to HTML string
+  const updatedHtml = "<!DOCTYPE html>\n" + doc.documentElement.outerHTML;
+  
+  // Construct MHTML
+  let mhtml = "";
+  mhtml += `MIME-Version: 1.0\r\n`;
+  mhtml += `Content-Type: multipart/related; boundary="${boundary}"\r\n`;
+  mhtml += `\r\n`;
+  mhtml += `--${boundary}\r\n`;
+  mhtml += `Content-Type: text/html; charset="utf-8"\r\n`;
+  mhtml += `Content-Transfer-Encoding: 8bit\r\n`;
+  mhtml += `\r\n`;
+  mhtml += updatedHtml;
+  mhtml += `\r\n`;
+  
+  attachments.forEach((att) => {
+    mhtml += `\r\n--${boundary}\r\n`;
+    mhtml += `Content-Type: ${att.mimeType}\r\n`;
+    mhtml += `Content-Transfer-Encoding: base64\r\n`;
+    mhtml += `Content-Location: ${att.filename}\r\n`;
+    mhtml += `\r\n`;
+    mhtml += att.data + `\r\n`;
+  });
+  
+  mhtml += `\r\n--${boundary}--\r\n`;
+  return mhtml;
+}
+
+export async function convertHtmlToDocxBlob(completeHtml: string, fileName: string): Promise<Blob> {
+  const mhtmlContent = convertHtmlToMhtml(completeHtml, fileName);
+  
+  const zip = new JSZip();
+  
+  // 1. [Content_Types].xml
+  zip.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml" />
+  <Default Extension="xml" ContentType="application/xml" />
+  <Default Extension="mhtml" ContentType="message/rfc822" />
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml" />
+</Types>`);
+
+  // 2. _rels/.rels
+  zip.file("_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml" />
+</Relationships>`);
+
+  // 3. word/document.xml
+  zip.file("word/document.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <w:body>
+    <w:altChunk r:id="htmlChunk" />
+    <w:sectPr>
+      <w:pgSz w:w="12240" w:h="15840" w:orient="portrait" />
+      <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0" />
+    </w:sectPr>
+  </w:body>
+</w:document>`);
+
+  // 4. word/_rels/document.xml.rels
+  zip.file("word/_rels/document.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="htmlChunk" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="afchunk.mhtml" />
+</Relationships>`);
+
+  // 5. word/afchunk.mhtml
+  zip.file("word/afchunk.mhtml", mhtmlContent);
+  
+  return await zip.generateAsync({ type: "blob" });
+}
+
+export async function downloadMhtmlWordDoc(contentHtml: string, fileName: string, format: "doc" | "html" | "docx" = "doc") {
+  console.log(`[Export] Starting Document Export Pipeline for format: ${format}...`);
   try {
     const completeHtml = await convertHtmlToWordDocHtml(contentHtml, fileName);
     
-    const blob = new Blob([completeHtml], { type: "application/msword;charset=utf-8" });
+    let blob: Blob;
+    let finalFileName = fileName;
+    
+    if (format === "html") {
+      blob = new Blob([completeHtml], { type: "text/html;charset=utf-8" });
+      finalFileName = `${fileName}.html`;
+    } else if (format === "docx") {
+      console.log("[Export] Converting HTML to native Word .docx...");
+      blob = await convertHtmlToDocxBlob(completeHtml, fileName);
+      finalFileName = `${fileName}.docx`;
+    } else {
+      const mhtmlContent = convertHtmlToMhtml(completeHtml, fileName);
+      blob = new Blob([mhtmlContent], { type: "application/msword;charset=utf-8" });
+      finalFileName = `${fileName}.doc`;
+    }
+    
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${fileName}.doc`;
+    link.download = finalFileName;
     
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    console.log("[Export] High-compatibility Word (.doc) Export completed successfully.");
+    console.log(`[Export] Export (${format}) completed successfully.`);
   } catch (err) {
-    console.error("[Export] Failed to generate Word document:", err);
+    console.error("[Export] Failed to generate document:", err);
   }
 }

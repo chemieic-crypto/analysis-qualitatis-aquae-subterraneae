@@ -32,7 +32,13 @@ import {
   ArrowUpDown,
   ChevronDown,
   ChevronUp,
-  Download
+  Download,
+  Type,
+  Palette,
+  Sparkles,
+  Grid3X3,
+  FileJson,
+  AlertTriangle
 } from "lucide-react";
 import { PARAM_CONFIG } from "../data/config";
 import { INDIA_BOUNDARY } from "../data/india_boundary";
@@ -1661,7 +1667,7 @@ export default function GisMapView({
 
   // Export Settings
   const [exportDpi, setExportDpi] = useState<number>(600);
-  const [exportFormat, setExportFormat] = useState<"jpeg" | "png" | "tiff" | "pdf" | "svg">("png");
+  const [exportFormat, setExportFormat] = useState<"jpeg" | "png" | "tiff" | "svg">("png");
 
   // Seasonal Comparison Toggles
   const [generateComparisonMode, setGenerateComparisonMode] = useState<boolean>(true);
@@ -5237,10 +5243,21 @@ ${svgStatsPanel}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
         
         {/* Interactive Configuration GUI Control Panel Sidebar */}
-        <div className="lg:col-span-4 bg-white/75 backdrop-blur-md p-5 rounded-[2rem] border border-slate-200/50 shadow-[0_8px_32px_0_rgba(15,23,42,0.06)] flex flex-col gap-5 max-h-[860px] overflow-y-auto custom-scrollbar relative">
+        <div className="lg:col-span-4 bg-gradient-to-b from-white/95 via-slate-50/90 to-slate-100/80 backdrop-blur-xl p-6 rounded-[2.5rem] border border-white/60 shadow-[0_20px_50px_-12px_rgba(15,23,42,0.08),inset_0_1px_2px_rgba(255,255,255,0.85)] flex flex-col gap-5 max-h-[860px] overflow-y-auto custom-scrollbar relative">
+          
+          {/* Advanced Sober Glossy Header */}
+          <div className="flex flex-col gap-1 border-b border-slate-200/60 pb-3">
+            <span className="text-[10px] font-black uppercase text-slate-800 tracking-wider flex items-center gap-2">
+              <Globe className="w-4 h-4 text-slate-700 animate-spin" style={{ animationDuration: "16s" }} />
+              GIS CONTROL WORKSTATION
+            </span>
+            <p className="text-[9.5px] font-bold text-slate-400 leading-normal">
+              Manage digital mapping projections, compliance location points, and spatial interpolation engines.
+            </p>
+          </div>
           
           {/* Settings Tab Navigation */}
-          <div className="flex items-center gap-1.5 border-b border-slate-100 pb-3 overflow-x-auto shrink-0 custom-scrollbar">
+          <div className="flex items-center gap-1 bg-slate-100/60 backdrop-blur-md p-1 rounded-2xl border border-slate-200/40 overflow-x-auto shrink-0 custom-scrollbar">
             {[
               { id: "layers", label: "Layers", icon: Layers },
               { id: "basemap", label: "Basemap", icon: MapIcon },
@@ -5255,10 +5272,10 @@ ${svgStatsPanel}
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
-                  className={`cursor-pointer px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all duration-150 whitespace-nowrap ${
+                  className={`cursor-pointer px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all duration-200 whitespace-nowrap ${
                     activeTab === tab.id
-                      ? "bg-slate-900 text-white shadow-sm"
-                      : "text-slate-600 hover:bg-slate-50"
+                      ? "bg-gradient-to-r from-slate-900 to-slate-850 text-white shadow-[0_4px_12px_rgba(15,23,42,0.18),inset_0_1px_1px_rgba(255,255,255,0.2)] border border-slate-950 scale-[1.02]"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/40"
                   }`}
                 >
                   <Icon className="w-3.5 h-3.5" />
@@ -5273,13 +5290,16 @@ ${svgStatsPanel}
             
             {/* 1. Layers Panel */}
             {activeTab === "layers" && (
-              <div className="flex flex-col gap-4">
-                <div>
-                  <label className="block text-slate-700 text-xs font-bold mb-1.5">Select Map Parameter</label>
+              <div className="flex flex-col gap-5">
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm">
+                  <label className="block text-slate-700 text-xs font-bold mb-2 flex items-center gap-1.5">
+                    <Sliders className="w-3.5 h-3.5 text-indigo-500" />
+                    Select Map Parameter
+                  </label>
                   <select
                     value={selectedParam}
                     onChange={(e) => setSelectedParam(e.target.value)}
-                    className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:border-indigo-500"
+                    className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-3 shadow-sm hover:border-indigo-500/80 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
                   >
                     {availableParams.map(p => (
                       <option key={p} value={p}>
@@ -5289,121 +5309,123 @@ ${svgStatsPanel}
                   </select>
                 </div>
 
-                <div className="border-t border-slate-100 pt-3 flex flex-col gap-2.5">
-                  <span className="text-xs font-bold text-slate-800">Layer Controls</span>
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3">
+                  <span className="text-xs font-extrabold text-slate-800 tracking-wide uppercase text-[10px]">Layer Controls</span>
                   
-                  <label className="flex items-center justify-between cursor-pointer p-1.5 rounded-lg hover:bg-slate-50">
-                    <span className="text-xs font-medium text-slate-700 flex items-center gap-2">
-                      <Layers className="w-3.5 h-3.5 text-indigo-500" /> Raster Overlay (Interpolation)
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={showRaster}
-                      onChange={(e) => setShowRaster(e.target.checked)}
-                      className="cursor-pointer"
-                    />
-                  </label>
+                  <div className="flex flex-col gap-2">
+                    <label className="flex items-center justify-between cursor-pointer p-2 rounded-xl bg-white/60 hover:bg-white hover:scale-[1.01] transition-all border border-slate-100 hover:border-indigo-100 shadow-sm group">
+                      <span className="text-xs font-medium text-slate-700 flex items-center gap-2 group-hover:text-indigo-600 transition-colors">
+                        <Layers className="w-4 h-4 text-indigo-500 group-hover:scale-110 transition-transform" /> Raster Overlay (Interpolation)
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={showRaster}
+                        onChange={(e) => setShowRaster(e.target.checked)}
+                        className="cursor-pointer h-4 w-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500"
+                      />
+                    </label>
 
-                  <label className="flex items-center justify-between cursor-pointer p-1.5 rounded-lg hover:bg-slate-50">
-                    <span className="text-xs font-medium text-slate-700 flex items-center gap-2">
-                      <CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> Sampling Location Points
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={showPoints}
-                      onChange={(e) => setShowPoints(e.target.checked)}
-                      className="cursor-pointer"
-                    />
-                  </label>
+                    <label className="flex items-center justify-between cursor-pointer p-2 rounded-xl bg-white/60 hover:bg-white hover:scale-[1.01] transition-all border border-slate-100 hover:border-emerald-100 shadow-sm group">
+                      <span className="text-xs font-medium text-slate-700 flex items-center gap-2 group-hover:text-emerald-600 transition-colors">
+                        <CheckCircle className="w-4 h-4 text-emerald-500 group-hover:scale-110 transition-transform" /> Sampling Location Points
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={showPoints}
+                        onChange={(e) => setShowPoints(e.target.checked)}
+                        className="cursor-pointer h-4 w-4 rounded text-emerald-600 border-slate-300 focus:ring-emerald-500"
+                      />
+                    </label>
 
-
-
-                  <label className="flex items-center justify-between cursor-pointer p-1.5 rounded-lg hover:bg-slate-50">
-                    <span className="text-xs font-medium text-slate-700 flex items-center gap-2">
-                      <Info className="w-3.5 h-3.5 text-amber-500" /> Feature Labels (Locations)
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={showLabels}
-                      onChange={(e) => setShowLabels(e.target.checked)}
-                      className="cursor-pointer"
-                    />
-                  </label>
-                </div>
-
-                <div className="border-t border-slate-100 pt-3 flex flex-col gap-3">
-                  <span className="text-xs font-bold text-slate-800">Transparency Control</span>
-                  
-                  <div>
-                    <div className="flex justify-between text-[10px] text-slate-500 font-bold">
-                      <span>RASTER OPACITY</span>
-                      <span>{rasterOpacity}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="10"
-                      max="100"
-                      value={rasterOpacity}
-                      onChange={(e) => setRasterOpacity(parseInt(e.target.value))}
-                      className="w-full cursor-pointer accent-indigo-600 mt-1"
-                    />
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between text-[10px] text-slate-500 font-bold">
-                      <span>BASEMAP OPACITY</span>
-                      <span>{basemapOpacity}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="10"
-                      max="100"
-                      value={basemapOpacity}
-                      onChange={(e) => setBasemapOpacity(parseInt(e.target.value))}
-                      className="w-full cursor-pointer accent-indigo-600 mt-1"
-                    />
+                    <label className="flex items-center justify-between cursor-pointer p-2 rounded-xl bg-white/60 hover:bg-white hover:scale-[1.01] transition-all border border-slate-100 hover:border-amber-100 shadow-sm group">
+                      <span className="text-xs font-medium text-slate-700 flex items-center gap-2 group-hover:text-amber-600 transition-colors">
+                        <Info className="w-4 h-4 text-amber-500 group-hover:scale-110 transition-transform" /> Feature Labels (Locations)
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={showLabels}
+                        onChange={(e) => setShowLabels(e.target.checked)}
+                        className="cursor-pointer h-4 w-4 rounded text-amber-600 border-slate-300 focus:ring-amber-500"
+                      />
+                    </label>
                   </div>
                 </div>
 
-                <div className="border-t border-slate-100 pt-3 bg-indigo-50/50 p-3.5 rounded-2xl flex flex-col gap-2">
-                  <span className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3.5">
+                  <span className="text-xs font-extrabold text-slate-800 tracking-wide uppercase text-[10px]">Transparency Control</span>
+                  
+                  <div className="flex flex-col gap-3">
+                    <div className="bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner">
+                      <div className="flex justify-between text-[10px] text-slate-500 font-bold mb-1">
+                        <span>RASTER OPACITY</span>
+                        <span className="font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">{rasterOpacity}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="10"
+                        max="100"
+                        value={rasterOpacity}
+                        onChange={(e) => setRasterOpacity(parseInt(e.target.value))}
+                        className="w-full cursor-pointer accent-indigo-600 mt-1"
+                      />
+                    </div>
+
+                    <div className="bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner">
+                      <div className="flex justify-between text-[10px] text-slate-500 font-bold mb-1">
+                        <span>BASEMAP OPACITY</span>
+                        <span className="font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">{basemapOpacity}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="10"
+                        max="100"
+                        value={basemapOpacity}
+                        onChange={(e) => setBasemapOpacity(parseInt(e.target.value))}
+                        className="w-full cursor-pointer accent-indigo-600 mt-1"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gradient-to-br from-indigo-50/80 to-violet-50/50 backdrop-blur-md p-4 rounded-3xl border border-indigo-100/60 shadow-sm flex flex-col gap-3">
+                  <span className="text-xs font-bold text-indigo-950 flex items-center gap-1.5 uppercase text-[10px] tracking-wide">
                     <Calendar className="w-3.5 h-3.5 text-indigo-600" /> Comparative Seasonal Setup
                   </span>
                   
-                  <label className="flex items-center justify-between cursor-pointer mt-1">
-                    <span className="text-xs font-medium text-slate-700">Enable Side-by-Side Panels</span>
+                  <label className="flex items-center justify-between cursor-pointer p-2 rounded-xl bg-white/70 hover:bg-white transition-all border border-indigo-100/30 shadow-sm group">
+                    <span className="text-xs font-semibold text-indigo-900">Enable Side-by-Side Panels</span>
                     <input
                       type="checkbox"
                       checked={generateComparisonMode}
                       onChange={(e) => setGenerateComparisonMode(e.target.checked)}
-                      className="cursor-pointer"
+                      className="cursor-pointer h-4 w-4 rounded text-indigo-600 border-indigo-300 focus:ring-indigo-500"
                     />
                   </label>
 
                   {isComparisonActive && (
-                    <>
-                      <div className="mt-1">
-                        <label className="block text-[10px] text-indigo-900 font-bold mb-1">LAYOUT STYLE</label>
+                    <div className="flex flex-col gap-3 bg-white/50 p-3 rounded-2xl border border-indigo-100/30">
+                      <div>
+                        <label className="block text-[10px] text-indigo-900 font-extrabold mb-1.5 uppercase">LAYOUT STYLE</label>
                         <select
                           value={comparisonLayout}
                           onChange={(e) => setComparisonLayout(e.target.value as any)}
-                          className="w-full text-xs font-medium bg-white border border-indigo-200 rounded-lg p-1.5 focus:outline-none focus:border-indigo-500"
+                          className="w-full text-xs font-bold bg-white border border-indigo-200/80 rounded-xl p-2 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
                         >
                           <option value="horizontal">Horizontal Split</option>
                           <option value="vertical">Vertical Split</option>
                         </select>
                       </div>
 
-                      <label className="flex items-center justify-between cursor-pointer mt-1.5">
+                      <label className="flex items-center justify-between cursor-pointer p-2 rounded-xl bg-rose-50/50 hover:bg-rose-50 transition-all border border-rose-100/50 shadow-sm group">
                         <span className="text-xs font-semibold text-rose-900">Show Difference Map (Post − Pre)</span>
                         <input
                           type="checkbox"
                           checked={showDifferenceMap}
                           onChange={(e) => setShowDifferenceMap(e.target.checked)}
-                          className="cursor-pointer"
+                          className="cursor-pointer h-4 w-4 rounded text-rose-600 border-rose-300 focus:ring-rose-500"
                         />
                       </label>
-                    </>
+                    </div>
                   )}
                 </div>
               </div>
@@ -5411,13 +5433,16 @@ ${svgStatsPanel}
 
             {/* 2. Basemap Tab */}
             {activeTab === "basemap" && (
-              <div className="flex flex-col gap-4">
-                <div>
-                  <label className="block text-slate-700 text-xs font-bold mb-1.5">Select Basemap Style</label>
+              <div className="flex flex-col gap-5">
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-1.5">
+                  <label className="block text-slate-700 text-xs font-bold mb-1 flex items-center gap-1.5">
+                    <MapIcon className="w-3.5 h-3.5 text-indigo-500" />
+                    Select Basemap Style
+                  </label>
                   <select
                     value={basemap}
                     onChange={(e) => setBasemap(e.target.value)}
-                    className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none"
+                    className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-3 shadow-sm hover:border-indigo-500/80 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
                   >
                     {Object.keys(BASEMAP_STYLES).map(k => (
                       <option key={k} value={k}>{k}</option>
@@ -5425,12 +5450,15 @@ ${svgStatsPanel}
                   </select>
                 </div>
 
-                <div className="border-t border-slate-100 pt-3">
-                  <label className="block text-slate-700 text-xs font-bold mb-1.5">Georeference Projection</label>
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-1.5">
+                  <label className="block text-slate-700 text-xs font-bold mb-1 flex items-center gap-1.5">
+                    <Compass className="w-3.5 h-3.5 text-indigo-500" />
+                    Georeference Projection
+                  </label>
                   <select
                     value={projection}
                     onChange={(e) => setProjection(e.target.value as any)}
-                    className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none"
+                    className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-3 shadow-sm hover:border-indigo-500/80 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
                   >
                     <option value="wgs84">WGS 84 Geographic coordinate system</option>
                     <option value="mercator">Web Mercator projection</option>
@@ -5439,40 +5467,56 @@ ${svgStatsPanel}
                 </div>
 
                 {projection === "utm" && (
-                  <div>
+                  <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-1.5">
                     <label className="block text-slate-700 text-xs font-bold mb-1">UTM Zone (India region: 44)</label>
                     <input
                       type="number"
                       value={utmZone}
                       onChange={(e) => setUtmZone(parseInt(e.target.value))}
-                      className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2"
+                      className="w-full text-xs bg-white/95 border border-slate-200/80 rounded-xl p-3 shadow-inner hover:border-indigo-500/80 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all font-semibold text-slate-800"
                     />
                   </div>
                 )}
 
-                <div className="bg-slate-50 p-4 rounded-2xl text-[11px] text-slate-600 flex flex-col gap-1">
-                  <span className="font-bold text-slate-800 flex items-center gap-1">
-                    <Info className="w-3.5 h-3.5 text-indigo-500" /> Geographic Bounds (India region)
+                <div className="bg-gradient-to-br from-indigo-50/40 to-violet-50/20 backdrop-blur-md p-4.5 rounded-[2rem] border border-indigo-100/40 text-[11px] text-slate-600 flex flex-col gap-2 shadow-sm">
+                  <span className="font-extrabold text-slate-800 flex items-center gap-1.5 text-xs">
+                    <Info className="w-4 h-4 text-indigo-500" /> Geographic Bounds (India region)
                   </span>
-                  <span>Bounding Area:</span>
-                  <span>Min Lat: {mapExtent.mapMinLat.toFixed(2)}°N | Max Lat: {mapExtent.mapMaxLat.toFixed(2)}°N</span>
-                  <span>Min Lng: {mapExtent.mapMinLng.toFixed(2)}°E | Max Lng: {mapExtent.mapMaxLng.toFixed(2)}°E</span>
+                  <div className="grid grid-cols-2 gap-2 mt-1">
+                    <div className="bg-white/60 p-2 rounded-xl border border-slate-100 flex flex-col">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Lattitude (N)</span>
+                      <span className="font-mono text-slate-700 font-bold mt-0.5">
+                        {mapExtent.mapMinLat.toFixed(2)}° to {mapExtent.mapMaxLat.toFixed(2)}°
+                      </span>
+                    </div>
+                    <div className="bg-white/60 p-2 rounded-xl border border-slate-100 flex flex-col">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Longitude (E)</span>
+                      <span className="font-mono text-slate-700 font-bold mt-0.5">
+                        {mapExtent.mapMinLng.toFixed(2)}° to {mapExtent.mapMaxLng.toFixed(2)}°
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
 
             {/* 3. Shapefile/GeoJSON Tab */}
             {activeTab === "shapefile" && (
-              <div className="flex flex-col gap-4">
-                <span className="text-xs font-bold text-slate-800">Multi-Layer Shapefiles & Boundaries</span>
-                <p className="text-slate-500 text-[11px] leading-relaxed">
-                  Upload multiple <b>GeoJSON</b> or <b>Zipped Shapefiles</b> as vector layers. Toggle visibility, edit styles, select attribute-level labels, and set the raster clipping mask dynamically.
-                </p>
+              <div className="flex flex-col gap-5">
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Upload className="w-3.5 h-3.5 text-indigo-500" />
+                    Multi-Layer Shapefiles & Boundaries
+                  </span>
+                  <p className="text-slate-500 text-[11px] leading-relaxed">
+                    Upload multiple <b>GeoJSON</b> or <b>Zipped Shapefiles</b> as vector layers. Toggle visibility, edit styles, select attribute-level labels, and set the raster clipping mask dynamically.
+                  </p>
+                </div>
 
                 {/* Drag-and-drop file uploader */}
                 <div
                   onClick={() => document.getElementById("geojson-file-input")?.click()}
-                  className="border-2 border-dashed border-slate-300 hover:border-indigo-500 rounded-2xl p-5 text-center cursor-pointer hover:bg-indigo-50/20 transition-all duration-150 flex flex-col items-center justify-center gap-2 group"
+                  className="border-2 border-dashed border-slate-200 hover:border-indigo-500/80 rounded-[2rem] p-6 text-center cursor-pointer bg-white/40 hover:bg-white hover:scale-[1.01] hover:shadow-[0_12px_24px_-10px_rgba(79,70,229,0.15)] transition-all duration-300 flex flex-col items-center justify-center gap-3 group relative overflow-hidden"
                 >
                   <input
                     id="geojson-file-input"
@@ -5627,23 +5671,25 @@ ${svgStatsPanel}
                       }
                     }}
                   />
-                  <div className="p-3 bg-slate-50 rounded-full group-hover:bg-indigo-50 transition-colors">
-                    <Plus className="w-5 h-5 text-slate-600 group-hover:text-indigo-600" />
+                  <div className="p-3 bg-slate-100/80 rounded-full group-hover:bg-indigo-600 group-hover:text-white transition-all duration-300 shadow-inner group-hover:scale-110">
+                    <Plus className="w-5 h-5 text-indigo-600 group-hover:text-white transition-colors" />
                   </div>
-                  <span className="text-xs font-bold text-slate-800">Add New Layer (GeoJSON / Zip)</span>
-                  <span className="text-[10px] text-slate-400">supports .json, .geojson, or zipped .shp files</span>
+                  <span className="text-xs font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">Add New Layer (GeoJSON / Zip)</span>
+                  <span className="text-[10px] text-slate-400">Supports .json, .geojson, or zipped .shp files</span>
                 </div>
 
                 {/* Clip Target Selection Mask */}
-                <div className="border-t border-slate-100 pt-3 flex flex-col gap-1.5">
-                  <span className="text-[11px] font-bold text-slate-700">Raster Interpolation Clip Mask</span>
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-1.5">
+                  <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                    <Compass className="w-3.5 h-3.5 text-indigo-500" /> Raster Interpolation Clip Mask
+                  </span>
                   <p className="text-[10px] text-slate-400 leading-normal">
                     Select which boundary outline clips the spatial grid/raster interpolation surface.
                   </p>
                   <select
                     value={clipTarget}
                     onChange={(e) => setClipTarget(e.target.value)}
-                    className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl p-2 focus:outline-none"
+                    className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-3 shadow-sm hover:border-indigo-500/80 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
                   >
                     <option value="none">No Clipping (Rectangular Grid)</option>
                     <option value="india">India National Boundary</option>
@@ -5655,17 +5701,17 @@ ${svgStatsPanel}
 
                 {/* Loaded Layers List */}
                 {layers.length > 0 && (
-                  <div className="border-t border-slate-100 pt-3 flex flex-col gap-3">
-                    <label className="flex items-center justify-between cursor-pointer p-2 bg-indigo-50/40 border border-indigo-100/50 rounded-xl mb-1">
-                      <span className="text-[11px] font-bold text-slate-700">Show Shapefiles in Legend Block</span>
+                  <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3">
+                    <label className="flex items-center justify-between cursor-pointer p-2.5 bg-indigo-50/40 hover:bg-indigo-50/80 border border-indigo-100/30 rounded-xl transition-all shadow-sm">
+                      <span className="text-[11px] font-bold text-indigo-950">Show Shapefiles in Legend Block</span>
                       <input
                         type="checkbox"
                         checked={showShapefileInLegend}
                         onChange={(e) => setShowShapefileInLegend(e.target.checked)}
-                        className="cursor-pointer"
+                        className="cursor-pointer h-4 w-4 rounded text-indigo-600 border-indigo-300 focus:ring-indigo-500"
                       />
                     </label>
-                    <span className="text-xs font-bold text-slate-800">Active Map Layers ({layers.length})</span>
+                    <span className="text-xs font-extrabold text-slate-800 tracking-wide uppercase text-[10px]">Active Map Layers ({layers.length})</span>
                     <div className="flex flex-col gap-2">
                       {layers.map((layer) => {
                         // Extract properties for this specific layer
@@ -6203,13 +6249,16 @@ ${svgStatsPanel}
 
             {/* 3. Interpolation Tab */}
             {activeTab === "interpolation" && (
-              <div className="flex flex-col gap-4">
-                <div>
-                  <label className="block text-slate-700 text-xs font-bold mb-1.5">Interpolation Algorithm</label>
+              <div className="flex flex-col gap-5">
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-2">
+                  <label className="block text-slate-700 text-xs font-bold mb-1 flex items-center gap-1.5">
+                    <Sliders className="w-3.5 h-3.5 text-indigo-500" />
+                    Interpolation Algorithm
+                  </label>
                   <select
                     value={interpolationMethod}
                     onChange={(e) => setInterpolationMethod(e.target.value as any)}
-                    className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none"
+                    className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-3 shadow-sm hover:border-indigo-500/80 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
                   >
                     <option value="idw">Inverse Distance Weighting (IDW)</option>
                     <option value="nearest">Nearest Neighbor (Voronoi-tessellation)</option>
@@ -6221,12 +6270,12 @@ ${svgStatsPanel}
 
                 {/* IDW Specific Controls */}
                 {interpolationMethod === "idw" && (
-                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3 flex flex-col gap-2.5">
-                    <span className="text-[10px] font-extrabold text-indigo-600 tracking-wider uppercase">IDW PARAMETERS</span>
-                    <div>
-                      <div className="flex justify-between text-[11px] font-bold text-slate-700 mb-1">
+                  <div className="bg-gradient-to-br from-indigo-50/40 to-violet-50/20 backdrop-blur-md p-4 rounded-3xl border border-indigo-100/30 shadow-sm flex flex-col gap-3">
+                    <span className="text-[10px] font-extrabold text-indigo-800 tracking-wider uppercase">IDW PARAMETERS</span>
+                    <div className="bg-white/60 p-3 rounded-2xl border border-indigo-100/10">
+                      <div className="flex justify-between text-[11px] font-bold text-slate-700 mb-1.5">
                         <span>Distance Power exponent (p)</span>
-                        <span className="text-indigo-600 font-mono">p = {idwPower}</span>
+                        <span className="text-indigo-600 bg-indigo-50/80 px-2 py-0.5 rounded-full font-mono text-xs">p = {idwPower}</span>
                       </div>
                       <input
                         type="range"
@@ -6237,27 +6286,27 @@ ${svgStatsPanel}
                         onChange={(e) => setIdwPower(parseFloat(e.target.value))}
                         className="w-full cursor-pointer accent-indigo-600"
                       />
-                      <p className="text-[10px] text-slate-400 mt-1">
+                      <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
                         Higher power results in more localized influence (peaks and troughs around individual sample points).
                       </p>
                     </div>
                   </div>
                 )}
 
-                {/* Kriging (ArcGIS level Geostatistical Analyst) Controls */}
+                {/* Kriging Controls */}
                 {(interpolationMethod === "kriging" || interpolationMethod === "ordinary_kriging") && (
-                  <div className="bg-slate-50 border border-indigo-100 rounded-2xl p-3.5 flex flex-col gap-3">
-                    <div className="flex items-center gap-1.5 pb-2 border-b border-indigo-100/60">
-                      <div className="w-1.5 h-3 bg-indigo-600 rounded-sm"></div>
-                      <span className="text-[10px] font-extrabold text-indigo-700 tracking-wider uppercase">GEOSTATISTICAL KRIGING ENGINE</span>
+                  <div className="bg-gradient-to-br from-indigo-50/40 to-violet-50/20 backdrop-blur-md p-4 rounded-3xl border border-indigo-100/30 shadow-sm flex flex-col gap-3.5">
+                    <div className="flex items-center gap-1.5 pb-2 border-b border-indigo-100/40">
+                      <div className="w-1.5 h-3.5 bg-indigo-600 rounded-sm"></div>
+                      <span className="text-[10px] font-extrabold text-indigo-800 tracking-wider uppercase">GEOSTATISTICAL KRIGING ENGINE</span>
                     </div>
 
                     <div>
-                      <label className="block text-[10px] text-slate-500 font-bold mb-1">VARIOGRAM THEORETICAL MODEL</label>
+                      <label className="block text-[10px] text-indigo-950 font-extrabold mb-1.5 uppercase">VARIOGRAM THEORETICAL MODEL</label>
                       <select
                         value={krigingModel}
                         onChange={(e) => setKrigingModel(e.target.value as any)}
-                        className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-lg p-2 focus:outline-none"
+                        className="w-full text-xs font-bold bg-white border border-indigo-100 rounded-xl p-2.5 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
                       >
                         <option value="spherical">Spherical Variogram (CGWB Publication Standard)</option>
                         <option value="exponential">Exponential (High Local Spatial Cohesion)</option>
@@ -6265,11 +6314,11 @@ ${svgStatsPanel}
                       </select>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div>
-                        <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-0.5">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-white/60 p-3 rounded-2xl border border-indigo-100/10">
+                        <div className="flex justify-between text-[10px] font-bold text-slate-600 mb-1">
                           <span>NUGGET (C₀)</span>
-                          <span className="font-mono text-indigo-600">{krigingNugget}</span>
+                          <span className="font-mono text-indigo-600 font-bold">{krigingNugget}</span>
                         </div>
                         <input
                           type="range"
@@ -6282,10 +6331,10 @@ ${svgStatsPanel}
                         />
                       </div>
 
-                      <div>
-                        <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-0.5">
+                      <div className="bg-white/60 p-3 rounded-2xl border border-indigo-100/10">
+                        <div className="flex justify-between text-[10px] font-bold text-slate-600 mb-1">
                           <span>SILL (C₀+C)</span>
-                          <span className="font-mono text-indigo-600">{krigingSill}</span>
+                          <span className="font-mono text-indigo-600 font-bold">{krigingSill}</span>
                         </div>
                         <input
                           type="range"
@@ -6299,11 +6348,11 @@ ${svgStatsPanel}
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div>
-                        <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-0.5">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-white/60 p-3 rounded-2xl border border-indigo-100/10">
+                        <div className="flex justify-between text-[10px] font-bold text-slate-600 mb-1">
                           <span>RANGE (km)</span>
-                          <span className="font-mono text-indigo-600">{krigingRange}km</span>
+                          <span className="font-mono text-indigo-600 font-bold">{krigingRange}km</span>
                         </div>
                         <input
                           type="range"
@@ -6316,10 +6365,10 @@ ${svgStatsPanel}
                         />
                       </div>
 
-                      <div>
-                        <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-0.5">
+                      <div className="bg-white/60 p-3 rounded-2xl border border-indigo-100/10">
+                        <div className="flex justify-between text-[10px] font-bold text-slate-600 mb-1">
                           <span>NEIGHBORS</span>
-                          <span className="font-mono text-indigo-600">{krigingNeighbors} pts</span>
+                          <span className="font-mono text-indigo-600 font-bold">{krigingNeighbors} pts</span>
                         </div>
                         <input
                           type="range"
@@ -6332,7 +6381,7 @@ ${svgStatsPanel}
                         />
                       </div>
                     </div>
-                    <p className="text-[9px] text-slate-400">
+                    <p className="text-[9px] text-slate-400 leading-normal">
                       Solves localized systems of spatial auto-correlation linear equations to predict highly statistically-sound concentrations.
                     </p>
                   </div>
@@ -6340,18 +6389,18 @@ ${svgStatsPanel}
 
                 {/* Radial Basis Function (RBF) Specific Controls */}
                 {interpolationMethod === "rbf" && (
-                  <div className="bg-slate-50 border border-emerald-100 rounded-2xl p-3.5 flex flex-col gap-3">
-                    <div className="flex items-center gap-1.5 pb-2 border-b border-emerald-100/60">
-                      <div className="w-1.5 h-3 bg-emerald-600 rounded-sm"></div>
-                      <span className="text-[10px] font-extrabold text-emerald-700 tracking-wider uppercase">RADIAL BASIS FUNCTION SETTINGS</span>
+                  <div className="bg-gradient-to-br from-emerald-50/40 to-teal-50/20 backdrop-blur-md p-4 rounded-3xl border border-emerald-100/30 shadow-sm flex flex-col gap-3.5">
+                    <div className="flex items-center gap-1.5 pb-2 border-b border-emerald-100/40">
+                      <div className="w-1.5 h-3.5 bg-emerald-600 rounded-sm"></div>
+                      <span className="text-[10px] font-extrabold text-emerald-800 tracking-wider uppercase">RADIAL BASIS FUNCTION SETTINGS</span>
                     </div>
 
                     <div>
-                      <label className="block text-[10px] text-slate-500 font-bold mb-1">RBF BASIS KERNEL</label>
+                      <label className="block text-[10px] text-emerald-950 font-extrabold mb-1.5 uppercase">RBF BASIS KERNEL</label>
                       <select
                         value={rbfKernel}
                         onChange={(e) => setRbfKernel(e.target.value as any)}
-                        className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-lg p-2 focus:outline-none"
+                        className="w-full text-xs font-bold bg-white border border-emerald-100 rounded-xl p-2.5 focus:outline-none focus:ring-4 focus:ring-emerald-500/10 transition-all cursor-pointer text-slate-800"
                       >
                         <option value="multiquadric">Multiquadric (Robust Global Fitting)</option>
                         <option value="inverse-multiquadric">Inverse Multiquadric</option>
@@ -6360,10 +6409,10 @@ ${svgStatsPanel}
                       </select>
                     </div>
 
-                    <div>
-                      <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-0.5">
+                    <div className="bg-white/60 p-3 rounded-2xl border border-emerald-100/10">
+                      <div className="flex justify-between text-[10px] font-bold text-slate-600 mb-1">
                         <span>SHAPE SMOOTHING PARAMETER (c)</span>
-                        <span className="font-mono text-emerald-600">{rbfParameter}</span>
+                        <span className="font-mono text-emerald-600 font-bold">{rbfParameter}</span>
                       </div>
                       <input
                         type="range"
@@ -6374,100 +6423,102 @@ ${svgStatsPanel}
                         onChange={(e) => setRbfParameter(parseFloat(e.target.value))}
                         className="w-full cursor-pointer accent-emerald-600"
                       />
-                      <p className="text-[9px] text-slate-400 mt-1">
+                      <p className="text-[9px] text-slate-400 mt-2 leading-relaxed">
                         Adjusts kernel stiffness. Smaller values yield tighter fitted surface curves.
                       </p>
                     </div>
                   </div>
                 )}
 
-                <div>
-                  <div className="flex justify-between text-xs font-bold text-slate-700 mb-1">
-                    <span>Grid Smoothing Resolution</span>
-                    <span>{gridSmoothingRes} columns</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="50"
-                    max="300"
-                    step="10"
-                    value={gridSmoothingRes}
-                    onChange={(e) => setGridSmoothingRes(parseInt(e.target.value))}
-                    className="w-full cursor-pointer accent-indigo-600"
-                  />
-                </div>
-
-                {!useAllPoints && (
-                  <div>
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3.5">
+                  <div className="bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner">
                     <div className="flex justify-between text-xs font-bold text-slate-700 mb-1">
-                      <span>Search Radius (degrees)</span>
-                      <span>{searchRadius}°</span>
+                      <span>Grid Smoothing Resolution</span>
+                      <span className="font-mono text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-full text-[10px] font-bold">{gridSmoothingRes} cols</span>
                     </div>
                     <input
                       type="range"
-                      min="0.5"
-                      max="4.0"
-                      step="0.1"
-                      value={searchRadius}
-                      onChange={(e) => setSearchRadius(parseFloat(e.target.value))}
-                      className="w-full cursor-pointer accent-indigo-600"
+                      min="50"
+                      max="300"
+                      step="10"
+                      value={gridSmoothingRes}
+                      onChange={(e) => setGridSmoothingRes(parseInt(e.target.value))}
+                      className="w-full cursor-pointer accent-indigo-600 mt-1"
                     />
                   </div>
-                )}
 
-                <div>
-                  <div className="flex justify-between text-xs font-bold text-slate-700 mb-1">
-                    <span>Clip to Study Area Buffer</span>
-                    <span>{clippingRadius}°</span>
+                  {!useAllPoints && (
+                    <div className="bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner">
+                      <div className="flex justify-between text-xs font-bold text-slate-700 mb-1">
+                        <span>Search Radius (degrees)</span>
+                        <span className="font-mono text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-full text-[10px] font-bold">{searchRadius}°</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.5"
+                        max="4.0"
+                        step="0.1"
+                        value={searchRadius}
+                        onChange={(e) => setSearchRadius(parseFloat(e.target.value))}
+                        className="w-full cursor-pointer accent-indigo-600 mt-1"
+                      />
+                    </div>
+                  )}
+
+                  <div className="bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner">
+                    <div className="flex justify-between text-xs font-bold text-slate-700 mb-1">
+                      <span>Clip to Study Area Buffer</span>
+                      <span className="font-mono text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-full text-[10px] font-bold">{clippingRadius}°</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.2"
+                      max="3.0"
+                      step="0.1"
+                      value={clippingRadius}
+                      onChange={(e) => setClippingRadius(parseFloat(e.target.value))}
+                      className="w-full cursor-pointer accent-indigo-600 mt-1"
+                    />
                   </div>
-                  <input
-                    type="range"
-                    min="0.2"
-                    max="3.0"
-                    step="0.1"
-                    value={clippingRadius}
-                    onChange={(e) => setClippingRadius(parseFloat(e.target.value))}
-                    className="w-full cursor-pointer accent-indigo-600"
-                  />
+
+                  <label className="flex items-center justify-between cursor-pointer p-2.5 rounded-xl bg-white/60 hover:bg-white transition-all border border-slate-100 hover:border-indigo-100 shadow-sm group">
+                    <div className="pr-4">
+                      <span className="text-xs font-bold text-slate-700 block group-hover:text-indigo-600 transition-colors">Use All Points for Interpolation</span>
+                      <span className="text-[10px] text-slate-400 font-medium">Bypasses spatial radius limit to leverage global dataset</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={useAllPoints}
+                      onChange={(e) => setUseAllPoints(e.target.checked)}
+                      className="cursor-pointer h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                  </label>
+
+                  <div className="bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner">
+                    <div className="flex justify-between text-xs font-bold text-slate-700 mb-1">
+                      <span>Grid Resolution Multiplier</span>
+                      <span className="font-mono text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-full text-[10px] font-bold">{gridResolutionMultiplier}x</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1"
+                      max="10"
+                      step="1"
+                      value={gridResolutionMultiplier}
+                      onChange={(e) => setGridResolutionMultiplier(parseInt(e.target.value))}
+                      className="w-full cursor-pointer accent-indigo-600 mt-1"
+                    />
+                  </div>
                 </div>
 
-                <label className="flex items-center justify-between cursor-pointer p-1.5 rounded-lg hover:bg-slate-50 transition-colors">
-                  <div>
-                    <span className="text-xs font-bold text-slate-700 block">Use All Points for Interpolation</span>
-                    <span className="text-[10px] text-slate-400 font-medium">Bypasses spatial radius limit to leverage global dataset</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={useAllPoints}
-                    onChange={(e) => setUseAllPoints(e.target.checked)}
-                    className="cursor-pointer h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                  />
-                </label>
-
-                <div>
-                  <div className="flex justify-between text-xs font-bold text-slate-700 mb-1">
-                    <span>Grid Resolution Multiplier</span>
-                    <span>{gridResolutionMultiplier}x</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="1"
-                    max="10"
-                    step="1"
-                    value={gridResolutionMultiplier}
-                    onChange={(e) => setGridResolutionMultiplier(parseInt(e.target.value))}
-                    className="w-full cursor-pointer accent-indigo-600"
-                  />
-                </div>
-
-                <div className="border-t border-slate-100 pt-3 flex flex-col gap-2">
-                  <label className="flex items-center justify-between cursor-pointer p-1.5 rounded-lg hover:bg-slate-50">
-                    <span className="text-xs font-medium text-slate-700">Extend Interpolation to Boundary</span>
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-2">
+                  <label className="flex items-center justify-between cursor-pointer p-2 rounded-xl bg-white/60 hover:bg-white transition-all border border-slate-100 hover:border-indigo-100 shadow-sm group">
+                    <span className="text-xs font-medium text-slate-700 group-hover:text-indigo-600 transition-colors">Extend Interpolation to Boundary</span>
                     <input
                       type="checkbox"
                       checked={extendInterpolationToBoundary}
                       onChange={(e) => setExtendInterpolationToBoundary(e.target.checked)}
-                      className="cursor-pointer"
+                      className="cursor-pointer h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
                   </label>
                   <p className="text-[10px] text-slate-400 pl-1.5">
@@ -6559,100 +6610,119 @@ ${svgStatsPanel}
 
             {/* 5. Styling Tab */}
             {activeTab === "styling" && (
-              <div className="flex flex-col gap-4">
-                <div>
-                  <label className="block text-slate-700 text-xs font-bold mb-1.5">Map Sheet Layout</label>
+              <div className="flex flex-col gap-5">
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-1.5">
+                  <label className="block text-slate-700 text-xs font-bold mb-1 flex items-center gap-1.5">
+                    <LayoutGrid className="w-3.5 h-3.5 text-indigo-500" />
+                    Map Sheet Layout
+                  </label>
                   <select
                     value={sheetLayout}
                     onChange={(e) => setSheetLayout(e.target.value as any)}
-                    className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none"
+                    className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-3 shadow-sm hover:border-indigo-500/80 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
                   >
                     <option value="a4-portrait">A4 Portrait Sheet (CGWB Publication Standard)</option>
                     <option value="landscape">Standard Landscape (Interactive Web)</option>
                   </select>
                 </div>
 
-                <div>
-                  <label className="block text-slate-700 text-xs font-bold mb-1.5">Color Scheme Palette</label>
-                  <select
-                    value={colorScheme}
-                    onChange={(e) => setColorScheme(e.target.value)}
-                    className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none"
-                  >
-                    {Object.keys(COLOR_SCHEMES).map(k => (
-                      <option key={k} value={k}>{k}</option>
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3">
+                  <div>
+                    <label className="block text-slate-700 text-xs font-bold mb-1.5 flex items-center gap-1.5">
+                      <Palette className="w-3.5 h-3.5 text-indigo-500" />
+                      Color Scheme Palette
+                    </label>
+                    <select
+                      value={colorScheme}
+                      onChange={(e) => setColorScheme(e.target.value)}
+                      className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-3 shadow-sm hover:border-indigo-500/80 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
+                    >
+                      {Object.keys(COLOR_SCHEMES).map(k => (
+                        <option key={k} value={k}>{k}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-1 p-1 bg-slate-100/40 rounded-xl border border-slate-200/20 shadow-inner">
+                    {(COLOR_SCHEMES[colorScheme as keyof typeof COLOR_SCHEMES] || COLOR_SCHEMES["Blue-Yellow-Red"]).map((c, i) => (
+                      <div
+                        key={i}
+                        className="h-7 flex-1 first:rounded-l-lg last:rounded-r-lg shadow-inner border border-white/20 hover:scale-105 hover:z-10 transition-all duration-150 cursor-pointer"
+                        style={{ backgroundColor: c }}
+                        title={c}
+                      />
                     ))}
-                  </select>
-                </div>
-
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {(COLOR_SCHEMES[colorScheme as keyof typeof COLOR_SCHEMES] || COLOR_SCHEMES["Blue-Yellow-Red"]).map((c, i) => (
-                    <div
-                      key={i}
-                      className="h-6 flex-1 rounded-md shadow-inner border border-slate-200/50"
-                      style={{ backgroundColor: c }}
-                      title={c}
-                    />
-                  ))}
-                </div>
-
-                <div className="border-t border-slate-100 pt-3">
-                  <label className="block text-slate-700 text-xs font-bold mb-1.5">Sampling Point Symbol</label>
-                  <select
-                    value={symbolType}
-                    onChange={(e) => setSymbolType(e.target.value as any)}
-                    className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none"
-                  >
-                    <option value="circle">Circle Symbol</option>
-                    <option value="square">Square Symbol</option>
-                    <option value="triangle">Triangle Symbol</option>
-                    <option value="diamond">Diamond Symbol</option>
-                    <option value="star">Star / Asterisk</option>
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] text-slate-500 font-bold mb-1">SYMBOL SIZE (px)</label>
-                    <input
-                      type="number"
-                      value={symbolSize}
-                      onChange={(e) => setSymbolSize(parseInt(e.target.value) || 8)}
-                      className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-slate-500 font-bold mb-1">SYMBOL OPACITY</label>
-                    <input
-                      type="range"
-                      min="10"
-                      max="100"
-                      value={symbolOpacity}
-                      onChange={(e) => setSymbolOpacity(parseInt(e.target.value))}
-                      className="w-full cursor-pointer accent-indigo-600"
-                    />
                   </div>
                 </div>
 
-                <div className="border-t border-slate-100 pt-3 flex flex-col gap-3">
-                  <span className="text-xs font-bold text-slate-800">Points Map Exceeding-Only View</span>
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3.5">
+                  <div>
+                    <label className="block text-slate-700 text-xs font-bold mb-1.5 flex items-center gap-1.5">
+                      <Compass className="w-3.5 h-3.5 text-indigo-500" />
+                      Sampling Point Symbol
+                    </label>
+                    <select
+                      value={symbolType}
+                      onChange={(e) => setSymbolType(e.target.value as any)}
+                      className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-3 shadow-sm hover:border-indigo-500/80 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
+                    >
+                      <option value="circle">Circle Symbol</option>
+                      <option value="square">Square Symbol</option>
+                      <option value="triangle">Triangle Symbol</option>
+                      <option value="diamond">Diamond Symbol</option>
+                      <option value="star">Star / Asterisk</option>
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 bg-white/50 p-3 rounded-2xl border border-slate-100 shadow-inner">
+                    <div>
+                      <label className="block text-[9px] text-slate-400 font-extrabold mb-1">SYMBOL SIZE (px)</label>
+                      <input
+                        type="number"
+                        value={symbolSize}
+                        onChange={(e) => setSymbolSize(parseInt(e.target.value) || 8)}
+                        className="w-full text-xs font-bold bg-white border border-slate-200 rounded-lg p-2 text-center"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] text-slate-400 font-extrabold mb-1">SYMBOL OPACITY</label>
+                      <div className="flex flex-col gap-1">
+                        <input
+                          type="range"
+                          min="10"
+                          max="100"
+                          value={symbolOpacity}
+                          onChange={(e) => setSymbolOpacity(parseInt(e.target.value))}
+                          className="w-full cursor-pointer accent-indigo-600 mt-1"
+                        />
+                        <span className="text-[9px] text-slate-500 font-mono text-right">{symbolOpacity}%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3.5">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-500" />
+                    Points Map Exceeding-Only View
+                  </span>
                   
-                  <label className="flex items-center justify-between cursor-pointer p-1.5 rounded-lg hover:bg-slate-50">
-                    <span className="text-xs font-medium text-slate-700">Show Exceeding Locations Only</span>
+                  <label className="flex items-center justify-between cursor-pointer p-2.5 rounded-xl bg-white/60 hover:bg-white border border-slate-100 hover:border-indigo-100 transition-all shadow-sm group">
+                    <span className="text-xs font-medium text-slate-700 group-hover:text-indigo-600 transition-colors">Show Exceeding Locations Only</span>
                     <input
                       type="checkbox"
                       checked={showOnlyExceedingPoints}
                       onChange={(e) => setShowOnlyExceedingPoints(e.target.checked)}
-                      className="cursor-pointer"
+                      className="cursor-pointer h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
                   </label>
 
                   {showOnlyExceedingPoints && (
-                    <>
+                    <div className="bg-white/60 p-3.5 rounded-2xl border border-slate-100 shadow-inner flex flex-col gap-3">
                       <div>
-                        <div className="flex justify-between text-xs font-bold text-slate-700 mb-1">
-                          <span>Exceeding Point Size</span>
-                          <span>{exceedingPointSize.toFixed(1)}</span>
+                        <div className="flex justify-between text-[11px] font-bold text-slate-700 mb-1.5">
+                          <span>Exceeding Point Size Scale</span>
+                          <span className="text-indigo-600 font-mono text-xs">{exceedingPointSize.toFixed(1)}x</span>
                         </div>
                         <input
                           type="range"
@@ -6665,45 +6735,48 @@ ${svgStatsPanel}
                         />
                       </div>
 
-                      <label className="flex items-center justify-between cursor-pointer p-1.5 rounded-lg hover:bg-slate-50">
-                        <span className="text-xs font-medium text-slate-700">Display as 3D Bubbles</span>
+                      <label className="flex items-center justify-between cursor-pointer p-2.5 rounded-xl bg-white/80 hover:bg-white border border-slate-200/50 transition-all shadow-sm group">
+                        <span className="text-xs font-medium text-slate-700 group-hover:text-indigo-600 transition-colors">Display as 3D Bubbles</span>
                         <input
                           type="checkbox"
                           checked={showAs3dBubbles}
                           onChange={(e) => setShowAs3dBubbles(e.target.checked)}
-                          className="cursor-pointer"
+                          className="cursor-pointer h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                         />
                       </label>
 
                       <div>
-                        <label className="block text-[10px] text-slate-500 font-bold mb-1">BUBBLE/POINT COLOR</label>
+                        <label className="block text-[9px] text-slate-400 font-bold mb-1.5 uppercase">BUBBLE/POINT COLOR</label>
                         <div className="flex gap-2">
                           <input
                             type="color"
                             value={bubbleColor}
                             onChange={(e) => setBubbleColor(e.target.value)}
-                            className="w-12 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5 shrink-0"
+                            className="w-10 h-10 cursor-pointer border border-slate-200/80 rounded-xl p-0.5 shrink-0 transition-transform hover:scale-105"
                           />
                           <input
                             type="text"
                             value={bubbleColor}
                             onChange={(e) => setBubbleColor(e.target.value)}
-                            className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3"
+                            className="w-full text-xs bg-white border border-slate-200/80 rounded-xl px-3 font-mono text-slate-800 font-bold shadow-sm"
                           />
                         </div>
                       </div>
-                    </>
+                    </div>
                   )}
                 </div>
 
                 {/* Dynamic Classification Class Count */}
-                <div className="border-t border-slate-100 pt-3 flex flex-col gap-2">
-                  <span className="text-xs font-bold text-slate-800">Dynamic Map Class Count</span>
-                  <div className="flex flex-col gap-2 bg-slate-50 p-2.5 rounded-2xl border border-slate-200/50">
-                    <p className="text-[10px] text-slate-500 leading-normal mb-1">
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-2">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <LayoutGrid className="w-3.5 h-3.5 text-indigo-500" />
+                    Dynamic Map Class Count
+                  </span>
+                  <div className="flex flex-col gap-2 bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner">
+                    <p className="text-[10px] text-slate-500 leading-relaxed mb-1">
                       Choose the number of classification ranges to group interpolated concentration values.
                     </p>
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center justify-between gap-2 border-t border-slate-100/60 pt-2">
                       <span className="text-xs font-medium text-slate-600">No. of Classes (2 - 10)</span>
                       <input
                         type="number"
@@ -6711,80 +6784,82 @@ ${svgStatsPanel}
                         max="10"
                         value={interpolationClasses}
                         onChange={(e) => setInterpolationClasses(Math.max(2, Math.min(10, parseInt(e.target.value) || 3)))}
-                        className="w-20 text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
+                        className="w-20 text-xs bg-white border border-slate-200/80 rounded-xl px-3 py-1.5 text-center font-extrabold text-slate-800 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all"
                       />
                     </div>
                   </div>
                 </div>
 
                 {/* Custom Point Colors Selector */}
-                <div className="border-t border-slate-100 pt-3 flex flex-col gap-2">
-                  <div className="flex flex-col gap-2 bg-slate-50 p-2.5 rounded-2xl border border-slate-200/50">
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-2">
+                  <div className="flex flex-col gap-2 bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Separate Point Map Colors</span>
+                      <span className="text-[10px] font-extrabold text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
+                        <Palette className="w-3.5 h-3.5 text-indigo-500" /> Separate Point Map Colors
+                      </span>
                       <input
                         type="checkbox"
                         checked={useCustomPointColors}
                         onChange={(e) => setUseCustomPointColors(e.target.checked)}
-                        className="cursor-pointer h-3.5 w-3.5 rounded accent-indigo-600"
+                        className="cursor-pointer h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                       />
                     </div>
-                    <p className="text-[10px] text-slate-500 leading-normal mb-1">
+                    <p className="text-[10px] text-slate-500 leading-relaxed mb-1">
                       Use separate colors for raw points map to make points stand out from background interpolation.
                     </p>
                     
                     {useCustomPointColors && (
-                      <div className="flex flex-col gap-2 border-t border-slate-100 pt-2">
+                      <div className="flex flex-col gap-3.5 border-t border-slate-100/80 pt-3">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-medium text-slate-600">Acceptable (≤ {paramConfig.b1})</span>
+                          <span className="text-xs font-bold text-slate-600">Acceptable (≤ {paramConfig.b1})</span>
                           <div className="flex items-center gap-1.5">
                             <input
                               type="color"
                               value={pointColorRange1}
                               onChange={(e) => setPointColorRange1(e.target.value)}
-                              className="w-7 h-7 cursor-pointer border border-slate-200 rounded-lg p-0.5"
+                              className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5 shadow-sm transition-transform hover:scale-105"
                             />
                             <input
                               type="text"
                               value={pointColorRange1}
                               onChange={(e) => setPointColorRange1(e.target.value)}
-                              className="w-20 text-[10px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono"
+                              className="w-20 text-[10px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono font-bold shadow-sm"
                             />
                           </div>
                         </div>
 
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-medium text-slate-600">Permissible (≤ {paramConfig.b2})</span>
+                          <span className="text-xs font-bold text-slate-600">Permissible (≤ {paramConfig.b2})</span>
                           <div className="flex items-center gap-1.5">
                             <input
                               type="color"
                               value={pointColorRange2}
                               onChange={(e) => setPointColorRange2(e.target.value)}
-                              className="w-7 h-7 cursor-pointer border border-slate-200 rounded-lg p-0.5"
+                              className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5 shadow-sm transition-transform hover:scale-105"
                             />
                             <input
                               type="text"
                               value={pointColorRange2}
                               onChange={(e) => setPointColorRange2(e.target.value)}
-                              className="w-20 text-[10px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono"
+                              className="w-20 text-[10px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono font-bold shadow-sm"
                             />
                           </div>
                         </div>
 
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-medium text-slate-600">Beyond Permissible (&gt; {paramConfig.b2})</span>
+                          <span className="text-xs font-bold text-slate-600">Beyond Permissible (&gt; {paramConfig.b2})</span>
                           <div className="flex items-center gap-1.5">
                             <input
                               type="color"
                               value={pointColorRange3}
                               onChange={(e) => setPointColorRange3(e.target.value)}
-                              className="w-7 h-7 cursor-pointer border border-slate-200 rounded-lg p-0.5"
+                              className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5 shadow-sm transition-transform hover:scale-105"
                             />
                             <input
                               type="text"
                               value={pointColorRange3}
                               onChange={(e) => setPointColorRange3(e.target.value)}
-                              className="w-20 text-[10px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono"
+                              className="w-20 text-[10px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono font-bold shadow-sm"
                             />
                           </div>
                         </div>
@@ -6794,85 +6869,88 @@ ${svgStatsPanel}
                 </div>
 
                 {/* Custom Color Selector Ranges */}
-                <div className="border-t border-slate-100 pt-3 flex flex-col gap-3">
-                  <span className="text-xs font-bold text-slate-800">Map Custom Classification Colors</span>
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Palette className="w-3.5 h-3.5 text-indigo-500" />
+                    Map Custom Classification Colors
+                  </span>
                   
                   {/* Standard Ranges */}
-                  <div className="flex flex-col gap-2 bg-slate-50 p-2.5 rounded-2xl border border-slate-200/50">
-                    <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Concentration Map Ranges</span>
+                  <div className="flex flex-col gap-3.5 bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner">
+                    <span className="text-[10px] font-extrabold text-indigo-950 uppercase tracking-wide">Concentration Map Ranges</span>
                     
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-medium text-slate-600">Acceptable (≤ {paramConfig.b1})</span>
+                      <span className="text-xs font-bold text-slate-600">Acceptable (≤ {paramConfig.b1})</span>
                       <div className="flex items-center gap-1.5">
                         <input
                           type="color"
                           value={colorRange1}
                           onChange={(e) => setColorRange1(e.target.value)}
-                          className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5 animate-pulse"
+                          className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5 shadow-sm transition-transform hover:scale-105"
                         />
                         <input
                           type="text"
                           value={colorRange1}
                           onChange={(e) => setColorRange1(e.target.value)}
-                          className="w-20 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono"
+                          className="w-20 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono font-bold shadow-sm"
                         />
                       </div>
                     </div>
 
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-medium text-slate-600">Permissible (≤ {paramConfig.b2})</span>
+                      <span className="text-xs font-bold text-slate-600">Permissible (≤ {paramConfig.b2})</span>
                       <div className="flex items-center gap-1.5">
                         <input
                           type="color"
                           value={colorRange2}
                           onChange={(e) => setColorRange2(e.target.value)}
-                          className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5 animate-pulse"
+                          className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5 shadow-sm transition-transform hover:scale-105"
                         />
                         <input
                           type="text"
                           value={colorRange2}
                           onChange={(e) => setColorRange2(e.target.value)}
-                          className="w-20 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono"
+                          className="w-20 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono font-bold shadow-sm"
                         />
                       </div>
                     </div>
 
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-medium text-slate-600">Beyond Permissible (&gt; {paramConfig.b2})</span>
+                      <span className="text-xs font-bold text-slate-600">Beyond Permissible (&gt; {paramConfig.b2})</span>
                       <div className="flex items-center gap-1.5">
                         <input
                           type="color"
                           value={colorRange3}
                           onChange={(e) => setColorRange3(e.target.value)}
-                          className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5 animate-pulse"
+                          className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5 shadow-sm transition-transform hover:scale-105"
                         />
                         <input
                           type="text"
                           value={colorRange3}
                           onChange={(e) => setColorRange3(e.target.value)}
-                          className="w-20 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono"
+                          className="w-20 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono font-bold shadow-sm"
                         />
                       </div>
                     </div>
                   </div>
 
                   {/* Station Location Custom Color */}
-                  <div className="flex flex-col gap-2 bg-slate-50 p-2.5 rounded-2xl border border-slate-200/50">
-                    <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Station Locations Color</span>
+                  <div className="flex flex-col gap-2 bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner">
+                    <span className="text-[10px] font-extrabold text-indigo-950 uppercase tracking-wide">Station Locations Color</span>
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-medium text-slate-600">Location Point Color</span>
+                      <span className="text-xs font-bold text-slate-600">Location Point Color</span>
                       <div className="flex items-center gap-1.5">
                         <input
                           type="color"
                           value={stationPointColor}
                           onChange={(e) => setStationPointColor(e.target.value)}
-                          className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5 animate-pulse"
+                          className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5 shadow-sm transition-transform hover:scale-105"
                         />
                         <input
                           type="text"
                           value={stationPointColor}
                           onChange={(e) => setStationPointColor(e.target.value)}
-                          className="w-20 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono"
+                          className="w-20 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono font-bold shadow-sm"
                         />
                       </div>
                     </div>
@@ -6880,59 +6958,59 @@ ${svgStatsPanel}
 
                   {/* Difference Map Ranges */}
                   {showDifferenceMap && (
-                    <div className="flex flex-col gap-2 bg-slate-50 p-2.5 rounded-2xl border border-slate-200/50">
-                      <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Difference Map Ranges</span>
+                    <div className="flex flex-col gap-3.5 bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner">
+                      <span className="text-[10px] font-extrabold text-indigo-950 uppercase tracking-wide">Difference Map Ranges</span>
                       
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-medium text-slate-600">Improved (Post &lt; Pre)</span>
+                        <span className="text-xs font-bold text-slate-600">Improved (Post &lt; Pre)</span>
                         <div className="flex items-center gap-1.5">
                           <input
                             type="color"
                             value={colorDiffImproved}
                             onChange={(e) => setColorDiffImproved(e.target.value)}
-                            className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5"
+                            className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5 shadow-sm transition-transform hover:scale-105"
                           />
                           <input
                             type="text"
                             value={colorDiffImproved}
                             onChange={(e) => setColorDiffImproved(e.target.value)}
-                            className="w-20 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono"
+                            className="w-20 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono font-bold shadow-sm"
                           />
                         </div>
                       </div>
 
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-medium text-slate-600">Stable</span>
+                        <span className="text-xs font-bold text-slate-600">Stable</span>
                         <div className="flex items-center gap-1.5">
                           <input
                             type="color"
                             value={colorDiffStable}
                             onChange={(e) => setColorDiffStable(e.target.value)}
-                            className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5"
+                            className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5 shadow-sm transition-transform hover:scale-105"
                           />
                           <input
                             type="text"
                             value={colorDiffStable}
                             onChange={(e) => setColorDiffStable(e.target.value)}
-                            className="w-20 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono"
+                            className="w-20 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono font-bold shadow-sm"
                           />
                         </div>
                       </div>
 
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-medium text-slate-600">Deteriorated (Post &gt; Pre)</span>
+                        <span className="text-xs font-bold text-slate-600">Deteriorated (Post &gt; Pre)</span>
                         <div className="flex items-center gap-1.5">
                           <input
                             type="color"
                             value={colorDiffDeteriorated}
                             onChange={(e) => setColorDiffDeteriorated(e.target.value)}
-                            className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5"
+                            className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5 shadow-sm transition-transform hover:scale-105"
                           />
                           <input
                             type="text"
                             value={colorDiffDeteriorated}
                             onChange={(e) => setColorDiffDeteriorated(e.target.value)}
-                            className="w-20 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono"
+                            className="w-20 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-center font-mono font-bold shadow-sm"
                           />
                         </div>
                       </div>
@@ -6944,374 +7022,408 @@ ${svgStatsPanel}
 
             {/* 6. Decorations Tab */}
             {activeTab === "decorations" && (
-              <div className="flex flex-col gap-4">
-                <div className="border-b border-slate-100 pb-3">
-                  <span className="text-xs font-bold text-slate-800 block mb-2">Custom Map Title Customization</span>
-                  <div className="flex flex-col gap-2.5">
+              <div className="flex flex-col gap-5">
+                {/* Titles & Texts */}
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Type className="w-4 h-4 text-indigo-500" />
+                    Map Title Customization
+                  </span>
+                  
+                  <div className="flex flex-col gap-3.5 bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner">
                     <div>
-                      <label className="block text-[10px] text-slate-500 font-bold mb-1">MAP TITLE TEXT</label>
+                      <label className="block text-[10px] text-slate-500 font-bold mb-1 uppercase tracking-wide">MAP TITLE TEXT</label>
                       <input
                         type="text"
                         placeholder="Default Concentration Map"
                         value={customTitle}
                         onChange={(e) => setCustomTitle(e.target.value)}
-                        className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none"
+                        className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-2.5 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all text-slate-800 shadow-sm"
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] text-slate-500 font-bold mb-1">MAP SUBTITLE TEXT</label>
+                      <label className="block text-[10px] text-slate-500 font-bold mb-1 uppercase tracking-wide">MAP SUBTITLE TEXT</label>
                       <input
                         type="text"
                         placeholder="Default Survey & Dynamics"
                         value={customSubtitle}
                         onChange={(e) => setCustomSubtitle(e.target.value)}
-                        className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none"
+                        className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-2.5 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all text-slate-800 shadow-sm"
                       />
                     </div>
 
-                    <label className="flex items-center justify-between cursor-pointer p-1.5 rounded-lg hover:bg-slate-50 border border-slate-100/60 mt-1">
-                      <span className="text-xs font-semibold text-slate-700">Replace Main Title with Subtitle text</span>
+                    <label className="flex items-center justify-between cursor-pointer p-2 rounded-xl bg-white/80 hover:bg-white border border-slate-150 transition-all mt-1 group">
+                      <span className="text-xs font-medium text-slate-700 group-hover:text-indigo-600 transition-colors">Replace Main Title with Subtitle</span>
                       <input
                         type="checkbox"
                         checked={useSubtitleAsTitle}
                         onChange={(e) => setUseSubtitleAsTitle(e.target.checked)}
-                        className="cursor-pointer h-4 w-4 rounded accent-indigo-600"
+                        className="cursor-pointer h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                       />
                     </label>
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-slate-700 text-xs font-bold mb-1.5">Map Title Placement</label>
-                  <select
-                    value={titlePos}
-                    onChange={(e) => setTitlePos(e.target.value as any)}
-                    className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none"
-                  >
-                    <option value="top-center">Top Center position</option>
-                    <option value="top-left">Top Left corner</option>
-                    <option value="top-right">Top Right corner</option>
-                    <option value="bottom-center">Bottom Center position</option>
-                    <option value="bottom-left">Bottom Left corner</option>
-                    <option value="bottom-right">Bottom Right corner</option>
-                    <option value="none">No Title Plate</option>
-                  </select>
-                </div>
+                {/* Placement & Directions */}
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3.5">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Compass className="w-4 h-4 text-indigo-500" />
+                    Layout Placements
+                  </span>
 
-                <div>
-                  <label className="block text-slate-700 text-xs font-bold mb-1.5">North Arrow Type</label>
-                  <select
-                    value={northArrowType}
-                    onChange={(e) => setNorthArrowType(e.target.value as any)}
-                    className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none"
-                  >
-                    <option value="classic">Classic Compass Needle</option>
-                    <option value="modern">Modern Minimalist Arrow</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-slate-700 text-xs font-bold mb-1.5">North Arrow Position</label>
-                  <select
-                    value={northArrowPos}
-                    onChange={(e) => setNorthArrowPos(e.target.value as any)}
-                    className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none"
-                  >
-                    <option value="top-right">Top-Right corner</option>
-                    <option value="top-left">Top-Left corner</option>
-                    <option value="bottom-right">Bottom-Right corner</option>
-                    <option value="bottom-left">Bottom-Left corner</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-slate-700 text-xs font-bold mb-1.5">Legend Position Corner</label>
-                  <select
-                    value={legendPos}
-                    onChange={(e) => setLegendPos(e.target.value as any)}
-                    className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none"
-                  >
-                    <option value="bottom-right">Bottom-Right corner</option>
-                    <option value="bottom-left">Bottom-Left corner</option>
-                    <option value="top-right">Top-Right corner</option>
-                    <option value="top-left">Top-Left corner</option>
-                  </select>
-                </div>
-
-                <label className="flex items-center justify-between cursor-pointer p-1.5 rounded-lg hover:bg-slate-50 border border-slate-100/60 mt-1">
-                  <span className="text-xs font-semibold text-slate-700">Show Shapefiles in Legend Block</span>
-                  <input
-                    type="checkbox"
-                    checked={showShapefileInLegend}
-                    onChange={(e) => setShowShapefileInLegend(e.target.checked)}
-                    className="cursor-pointer h-4 w-4 rounded accent-indigo-600"
-                  />
-                </label>
-
-                <div className="border-b border-slate-100 pb-3 flex flex-col gap-2.5">
-                  <span className="text-xs font-bold text-slate-800 block">Element Color Customization</span>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 gap-3">
                     <div>
-                      <label className="block text-[9px] text-slate-500 font-bold mb-1">TITLE COLOR</label>
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="color"
-                          value={mapTitleColor}
-                          onChange={(e) => setMapTitleColor(e.target.value)}
-                          className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5"
-                        />
+                      <label className="block text-slate-600 text-xs font-bold mb-1">Map Title Placement</label>
+                      <select
+                        value={titlePos}
+                        onChange={(e) => setTitlePos(e.target.value as any)}
+                        className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-2.5 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800 shadow-sm"
+                      >
+                        <option value="top-center">Top Center position</option>
+                        <option value="top-left">Top Left corner</option>
+                        <option value="top-right">Top Right corner</option>
+                        <option value="bottom-center">Bottom Center position</option>
+                        <option value="bottom-left">Bottom Left corner</option>
+                        <option value="bottom-right">Bottom Right corner</option>
+                        <option value="none">No Title Plate</option>
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3.5">
+                      <div>
+                        <label className="block text-slate-600 text-xs font-bold mb-1">North Arrow Type</label>
+                        <select
+                          value={northArrowType}
+                          onChange={(e) => setNorthArrowType(e.target.value as any)}
+                          className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-2.5 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800 shadow-sm"
+                        >
+                          <option value="classic">Classic Compass Needle</option>
+                          <option value="modern">Modern Minimal Arrow</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-slate-600 text-xs font-bold mb-1">North Arrow Position</label>
+                        <select
+                          value={northArrowPos}
+                          onChange={(e) => setNorthArrowPos(e.target.value as any)}
+                          className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-2.5 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800 shadow-sm"
+                        >
+                          <option value="top-right">Top-Right corner</option>
+                          <option value="top-left">Top-Left corner</option>
+                          <option value="bottom-right">Bottom-Right corner</option>
+                          <option value="bottom-left">Bottom-Left corner</option>
+                        </select>
                       </div>
                     </div>
+
                     <div>
-                      <label className="block text-[9px] text-slate-500 font-bold mb-1">SUBTITLE COLOR</label>
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="color"
-                          value={mapSubtitleColor}
-                          onChange={(e) => setMapSubtitleColor(e.target.value)}
-                          className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5"
-                        />
-                      </div>
+                      <label className="block text-slate-600 text-xs font-bold mb-1">Legend Position Corner</label>
+                      <select
+                        value={legendPos}
+                        onChange={(e) => setLegendPos(e.target.value as any)}
+                        className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-2.5 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800 shadow-sm"
+                      >
+                        <option value="bottom-right">Bottom-Right corner</option>
+                        <option value="bottom-left">Bottom-Left corner</option>
+                        <option value="top-right">Top-Right corner</option>
+                        <option value="top-left">Top-Left corner</option>
+                      </select>
                     </div>
-                    <div>
-                      <label className="block text-[9px] text-slate-500 font-bold mb-1">LEGEND COLOR</label>
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="color"
-                          value={legendTextColor}
-                          onChange={(e) => setLegendTextColor(e.target.value)}
-                          className="w-8 h-8 cursor-pointer border border-slate-200 rounded-lg p-0.5"
-                        />
-                      </div>
+
+                    <label className="flex items-center justify-between cursor-pointer p-2.5 rounded-xl bg-white/60 hover:bg-white border border-slate-100 hover:border-indigo-100 transition-all mt-1 group">
+                      <span className="text-xs font-medium text-slate-700 group-hover:text-indigo-600 transition-colors font-bold">Show Shapefiles in Legend</span>
+                      <input
+                        type="checkbox"
+                        checked={showShapefileInLegend}
+                        onChange={(e) => setShowShapefileInLegend(e.target.checked)}
+                        className="cursor-pointer h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                {/* Colors Customization */}
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Palette className="w-4 h-4 text-indigo-500" />
+                    Element Color Customization
+                  </span>
+
+                  <div className="grid grid-cols-3 gap-2 bg-white/60 p-2.5 rounded-2xl border border-slate-100 shadow-inner">
+                    <div className="flex flex-col items-center">
+                      <label className="text-[9px] text-slate-400 font-bold mb-1 uppercase tracking-wide">Title</label>
+                      <input
+                        type="color"
+                        value={mapTitleColor}
+                        onChange={(e) => setMapTitleColor(e.target.value)}
+                        className="w-9 h-9 cursor-pointer border border-slate-200 rounded-xl p-0.5 shadow-sm transition-transform hover:scale-105"
+                      />
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <label className="text-[9px] text-slate-400 font-bold mb-1 uppercase tracking-wide">Subtitle</label>
+                      <input
+                        type="color"
+                        value={mapSubtitleColor}
+                        onChange={(e) => setMapSubtitleColor(e.target.value)}
+                        className="w-9 h-9 cursor-pointer border border-slate-200 rounded-xl p-0.5 shadow-sm transition-transform hover:scale-105"
+                      />
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <label className="text-[9px] text-slate-400 font-bold mb-1 uppercase tracking-wide">Legend</label>
+                      <input
+                        type="color"
+                        value={legendTextColor}
+                        onChange={(e) => setLegendTextColor(e.target.value)}
+                        className="w-9 h-9 cursor-pointer border border-slate-200 rounded-xl p-0.5 shadow-sm transition-transform hover:scale-105"
+                      />
                     </div>
                   </div>
                 </div>
 
-                <div className="border-b border-slate-100 pb-3 flex flex-col gap-3">
-                  <span className="text-xs font-bold text-slate-800">Precise Element Positioning (Fine Adjustments)</span>
-                  <p className="text-[10px] text-slate-500 leading-normal">
-                    Precisely reposition individual map decorations (Title, Legend, Stats Table, and North Arrow) relative to their anchor coordinates.
+                {/* Precise Positioning Offsets */}
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Sliders className="w-4 h-4 text-indigo-500" />
+                    Precise Element Positioning (Offsets)
+                  </span>
+                  <p className="text-[10px] text-slate-500 leading-relaxed mb-1">
+                    Precisely reposition individual map decorations relative to their anchor coordinates.
                   </p>
-                  
-                  {/* Title Position Offset */}
-                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 flex flex-col gap-1.5">
-                    <span className="text-[10px] font-bold text-slate-700 uppercase">Map Title Offsets (X / Y)</span>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <span className="text-[9px] text-slate-400">X: {titleOffsetX}px</span>
-                        <input
-                          type="range"
-                          min="-400"
-                          max="400"
-                          value={titleOffsetX}
-                          onChange={(e) => setTitleOffsetX(parseInt(e.target.value))}
-                          className="w-full cursor-pointer accent-indigo-600 h-1.5"
-                        />
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-slate-400">Y: {titleOffsetY}px</span>
-                        <input
-                          type="range"
-                          min="-400"
-                          max="400"
-                          value={titleOffsetY}
-                          onChange={(e) => setTitleOffsetY(parseInt(e.target.value))}
-                          className="w-full cursor-pointer accent-indigo-600 h-1.5"
-                        />
+
+                  <div className="flex flex-col gap-3 bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner max-h-[250px] overflow-y-auto custom-scrollbar">
+                    {/* Title Position Offset */}
+                    <div className="bg-white/90 p-2.5 rounded-xl border border-slate-100 flex flex-col gap-1.5">
+                      <span className="text-[10px] font-bold text-slate-700 uppercase">Map Title Offsets</span>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <span className="text-[9px] text-slate-400 font-mono font-bold block mb-0.5">X: {titleOffsetX}px</span>
+                          <input
+                            type="range"
+                            min="-400"
+                            max="400"
+                            value={titleOffsetX}
+                            onChange={(e) => setTitleOffsetX(parseInt(e.target.value))}
+                            className="w-full cursor-pointer accent-indigo-600 h-1.5"
+                          />
+                        </div>
+                        <div>
+                          <span className="text-[9px] text-slate-400 font-mono font-bold block mb-0.5">Y: {titleOffsetY}px</span>
+                          <input
+                            type="range"
+                            min="-400"
+                            max="400"
+                            value={titleOffsetY}
+                            onChange={(e) => setTitleOffsetY(parseInt(e.target.value))}
+                            className="w-full cursor-pointer accent-indigo-600 h-1.5"
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Legend Position Offset */}
-                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 flex flex-col gap-1.5">
-                    <span className="text-[10px] font-bold text-slate-700 uppercase">Legend Offsets (X / Y)</span>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <span className="text-[9px] text-slate-400">X: {legendOffsetX}px</span>
-                        <input
-                          type="range"
-                          min="-400"
-                          max="400"
-                          value={legendOffsetX}
-                          onChange={(e) => setLegendOffsetX(parseInt(e.target.value))}
-                          className="w-full cursor-pointer accent-indigo-600 h-1.5"
-                        />
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-slate-400">Y: {legendOffsetY}px</span>
-                        <input
-                          type="range"
-                          min="-400"
-                          max="400"
-                          value={legendOffsetY}
-                          onChange={(e) => setLegendOffsetY(parseInt(e.target.value))}
-                          className="w-full cursor-pointer accent-indigo-600 h-1.5"
-                        />
+                    {/* Legend Position Offset */}
+                    <div className="bg-white/90 p-2.5 rounded-xl border border-slate-100 flex flex-col gap-1.5">
+                      <span className="text-[10px] font-bold text-slate-700 uppercase">Legend Offsets</span>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <span className="text-[9px] text-slate-400 font-mono font-bold block mb-0.5">X: {legendOffsetX}px</span>
+                          <input
+                            type="range"
+                            min="-400"
+                            max="400"
+                            value={legendOffsetX}
+                            onChange={(e) => setLegendOffsetX(parseInt(e.target.value))}
+                            className="w-full cursor-pointer accent-indigo-600 h-1.5"
+                          />
+                        </div>
+                        <div>
+                          <span className="text-[9px] text-slate-400 font-mono font-bold block mb-0.5">Y: {legendOffsetY}px</span>
+                          <input
+                            type="range"
+                            min="-400"
+                            max="400"
+                            value={legendOffsetY}
+                            onChange={(e) => setLegendOffsetY(parseInt(e.target.value))}
+                            className="w-full cursor-pointer accent-indigo-600 h-1.5"
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Stats Table Position Offset */}
-                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 flex flex-col gap-1.5">
-                    <span className="text-[10px] font-bold text-slate-700 uppercase">Stats Table Offsets (X / Y)</span>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <span className="text-[9px] text-slate-400">X: {statsOffsetX}px</span>
-                        <input
-                          type="range"
-                          min="-400"
-                          max="400"
-                          value={statsOffsetX}
-                          onChange={(e) => setStatsOffsetX(parseInt(e.target.value))}
-                          className="w-full cursor-pointer accent-indigo-600 h-1.5"
-                        />
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-slate-400">Y: {statsOffsetY}px</span>
-                        <input
-                          type="range"
-                          min="-400"
-                          max="400"
-                          value={statsOffsetY}
-                          onChange={(e) => setStatsOffsetY(parseInt(e.target.value))}
-                          className="w-full cursor-pointer accent-indigo-600 h-1.5"
-                        />
+                    {/* Stats Table Position Offset */}
+                    <div className="bg-white/90 p-2.5 rounded-xl border border-slate-100 flex flex-col gap-1.5">
+                      <span className="text-[10px] font-bold text-slate-700 uppercase">Stats Table Offsets</span>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <span className="text-[9px] text-slate-400 font-mono font-bold block mb-0.5">X: {statsOffsetX}px</span>
+                          <input
+                            type="range"
+                            min="-400"
+                            max="400"
+                            value={statsOffsetX}
+                            onChange={(e) => setStatsOffsetX(parseInt(e.target.value))}
+                            className="w-full cursor-pointer accent-indigo-600 h-1.5"
+                          />
+                        </div>
+                        <div>
+                          <span className="text-[9px] text-slate-400 font-mono font-bold block mb-0.5">Y: {statsOffsetY}px</span>
+                          <input
+                            type="range"
+                            min="-400"
+                            max="400"
+                            value={statsOffsetY}
+                            onChange={(e) => setStatsOffsetY(parseInt(e.target.value))}
+                            className="w-full cursor-pointer accent-indigo-600 h-1.5"
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* North Arrow Position Offset */}
-                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 flex flex-col gap-1.5">
-                    <span className="text-[10px] font-bold text-slate-700 uppercase">North Arrow Offsets (X / Y)</span>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <span className="text-[9px] text-slate-400">X: {northArrowOffsetX}px</span>
-                        <input
-                          type="range"
-                          min="-400"
-                          max="400"
-                          value={northArrowOffsetX}
-                          onChange={(e) => setNorthArrowOffsetX(parseInt(e.target.value))}
-                          className="w-full cursor-pointer accent-indigo-600 h-1.5"
-                        />
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-slate-400">Y: {northArrowOffsetY}px</span>
-                        <input
-                          type="range"
-                          min="-400"
-                          max="400"
-                          value={northArrowOffsetY}
-                          onChange={(e) => setNorthArrowOffsetY(parseInt(e.target.value))}
-                          className="w-full cursor-pointer accent-indigo-600 h-1.5"
-                        />
+                    {/* North Arrow Position Offset */}
+                    <div className="bg-white/90 p-2.5 rounded-xl border border-slate-100 flex flex-col gap-1.5">
+                      <span className="text-[10px] font-bold text-slate-700 uppercase">North Arrow Offsets</span>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <span className="text-[9px] text-slate-400 font-mono font-bold block mb-0.5">X: {northArrowOffsetX}px</span>
+                          <input
+                            type="range"
+                            min="-400"
+                            max="400"
+                            value={northArrowOffsetX}
+                            onChange={(e) => setNorthArrowOffsetX(parseInt(e.target.value))}
+                            className="w-full cursor-pointer accent-indigo-600 h-1.5"
+                          />
+                        </div>
+                        <div>
+                          <span className="text-[9px] text-slate-400 font-mono font-bold block mb-0.5">Y: {northArrowOffsetY}px</span>
+                          <input
+                            type="range"
+                            min="-400"
+                            max="400"
+                            value={northArrowOffsetY}
+                            onChange={(e) => setNorthArrowOffsetY(parseInt(e.target.value))}
+                            className="w-full cursor-pointer accent-indigo-600 h-1.5"
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Scale Bar Position Offset */}
-                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 flex flex-col gap-1.5">
-                    <span className="text-[10px] font-bold text-slate-700 uppercase">Scale Bar Offsets (X / Y)</span>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <span className="text-[9px] text-slate-400">X: {scaleBarOffsetX}px</span>
-                        <input
-                          type="range"
-                          min="-400"
-                          max="400"
-                          value={scaleBarOffsetX}
-                          onChange={(e) => setScaleBarOffsetX(parseInt(e.target.value))}
-                          className="w-full cursor-pointer accent-indigo-600 h-1.5"
-                        />
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-slate-400">Y: {scaleBarOffsetY}px</span>
-                        <input
-                          type="range"
-                          min="-400"
-                          max="400"
-                          value={scaleBarOffsetY}
-                          onChange={(e) => setScaleBarOffsetY(parseInt(e.target.value))}
-                          className="w-full cursor-pointer accent-indigo-600 h-1.5"
-                        />
+                    {/* Scale Bar Position Offset */}
+                    <div className="bg-white/90 p-2.5 rounded-xl border border-slate-100 flex flex-col gap-1.5">
+                      <span className="text-[10px] font-bold text-slate-700 uppercase">Scale Bar Offsets</span>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <span className="text-[9px] text-slate-400 font-mono font-bold block mb-0.5">X: {scaleBarOffsetX}px</span>
+                          <input
+                            type="range"
+                            min="-400"
+                            max="400"
+                            value={scaleBarOffsetX}
+                            onChange={(e) => setScaleBarOffsetX(parseInt(e.target.value))}
+                            className="w-full cursor-pointer accent-indigo-600 h-1.5"
+                          />
+                        </div>
+                        <div>
+                          <span className="text-[9px] text-slate-400 font-mono font-bold block mb-0.5">Y: {scaleBarOffsetY}px</span>
+                          <input
+                            type="range"
+                            min="-400"
+                            max="400"
+                            value={scaleBarOffsetY}
+                            onChange={(e) => setScaleBarOffsetY(parseInt(e.target.value))}
+                            className="w-full cursor-pointer accent-indigo-600 h-1.5"
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="border-t border-slate-100 pt-3 flex flex-col gap-3">
-                  <span className="text-xs font-bold text-slate-800">Transparency & Panel Modes</span>
-                  
-                  <label className="flex items-center justify-between cursor-pointer p-1.5 rounded-lg hover:bg-slate-50">
-                    <span className="text-xs font-medium text-slate-700">Strictly Transparent Panels</span>
+                {/* Transparency, Font & Dimensions */}
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3.5">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Sliders className="w-4 h-4 text-indigo-500" />
+                    Transparency & Typography
+                  </span>
+
+                  <label className="flex items-center justify-between cursor-pointer p-2.5 rounded-xl bg-white/60 hover:bg-white border border-slate-100 hover:border-indigo-100 transition-all group">
+                    <span className="text-xs font-semibold text-slate-700 group-hover:text-indigo-600 transition-colors">Strictly Transparent Panels</span>
                     <input
                       type="checkbox"
                       checked={onlyTransparentPanels}
                       onChange={(e) => setOnlyTransparentPanels(e.target.checked)}
-                      className="cursor-pointer"
+                      className="cursor-pointer h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
                   </label>
-                  <p className="text-[10px] text-slate-400 pl-1.5">
+                  <p className="text-[9px] text-slate-400 pl-1 -mt-2 leading-relaxed">
                     Forces transparent backgrounds for Title, Legend, and Stats panels to optimize overlay visibility.
                   </p>
 
-                  <div className="mt-2">
-                    <label className="block text-[10px] text-slate-500 font-bold mb-1">MAP FONT FAMILY</label>
-                    <select
-                      value={mapFontFamily}
-                      onChange={(e) => setMapFontFamily(e.target.value)}
-                      className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 focus:outline-none"
-                    >
-                      <option value="Times New Roman">Times New Roman (Serif)</option>
-                      <option value="Calibri">Calibri (Sans-Serif)</option>
-                      <option value="sans-serif">Clean Sans-Serif (Inter)</option>
-                      <option value="serif">Official Serif (Georgia)</option>
-                      <option value="monospace">Mono Technical (Fira Code)</option>
-                      <option value="cursive">Elegant Cursive</option>
-                    </select>
-                  </div>
+                  <div className="bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner flex flex-col gap-3">
+                    <div>
+                      <label className="block text-[10px] text-slate-400 font-bold mb-1 uppercase tracking-wide">MAP FONT FAMILY</label>
+                      <select
+                        value={mapFontFamily}
+                        onChange={(e) => setMapFontFamily(e.target.value)}
+                        className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-2.5 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
+                      >
+                        <option value="Times New Roman">Times New Roman (Serif)</option>
+                        <option value="Calibri">Calibri (Sans-Serif)</option>
+                        <option value="sans-serif">Clean Sans-Serif (Inter)</option>
+                        <option value="serif">Official Serif (Georgia)</option>
+                        <option value="monospace">Mono Technical (Fira Code)</option>
+                        <option value="cursive">Elegant Cursive</option>
+                      </select>
+                    </div>
 
-                  <div className="grid grid-cols-3 gap-2">
-                    <div>
-                      <label className="block text-[10px] text-slate-500 font-bold mb-1">TITLE SIZE (px)</label>
-                      <input
-                        type="number"
-                        value={mapTitleSize}
-                        onChange={(e) => setMapTitleSize(parseInt(e.target.value) || 15)}
-                        className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-slate-500 font-bold mb-1">SUBTITLE SIZE (px)</label>
-                      <input
-                        type="number"
-                        value={mapSubtitleSize}
-                        onChange={(e) => setMapSubtitleSize(parseInt(e.target.value) || 11)}
-                        className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-slate-500 font-bold mb-1">LINE SPACING (px)</label>
-                      <input
-                        type="number"
-                        value={titleLineSpacing}
-                        onChange={(e) => setTitleLineSpacing(parseInt(e.target.value) || 0)}
-                        className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 focus:outline-none"
-                        min="0"
-                        max="100"
-                      />
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-[9px] text-slate-400 font-bold mb-1 text-center">TITLE (px)</label>
+                        <input
+                          type="number"
+                          value={mapTitleSize}
+                          onChange={(e) => setMapTitleSize(parseInt(e.target.value) || 15)}
+                          className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-2 text-center"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] text-slate-400 font-bold mb-1 text-center">SUBTITLE</label>
+                        <input
+                          type="number"
+                          value={mapSubtitleSize}
+                          onChange={(e) => setMapSubtitleSize(parseInt(e.target.value) || 11)}
+                          className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-2 text-center"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] text-slate-400 font-bold mb-1 text-center">SPACING</label>
+                        <input
+                          type="number"
+                          value={titleLineSpacing}
+                          onChange={(e) => setTitleLineSpacing(parseInt(e.target.value) || 0)}
+                          className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-2 text-center"
+                          min="0"
+                          max="100"
+                        />
+                      </div>
                     </div>
                   </div>
+                </div>
 
-                  <div className="border-t border-slate-100 pt-3 flex flex-col gap-3">
-                    <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wide">3D Text Effects (Emboss/Deboss)</span>
-                    
+                {/* 3D Text Effects */}
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-indigo-500" />
+                    3D Text Effects (Emboss/Deboss)
+                  </span>
+
+                  <div className="bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner flex flex-col gap-3">
                     <div>
-                      <label className="block text-[10px] text-slate-500 font-bold mb-1">MAP TITLE 3D EFFECT</label>
+                      <label className="block text-[9px] text-slate-400 font-bold mb-1 uppercase tracking-wide">MAP TITLE 3D EFFECT</label>
                       <select
                         value={mapTitle3dEffect}
                         onChange={(e) => setMapTitle3dEffect(e.target.value)}
-                        className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 focus:outline-none"
+                        className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-2 focus:outline-none text-slate-800 cursor-pointer"
                       >
                         <option value="none">None (Standard Flat)</option>
                         <option value="emboss">3D Emboss (Raised Bevel)</option>
@@ -7320,11 +7432,11 @@ ${svgStatsPanel}
                     </div>
 
                     <div>
-                      <label className="block text-[10px] text-slate-500 font-bold mb-1">MAP SUBTITLE 3D EFFECT</label>
+                      <label className="block text-[9px] text-slate-400 font-bold mb-1 uppercase tracking-wide">MAP SUBTITLE 3D EFFECT</label>
                       <select
                         value={mapSubtitle3dEffect}
                         onChange={(e) => setMapSubtitle3dEffect(e.target.value)}
-                        className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 focus:outline-none"
+                        className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-2 focus:outline-none text-slate-800 cursor-pointer"
                       >
                         <option value="none">None (Standard Flat)</option>
                         <option value="emboss">3D Emboss (Raised Bevel)</option>
@@ -7333,11 +7445,11 @@ ${svgStatsPanel}
                     </div>
 
                     <div>
-                      <label className="block text-[10px] text-slate-500 font-bold mb-1">MAP LEGEND 3D EFFECT</label>
+                      <label className="block text-[9px] text-slate-400 font-bold mb-1 uppercase tracking-wide">MAP LEGEND 3D EFFECT</label>
                       <select
                         value={legend3dEffect}
                         onChange={(e) => setLegend3dEffect(e.target.value)}
-                        className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 focus:outline-none"
+                        className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-2 focus:outline-none text-slate-800 cursor-pointer"
                       >
                         <option value="none">None (Standard Flat)</option>
                         <option value="emboss">3D Emboss (Raised Bevel)</option>
@@ -7345,41 +7457,47 @@ ${svgStatsPanel}
                       </select>
                     </div>
                   </div>
+                </div>
 
-                  <div className="border-t border-slate-100 pt-3 flex flex-col gap-3">
-                    <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wide">Legend & Classes Sizing</span>
-                    
+                {/* Legend Width & Rows */}
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Grid3X3 className="w-4 h-4 text-indigo-500" />
+                    Legend & Classes Sizing
+                  </span>
+
+                  <div className="bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner flex flex-col gap-3.5">
                     <div className="grid grid-cols-3 gap-2">
                       <div>
-                        <label className="block text-[10px] text-slate-500 font-bold mb-1">LEGEND WIDTH (px)</label>
+                        <label className="block text-[9px] text-slate-400 font-bold mb-1 text-center">WIDTH (px)</label>
                         <input
                           type="number"
                           value={legendWidth}
                           onChange={(e) => setLegendWidth(parseInt(e.target.value) || 155)}
-                          className="w-full text-[11px] bg-slate-50 border border-slate-200 rounded-xl p-1.5 focus:outline-none"
+                          className="w-full text-xs font-bold bg-white border border-slate-200/80 rounded-xl p-1.5 text-center text-slate-800"
                           min="100"
                           max="400"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-[10px] text-slate-500 font-bold mb-1">ROW SPACING</label>
+                        <label className="block text-[9px] text-slate-400 font-bold mb-1 text-center">SPACING</label>
                         <input
                           type="number"
                           value={legendRowSpacing}
                           onChange={(e) => setLegendRowSpacing(parseInt(e.target.value) || 16)}
-                          className="w-full text-[11px] bg-slate-50 border border-slate-200 rounded-xl p-1.5 focus:outline-none"
+                          className="w-full text-xs font-bold bg-white border border-slate-200/80 rounded-xl p-1.5 text-center text-slate-800"
                           min="10"
                           max="40"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-[10px] text-slate-500 font-bold mb-1">COLUMNS</label>
+                        <label className="block text-[9px] text-slate-400 font-bold mb-1 text-center">COLUMNS</label>
                         <select
                           value={legendColumns}
                           onChange={(e) => setLegendColumns(parseInt(e.target.value) || 1)}
-                          className="w-full text-[11px] bg-slate-50 border border-slate-200 rounded-xl p-1.5 focus:outline-none"
+                          className="w-full text-xs font-bold bg-white border border-slate-200/80 rounded-xl p-1.5 text-slate-800 cursor-pointer"
                         >
                           <option value={1}>1 Col</option>
                           <option value={2}>2 Col</option>
@@ -7388,150 +7506,165 @@ ${svgStatsPanel}
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-[10px] text-slate-500 font-bold mb-1">CLASS BOX WIDTH</label>
+                        <label className="block text-[9px] text-slate-400 font-bold mb-1">CLASS BOX WIDTH</label>
                         <input
                           type="number"
                           value={legendBoxWidth}
                           onChange={(e) => setLegendBoxWidth(parseInt(e.target.value) || 12)}
-                          className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 focus:outline-none"
+                          className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-2 text-center text-slate-800"
                           min="4"
                           max="30"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-[10px] text-slate-500 font-bold mb-1">CLASS BOX HEIGHT</label>
+                        <label className="block text-[9px] text-slate-400 font-bold mb-1">CLASS BOX HEIGHT</label>
                         <input
                           type="number"
                           value={legendBoxHeight}
                           onChange={(e) => setLegendBoxHeight(parseInt(e.target.value) || 8)}
-                          className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 focus:outline-none"
+                          className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-2 text-center text-slate-800"
                           min="4"
                           max="30"
                         />
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-1.5">
+                    <div className="grid grid-cols-3 gap-2 border-t border-slate-100/60 pt-3">
                       <div>
-                        <label className="block text-[9px] text-slate-500 font-bold mb-1">TITLE SZ</label>
+                        <label className="block text-[9px] text-slate-400 font-bold mb-1 text-center">TITLE SZ</label>
                         <input
                           type="number"
                           step="0.5"
                           value={legendTitleSize}
                           onChange={(e) => setLegendTitleSize(parseFloat(e.target.value) || 8.5)}
-                          className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-1.5 focus:outline-none text-center"
+                          className="w-full text-xs font-bold bg-white border border-slate-200/80 rounded-xl p-1.5 text-center text-slate-800"
                           min="6"
                           max="18"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-[9px] text-slate-500 font-bold mb-1">SUBTITLE</label>
+                        <label className="block text-[9px] text-slate-400 font-bold mb-1 text-center">SUBTITLE</label>
                         <input
                           type="number"
                           step="0.5"
                           value={legendSubtitleSize}
                           onChange={(e) => setLegendSubtitleSize(parseFloat(e.target.value) || 7)}
-                          className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-1.5 focus:outline-none text-center"
+                          className="w-full text-xs font-bold bg-white border border-slate-200/80 rounded-xl p-1.5 text-center text-slate-800"
                           min="5"
                           max="16"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-[9px] text-slate-500 font-bold mb-1">LABELS</label>
+                        <label className="block text-[9px] text-slate-400 font-bold mb-1 text-center">LABELS</label>
                         <input
                           type="number"
                           step="0.5"
                           value={legendFontSize}
                           onChange={(e) => setLegendFontSize(parseFloat(e.target.value) || 7.5)}
-                          className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-1.5 focus:outline-none text-center"
+                          className="w-full text-xs font-bold bg-white border border-slate-200/80 rounded-xl p-1.5 text-center text-slate-800"
                           min="5"
                           max="16"
                         />
                       </div>
                     </div>
                   </div>
+                </div>
 
-                  <div className="border-t border-slate-100 pt-3 flex flex-col gap-3">
-                    <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wide">Shapefile Legend Customization</span>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[10px] text-slate-500 font-bold mb-1">FONT SIZE</label>
+                {/* Shapefile Legend Customization */}
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <FileJson className="w-4 h-4 text-indigo-500" />
+                    Shapefile Legend Customization
+                  </span>
+
+                  <div className="bg-white/60 p-3 rounded-2xl border border-slate-100 shadow-inner grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] text-slate-400 font-bold mb-1">FONT SIZE</label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        value={shapefileLegendFontSize}
+                        onChange={(e) => setShapefileLegendFontSize(parseFloat(e.target.value) || 7.5)}
+                        className="w-full text-xs font-bold bg-white border border-slate-200/80 rounded-xl p-2 text-center text-slate-800"
+                        min="5"
+                        max="16"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-slate-400 font-bold mb-1">TEXT COLOR</label>
+                      <div className="flex items-center gap-2">
                         <input
-                          type="number"
-                          step="0.5"
-                          value={shapefileLegendFontSize}
-                          onChange={(e) => setShapefileLegendFontSize(parseFloat(e.target.value) || 7.5)}
-                          className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 focus:outline-none text-center"
-                          min="5"
-                          max="16"
+                          type="color"
+                          value={shapefileLegendTextColor}
+                          onChange={(e) => setShapefileLegendTextColor(e.target.value)}
+                          className="w-9 h-9 cursor-pointer border border-slate-200 rounded-xl p-0.5 shadow-sm transition-transform hover:scale-105 shrink-0"
                         />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-slate-500 font-bold mb-1">TEXT COLOR</label>
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            type="color"
-                            value={shapefileLegendTextColor}
-                            onChange={(e) => setShapefileLegendTextColor(e.target.value)}
-                            className="w-8 h-8 cursor-pointer border border-slate-200 rounded p-0.5"
-                          />
-                          <span className="text-[10px] text-slate-600 font-mono font-bold">{shapefileLegendTextColor}</span>
-                        </div>
+                        <span className="text-[10px] text-slate-600 font-mono font-bold block overflow-hidden text-ellipsis">{shapefileLegendTextColor}</span>
                       </div>
                     </div>
                   </div>
-
                 </div>
               </div>
             )}
 
             {/* 7. Batch Tab */}
             {activeTab === "batch" && (
-              <div className="flex flex-col gap-4">
-                <span className="text-xs font-bold text-slate-800">Groundwater Yearbook Batch Compilation</span>
-                <p className="text-slate-500 text-[11px]">
-                  Generate and compile publication-ready maps for all chemical parameters in the dataset with a single click.
-                </p>
-
-                <button
-                  onClick={runBatchGeneration}
-                  disabled={batchGenerating}
-                  className="cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white font-bold p-3 rounded-2xl text-xs flex items-center justify-center gap-2 shadow-md transition-all duration-150"
-                >
-                  <Play className="w-4 h-4 text-emerald-100" />
-                  {batchGenerating ? "Compiling Maps..." : "Run Bulk Compilation"}
-                </button>
-
-                {batchGenerating && (
-                  <div className="flex flex-col gap-2 mt-2">
-                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                      <div className="bg-emerald-500 h-full transition-all duration-300" style={{ width: `${batchProgress}%` }} />
-                    </div>
-                    <div className="flex justify-between text-[10px] text-slate-500 font-bold">
-                      <span>PROGRESS</span>
-                      <span>{batchProgress}%</span>
-                    </div>
+              <div className="flex flex-col gap-5">
+                <div className="bg-white/40 backdrop-blur-md p-5 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3.5">
+                  <div className="flex items-center gap-2">
+                    <Play className="w-5 h-5 text-indigo-500" />
+                    <span className="text-xs font-bold text-slate-800">Yearbook Batch Compilation</span>
                   </div>
-                )}
+                  <p className="text-slate-500 text-[11px] leading-relaxed">
+                    Generate and compile publication-ready maps for all chemical parameters in the dataset with a single click.
+                  </p>
 
-                <div className="border-t border-slate-100 pt-3 flex flex-col gap-2.5">
-                  <span className="text-[10px] text-slate-400 font-bold uppercase">Compiled GIS Output Folder</span>
-                  <div className="flex flex-col gap-1.5 max-h-[160px] overflow-y-auto custom-scrollbar bg-slate-50 p-3 rounded-xl border border-slate-150 text-[10px] font-mono">
-                    <span className="text-slate-700 font-bold flex items-center gap-1">
+                  <button
+                    onClick={runBatchGeneration}
+                    disabled={batchGenerating}
+                    className="cursor-pointer bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold py-3.5 px-4 rounded-2xl text-xs flex items-center justify-center gap-2 shadow-[0_4px_12px_rgba(16,185,129,0.2),inset_0_1px_1px_rgba(255,255,255,0.4)] hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:pointer-events-none mt-1"
+                  >
+                    <Play className="w-4 h-4 text-emerald-100" />
+                    {batchGenerating ? "Compiling Maps..." : "Run Bulk Compilation"}
+                  </button>
+
+                  {batchGenerating && (
+                    <div className="flex flex-col gap-2 mt-2 bg-emerald-50/40 p-3 rounded-2xl border border-emerald-100/50">
+                      <div className="w-full bg-slate-200/60 h-2 rounded-full overflow-hidden">
+                        <div className="bg-gradient-to-r from-emerald-400 to-teal-500 h-full transition-all duration-300" style={{ width: `${batchProgress}%` }} />
+                      </div>
+                      <div className="flex justify-between text-[10px] text-slate-600 font-bold">
+                        <span>PROGRESS STATUS</span>
+                        <span className="font-mono">{batchProgress}%</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-white/40 backdrop-blur-md p-5 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <CheckCircle className="w-4 h-4 text-indigo-500" />
+                    Compiled GIS Output Folder
+                  </span>
+                  
+                  <div className="flex flex-col gap-2 max-h-[220px] overflow-y-auto custom-scrollbar bg-white/60 p-3.5 rounded-2xl border border-slate-100 shadow-inner text-[10px] font-mono">
+                    <span className="text-slate-700 font-extrabold flex items-center gap-1">
                       📁 Results/Yearbook_Maps/
                     </span>
-                    {exportQueue.map((item, idx) => (
-                      <span key={idx} className="text-slate-500 pl-4 flex items-center gap-1.5">
-                        <CheckCircle className={`w-3 h-3 ${item.status === "done" ? "text-emerald-500" : "text-slate-300"}`} />
-                        {item.name}
-                      </span>
-                    ))}
-                    {exportQueue.length === 0 && <span className="text-slate-400 italic pl-4">Queue is empty</span>}
+                    <div className="flex flex-col gap-1.5 mt-1 border-t border-slate-100/50 pt-2">
+                      {exportQueue.map((item, idx) => (
+                        <span key={idx} className="text-slate-500 pl-2 flex items-center gap-2">
+                          <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${item.status === "done" ? "text-emerald-500" : "text-slate-300"}`} />
+                          <span className="truncate">{item.name}</span>
+                        </span>
+                      ))}
+                      {exportQueue.length === 0 && <span className="text-slate-400 italic pl-2">Queue is empty</span>}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -7545,35 +7678,35 @@ ${svgStatsPanel}
         <div className="lg:col-span-8 flex flex-col gap-6">
           
           {/* Controls bar for active rendering */}
-          <div className="bg-white/75 backdrop-blur-md px-6 py-4 rounded-3xl border border-slate-200/50 shadow-[0_8px_32px_0_rgba(15,23,42,0.04)] flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+          <div className="bg-gradient-to-r from-white/95 via-slate-50/90 to-slate-100/90 backdrop-blur-xl px-6 py-4 rounded-3xl border border-white/60 shadow-[0_16px_36px_rgba(15,23,42,0.05),inset_0_1px_2px_rgba(255,255,255,0.9)] flex flex-col xl:flex-row xl:items-center justify-between gap-4">
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
-                <span className="text-indigo-600">Active Parameter:</span>
-                <span className="bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-xl border border-indigo-100">
+                <span className="text-slate-800 uppercase tracking-wider text-[10px] font-black">Active Map Parameter:</span>
+                <span className="bg-gradient-to-r from-slate-900 to-slate-800 text-white px-3.5 py-1.5 rounded-xl border border-slate-950 shadow-[0_4px_12px_rgba(15,23,42,0.15),inset_0_1px_1px_rgba(255,255,255,0.2)] font-mono text-xs font-bold tracking-tight">
                   {selectedParam} ({paramConfig.unit})
                 </span>
               </div>
 
               {/* Dynamic Zoom controls - 5% change per click */}
-              <div className="flex items-center gap-1 bg-slate-100/85 border border-slate-200/60 rounded-2xl p-1 shadow-inner">
+              <div className="flex items-center gap-1 bg-slate-200/40 backdrop-blur-md border border-slate-300/40 rounded-2xl p-1 shadow-inner">
                 <button
                   onClick={() => setZoomScaleFactor(z => Math.max(0.005, z * 0.95))}
                   title="Zoom In 5%"
-                  className="cursor-pointer bg-white hover:bg-slate-50 text-slate-800 font-extrabold px-3 py-1.5 rounded-xl text-xs border border-slate-200 flex items-center gap-1 shadow-sm transition-all duration-100"
+                  className="cursor-pointer bg-white hover:bg-slate-50 text-slate-800 hover:text-slate-900 font-extrabold px-3 py-1.5 rounded-xl text-[10px] uppercase tracking-wider border border-slate-200 flex items-center gap-1 shadow-sm hover:shadow-md hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
                 >
-                  <ZoomIn className="w-3.5 h-3.5 text-indigo-600" /> Zoom In
+                  <ZoomIn className="w-3.5 h-3.5 text-slate-700" /> Zoom In
                 </button>
                 <button
                   onClick={() => setZoomScaleFactor(z => Math.min(20.0, z * 1.05))}
                   title="Zoom Out 5%"
-                  className="cursor-pointer bg-white hover:bg-slate-50 text-slate-800 font-extrabold px-3 py-1.5 rounded-xl text-xs border border-slate-200 flex items-center gap-1 shadow-sm transition-all duration-100"
+                  className="cursor-pointer bg-white hover:bg-slate-50 text-slate-800 hover:text-slate-900 font-extrabold px-3 py-1.5 rounded-xl text-[10px] uppercase tracking-wider border border-slate-200 flex items-center gap-1 shadow-sm hover:shadow-md hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
                 >
-                  <ZoomOut className="w-3.5 h-3.5 text-indigo-600" /> Zoom Out
+                  <ZoomOut className="w-3.5 h-3.5 text-slate-700" /> Zoom Out
                 </button>
                 <button
                   onClick={() => setZoomScaleFactor(1.0)}
                   title="Reset Zoom to Fit Bounding Box"
-                  className="cursor-pointer bg-white hover:bg-slate-50 text-slate-500 font-semibold px-2.5 py-1.5 rounded-xl text-xs border border-slate-200 transition-all duration-100"
+                  className="cursor-pointer bg-white hover:bg-slate-50 text-slate-500 hover:text-indigo-600 font-semibold px-2.5 py-1.5 rounded-xl text-xs border border-slate-200/85 hover:border-indigo-200 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                 >
                   Reset
                 </button>
@@ -7582,7 +7715,7 @@ ${svgStatsPanel}
 
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl p-1.5">
+                <div className="flex items-center gap-1.5 bg-slate-50/80 backdrop-blur-md border border-slate-200/60 rounded-xl p-1.5 hover:border-indigo-500/50 transition-all shadow-sm">
                   <select
                     value={exportDpi}
                     onChange={(e) => setExportDpi(parseInt(e.target.value))}
@@ -7614,31 +7747,31 @@ ${svgStatsPanel}
                 <button
                   onClick={autoGenerateAndSendAll}
                   title="Generate all maps automatically with current decorations/boundaries and send to Annual Report"
-                  className="cursor-pointer bg-amber-600 hover:bg-amber-700 text-white px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 shadow-md transition-all duration-100 animate-pulse"
+                  className="cursor-pointer bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 shadow-[0_4px_12px_rgba(217,119,6,0.3),inset_0_1px_1px_rgba(255,255,255,0.4)] border border-amber-600/50 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] animate-pulse"
                 >
-                  <Play className="w-4 h-4 text-amber-100" /> Auto-Generate All (Annual Report)
+                  <Play className="w-4 h-4 text-amber-100 animate-spin" style={{ animationDuration: '3s' }} /> Auto-Generate All
                 </button>
 
                 <button
                   onClick={sendToBulletin}
-                  className="cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 shadow-md transition-all duration-100"
+                  className="cursor-pointer bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 shadow-[0_4px_12px_rgba(16,185,129,0.3),inset_0_1px_1px_rgba(255,255,255,0.4)] border border-emerald-600/50 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                 >
-                  <CheckCircle className="w-4 h-4 text-emerald-100" /> Send to Annual Report
+                  <CheckCircle className="w-4 h-4 text-emerald-100" /> Send to Report
                 </button>
 
                 <button
                   onClick={exportMap}
-                  className="cursor-pointer bg-slate-900 text-white hover:bg-slate-800 px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 shadow-md transition-all duration-100"
+                  className="cursor-pointer bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-900 hover:to-black text-white px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 shadow-[0_4px_12px_rgba(15,23,42,0.25),inset_0_1px_1px_rgba(255,255,255,0.25)] border border-slate-800/80 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                 >
-                  <FileDown className="w-4 h-4" /> Export Map
+                  <FileDown className="w-4 h-4 text-slate-300" /> Export Map
                 </button>
 
                 {isComparisonActive && (
                   <button
                     onClick={downloadCombinedCanvas}
-                    className="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 shadow-md transition-all duration-100"
+                    className="cursor-pointer bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 shadow-[0_4px_12px_rgba(99,102,241,0.3),inset_0_1px_1px_rgba(255,255,255,0.4)] border border-indigo-500/50 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                   >
-                    <Printer className="w-4 h-4" /> Export Combined Maps
+                    <Printer className="w-4 h-4 text-indigo-200" /> Export Combined
                   </button>
                 )}
               </div>
@@ -7649,15 +7782,21 @@ ${svgStatsPanel}
           <div className={`grid ${isComparisonActive && comparisonLayout === "horizontal" ? "grid-cols-2" : "grid-cols-1"} gap-4 w-full`}>
             
             {/* Left/Single Panel */}
-            <div className="flex flex-col gap-2 bg-slate-50 p-4 rounded-[2.5rem] border border-slate-200/60 shadow-inner items-stretch">
-              <div className="flex justify-between items-center px-2 mb-1">
-                <span className="text-xs font-extrabold text-slate-600 uppercase tracking-wider">
+            <div className="flex flex-col gap-3 bg-gradient-to-b from-slate-50 to-slate-100/85 p-5 rounded-[2.5rem] border border-slate-200/50 shadow-[0_16px_36px_rgba(15,23,42,0.03),inset_0_1px_2px_rgba(255,255,255,0.9)] items-stretch relative overflow-hidden group">
+              <div className="flex justify-between items-center px-2">
+                <span className="text-xs font-extrabold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-600"></span>
+                  </span>
                   {isComparisonActive ? "Panel A: Pre-Monsoon" : "Primary Output Map"}
                 </span>
-                <span className="text-[10px] font-mono text-slate-400">Extent synchronized</span>
+                <span className="text-[10px] font-mono font-bold text-indigo-600 bg-indigo-50/80 px-2.5 py-0.5 rounded-full border border-indigo-100/50">
+                  {interpolationMethod.toUpperCase()} | Sync Extent
+                </span>
               </div>
 
-              <div className={`relative ${canvasAspectClass} w-full rounded-3xl overflow-hidden border-2 border-slate-200 shadow-md bg-white`}>
+              <div className={`relative ${canvasAspectClass} w-full rounded-3xl overflow-hidden border-2 border-slate-200/85 ring-4 ring-slate-100/50 shadow-md bg-white transition-all duration-300 group-hover:shadow-lg group-hover:border-slate-300`}>
                 <canvas
                   ref={canvasRefLeft}
                   width={canvasWidth * (typeof window !== "undefined" ? (window.devicePixelRatio || 2) * 2.0 : 4.0)}
@@ -7682,15 +7821,21 @@ ${svgStatsPanel}
 
             {/* Right Comparison Panel */}
             {isComparisonActive && (
-              <div className="flex flex-col gap-2 bg-slate-50 p-4 rounded-[2.5rem] border border-slate-200/60 shadow-inner items-stretch">
-                <div className="flex justify-between items-center px-2 mb-1">
-                  <span className="text-xs font-extrabold text-slate-600 uppercase tracking-wider">
+              <div className="flex flex-col gap-3 bg-gradient-to-b from-slate-50 to-slate-100/85 p-5 rounded-[2.5rem] border border-slate-200/50 shadow-[0_16px_36px_rgba(15,23,42,0.03),inset_0_1px_2px_rgba(255,255,255,0.9)] items-stretch relative overflow-hidden group">
+                <div className="flex justify-between items-center px-2">
+                  <span className="text-xs font-extrabold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
                     {showDifferenceMap ? "Panel B: Seasonal Change" : "Panel B: Post-Monsoon"}
                   </span>
-                  <span className="text-[10px] font-mono text-slate-400">Scale identical</span>
+                  <span className="text-[10px] font-mono font-bold text-emerald-600 bg-emerald-50/80 px-2.5 py-0.5 rounded-full border border-emerald-100/50">
+                    Scale Lock
+                  </span>
                 </div>
 
-                <div className={`relative ${canvasAspectClass} w-full rounded-3xl overflow-hidden border-2 border-slate-200 shadow-md bg-white`}>
+                <div className={`relative ${canvasAspectClass} w-full rounded-3xl overflow-hidden border-2 border-slate-200/85 ring-4 ring-slate-100/50 shadow-md bg-white transition-all duration-300 group-hover:shadow-lg group-hover:border-slate-300`}>
                   <canvas
                     ref={canvasRefRight}
                     width={canvasWidth * (typeof window !== "undefined" ? (window.devicePixelRatio || 2) * 2.0 : 4.0)}

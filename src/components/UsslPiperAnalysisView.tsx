@@ -111,7 +111,8 @@ export default function UsslPiperAnalysisView({
 }: UsslPiperAnalysisViewProps) {
   const [rawData, setRawData] = useState<any[]>([]);
   const [originalHeaders, setOriginalHeaders] = useState<string[]>([]);
-  const [viewMode, setViewMode] = useState<"ussl" | "piper" | "gibbs" | "analytics_ussl" | "analytics_facies" | "completeness" | "table">("ussl");
+  const [viewMode, setViewMode] = useState<"ussl" | "piper" | "gibbs" | "aquifer_compare" | "analytics_ussl" | "analytics_facies" | "completeness" | "table">("ussl");
+  const [selectedCompareAquifers, setSelectedCompareAquifers] = useState<string[]>([]);
   const [activeThemeId, setActiveThemeId] = useState("light");
 
   // Mapping Modal States
@@ -554,6 +555,14 @@ export default function UsslPiperAnalysisView({
     if (!header) return [];
     return Array.from(new Set(validData.map(d => String(d[header] || "")).filter(Boolean))).sort();
   }, [validData, columnMapping.Aquifer]);
+
+  const currentSelectedAquifers = useMemo(() => {
+    if (selectedCompareAquifers.length > 0) {
+      const filtered = selectedCompareAquifers.filter(aq => uniqueAquifers.includes(aq));
+      if (filtered.length > 0) return filtered;
+    }
+    return uniqueAquifers.slice(0, 4);
+  }, [uniqueAquifers, selectedCompareAquifers]);
 
   const uniqueSources = useMemo(() => {
     const header = columnMapping.Source;
@@ -2963,7 +2972,7 @@ export default function UsslPiperAnalysisView({
 
           {/* Sub Navigation controls within this specific tab */}
           <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 gap-1 select-none flex-wrap">
-            {(["ussl", "piper", "gibbs", "analytics_ussl", "analytics_facies", "completeness", "table"] as const).map((view) => {
+            {(["ussl", "piper", "gibbs", "aquifer_compare", "analytics_ussl", "analytics_facies", "completeness", "table"] as const).map((view) => {
               const label =
                 view === "ussl"
                   ? "USSL Diagram"
@@ -2971,6 +2980,8 @@ export default function UsslPiperAnalysisView({
                   ? "Piper Diagram"
                   : view === "gibbs"
                   ? "Gibbs Diagram"
+                  : view === "aquifer_compare"
+                  ? "Aquifer Comparison"
                   : view === "analytics_ussl"
                   ? "USSL Class"
                   : view === "analytics_facies"
@@ -3032,8 +3043,8 @@ export default function UsslPiperAnalysisView({
         </div>
       )}
 
-      {processedData.length > 0 || !["ussl", "piper", "gibbs"].includes(viewMode) ? (
-        ["ussl", "piper", "gibbs"].includes(viewMode) ? (
+      {processedData.length > 0 || !["ussl", "piper", "gibbs", "aquifer_compare"].includes(viewMode) ? (
+        ["ussl", "piper", "gibbs", "aquifer_compare"].includes(viewMode) ? (
           <div className="flex flex-col gap-6 w-full items-stretch animate-fadeIn">
             <div className="w-full space-y-6">
               {/* Aqueous Styling, Color-by & 3D Settings Panel */}
@@ -3115,7 +3126,7 @@ export default function UsslPiperAnalysisView({
               </div>
 
               {/* Comparison Control Panel */}
-              {validData.length > 0 && (
+              {validData.length > 0 && viewMode !== "aquifer_compare" && (
                 <div className="bg-slate-50 border border-slate-200 rounded-3xl p-5 flex flex-wrap gap-4 items-center justify-between shadow-sm">
                   <div className="flex flex-wrap items-center gap-3">
                     <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Compare Dual Panels By:</span>
@@ -3396,9 +3407,355 @@ export default function UsslPiperAnalysisView({
                   )}
                 </div>
               )}
+
+              {viewMode === "aquifer_compare" && (
+                <div className="space-y-12 w-full">
+                  {!columnMapping.Aquifer ? (
+                    <div className="p-8 text-center bg-amber-50 border border-amber-200 rounded-3xl">
+                      <XCircle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
+                      <p className="text-xs font-black text-amber-800 uppercase tracking-wider">
+                        Aquifer Column Mapping Required
+                      </p>
+                      <p className="text-[10px] text-amber-600 mt-1">
+                        Please open the column mapper at the top of the page and select the column containing your Aquifer data to enable this comparison.
+                      </p>
+                    </div>
+                  ) : uniqueAquifers.length === 0 ? (
+                    <div className="p-8 text-center bg-slate-50 border border-slate-200 rounded-3xl">
+                      <Database className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                      <p className="text-xs font-black text-slate-500 uppercase tracking-wider">
+                        No Aquifers Detected
+                      </p>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        No non-empty aquifer names were detected in the uploaded dataset.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-12">
+                      {/* Aquifer Selection Controller Widget */}
+                      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-950 text-white p-6 rounded-[2rem] border border-slate-950 shadow-xl space-y-4">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                          <div>
+                            <span className="text-[10px] font-black uppercase text-indigo-400 tracking-wider flex items-center gap-1.5">
+                              <Sparkles className="w-4 h-4 text-indigo-400" />
+                              AQUIFER COMPARATIVE ANALYSIS CONTROL PANEL
+                            </span>
+                            <h3 className="text-sm font-black tracking-tight text-white mt-0.5">
+                              Select Aquifers to Compare
+                            </h3>
+                            <p className="text-[10px] text-slate-400 leading-tight">
+                              Select three or four aquifers to compare their Piper, USSL, and Gibbs diagrams, tables, and classification ratios side-by-side.
+                            </p>
+                          </div>
+                          
+                          {/* Quick Actions */}
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedCompareAquifers(uniqueAquifers.slice(0, 4));
+                              }}
+                              className="cursor-pointer px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-[10px] font-bold text-slate-200 transition-all uppercase tracking-wider"
+                            >
+                              First 4 Aquifers
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedCompareAquifers(uniqueAquifers);
+                              }}
+                              className="cursor-pointer px-3 py-1.5 bg-indigo-600/50 hover:bg-indigo-600 border border-indigo-500 rounded-xl text-[10px] font-bold text-white transition-all uppercase tracking-wider"
+                            >
+                              Select All
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedCompareAquifers([]);
+                              }}
+                              className="cursor-pointer px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-[10px] font-bold text-slate-400 transition-all uppercase tracking-wider"
+                            >
+                              Clear All
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Aquifer Checkboxes */}
+                        <div className="flex flex-wrap gap-2 pt-1 max-h-[160px] overflow-y-auto custom-scrollbar">
+                          {uniqueAquifers.map((aq) => {
+                            const sampleCount = validData.filter(d => String(d[columnMapping.Aquifer] || "Unknown") === aq).length;
+                            const isChecked = currentSelectedAquifers.includes(aq);
+                            return (
+                              <label
+                                key={aq}
+                                className={`cursor-pointer flex items-center gap-2 px-3 py-2 rounded-xl text-[11px] font-bold border transition-all select-none ${
+                                  isChecked
+                                    ? "bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/10"
+                                    : "bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-850"
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="accent-indigo-400 cursor-pointer w-3.5 h-3.5 rounded"
+                                  checked={isChecked}
+                                  onChange={() => {
+                                    if (isChecked) {
+                                      setSelectedCompareAquifers(prev => {
+                                        // If empty or default is active, populate first
+                                        const baseList = prev.length > 0 ? prev : uniqueAquifers.slice(0, 4);
+                                        return baseList.filter(v => v !== aq);
+                                      });
+                                    } else {
+                                      setSelectedCompareAquifers(prev => {
+                                        const baseList = prev.length > 0 ? prev : uniqueAquifers.slice(0, 4);
+                                        return [...baseList, aq];
+                                      });
+                                    }
+                                  }}
+                                />
+                                <span>{aq}</span>
+                                <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-mono ${isChecked ? 'bg-indigo-850 text-indigo-200' : 'bg-slate-800 text-slate-500'}`}>
+                                  {sampleCount}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="bg-indigo-50/50 border border-indigo-150 p-4 rounded-3xl">
+                        <p className="text-[10px] text-indigo-800 font-extrabold uppercase tracking-widest text-center flex items-center justify-center gap-2">
+                          <Sparkles className="w-4 h-4 text-indigo-500" /> Comparing {currentSelectedAquifers.length} Aquifer Groups side-by-side
+                        </p>
+                      </div>
+
+                      {currentSelectedAquifers.map((aq) => {
+                        const aquiferData = validData.filter(d => String(d[columnMapping.Aquifer] || "Unknown") === aq);
+                        
+                        // Compute local stats for donut and table
+                        const uCounts: Record<string, number> = {};
+                        const fCounts: Record<string, number> = {};
+                        aquiferData.forEach((d) => {
+                          uCounts[d._calc.ussl] = (uCounts[d._calc.ussl] || 0) + 1;
+                          fCounts[d._calc.facies] = (fCounts[d._calc.facies] || 0) + 1;
+                        });
+
+                        const aqUsslStats = Object.entries(uCounts)
+                          .map(([key, count]) => ({ key, name: key, count }))
+                          .sort((a, b) => b.count - a.count);
+
+                        const aqFaciesStats = Object.entries(fCounts)
+                          .map(([key, count]) => ({ key, name: faciesNames[key] || key, count }))
+                          .sort((a, b) => b.count - a.count);
+
+                        const totalSamples = aquiferData.length;
+
+                        return (
+                          <div key={aq} className="glossy-panel bg-white border border-slate-200 rounded-[2.5rem] shadow-xl overflow-hidden p-6 space-y-6" id={`aq-panel-${aq.replace(/\s+/g, "-")}`}>
+                            {/* Card Header */}
+                            <div className="flex flex-wrap justify-between items-center gap-4 border-b border-slate-100 pb-4">
+                              <div>
+                                <h3 className="text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
+                                  <Database className="text-indigo-600 w-5 h-5" /> Aquifer: <span className="text-indigo-950 font-black">{aq}</span>
+                                </h3>
+                                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
+                                  Isolated dataset subset analysis
+                                </p>
+                              </div>
+                              <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 px-3 py-1.5 border border-emerald-200 rounded-xl whitespace-nowrap">
+                                {totalSamples} Mapped Samples
+                              </span>
+                            </div>
+
+                            {aquiferData.length === 0 ? (
+                              <div className="p-8 text-center bg-slate-50 border border-slate-100 rounded-3xl text-slate-400 text-[10px] font-bold">
+                                No complete samples available for this aquifer in current filter selections.
+                              </div>
+                            ) : (
+                              <div className="space-y-6">
+                                {/* Diagram Grid */}
+                                <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                                  {/* USSL Diagram */}
+                                  <div className="bg-slate-50/50 p-4 rounded-3xl border border-slate-200/80 flex flex-col items-center">
+                                    <span className="text-[9.5px] font-black uppercase text-indigo-950 tracking-wider mb-2">
+                                      USSL Classification ({aq})
+                                    </span>
+                                    <UsslDiagram
+                                      data={aquiferData}
+                                      pointColors={getActiveColorsForMode("ussl")}
+                                      pointSizes={getActiveSizesForMode("ussl")}
+                                      getPointKey={(d) => getPointKeyForMode(d, "ussl")}
+                                      stateHeader={stateHeader}
+                                      is3d={is3d}
+                                      bubbleSizeMultiplier={bubbleSizeMultiplier}
+                                      customTitle={`USSL Matrix (${aq})`}
+                                    />
+                                  </div>
+
+                                  {/* Piper Diagram */}
+                                  <div className="bg-slate-50/50 p-4 rounded-3xl border border-slate-200/80 flex flex-col items-center">
+                                    <span className="text-[9.5px] font-black uppercase text-indigo-950 tracking-wider mb-2">
+                                      Piper Trilinear Diagram ({aq})
+                                    </span>
+                                    <PiperDiagram
+                                      data={aquiferData}
+                                      pointColors={getActiveColorsForMode("piper")}
+                                      pointSizes={getActiveSizesForMode("piper")}
+                                      getPointKey={(d) => getPointKeyForMode(d, "piper")}
+                                      stateHeader={stateHeader}
+                                      is3d={is3d}
+                                      bubbleSizeMultiplier={bubbleSizeMultiplier}
+                                      customTitle={`Piper Diagram (${aq})`}
+                                    />
+                                  </div>
+
+                                  {/* Gibbs Cation Plot */}
+                                  <div className="bg-slate-50/50 p-4 rounded-3xl border border-slate-200/80 flex flex-col items-center">
+                                    <span className="text-[9.5px] font-black uppercase text-indigo-950 tracking-wider mb-2">
+                                      Gibbs Cation Dominance ({aq})
+                                    </span>
+                                    <GibbsPlot
+                                      data={aquiferData}
+                                      type="cation"
+                                      defaultTitle={`Gibbs Cation (${aq})`}
+                                      pointColors={getActiveColorsForMode("gibbs")}
+                                      pointSizes={getActiveSizesForMode("gibbs")}
+                                      getPointKey={(d) => getPointKeyForMode(d, "gibbs")}
+                                      stateHeader={stateHeader}
+                                      is3d={is3d}
+                                      bubbleSizeMultiplier={bubbleSizeMultiplier}
+                                    />
+                                  </div>
+
+                                  {/* Gibbs Anion Plot */}
+                                  <div className="bg-slate-50/50 p-4 rounded-3xl border border-slate-200/80 flex flex-col items-center">
+                                    <span className="text-[9.5px] font-black uppercase text-indigo-950 tracking-wider mb-2">
+                                      Gibbs Anion Dominance ({aq})
+                                    </span>
+                                    <GibbsPlot
+                                      data={aquiferData}
+                                      type="anion"
+                                      defaultTitle={`Gibbs Anion (${aq})`}
+                                      pointColors={getActiveColorsForMode("gibbs")}
+                                      pointSizes={getActiveSizesForMode("gibbs")}
+                                      getPointKey={(d) => getPointKeyForMode(d, "gibbs")}
+                                      stateHeader={stateHeader}
+                                      is3d={is3d}
+                                      bubbleSizeMultiplier={bubbleSizeMultiplier}
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Donuts & Stats Section */}
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                                  {/* USSL Donut Chart */}
+                                  <div className="bg-slate-50 p-4 rounded-3xl border border-slate-200 shadow-sm">
+                                    <DonutChart
+                                      data={aqUsslStats}
+                                      colors={usslColors}
+                                      sizes={usslSizes}
+                                      onColorChange={(k, c) => setUsslColors((p) => ({ ...p, [k]: c }))}
+                                      onSizeChange={(k, s) => setUsslSizes((p) => ({ ...p, [k]: s }))}
+                                      defaultTitle="USSL Classes"
+                                      compact={true}
+                                    />
+                                  </div>
+
+                                  {/* Facies Donut Chart */}
+                                  <div className="bg-slate-50 p-4 rounded-3xl border border-slate-200 shadow-sm">
+                                    <DonutChart
+                                      data={aqFaciesStats}
+                                      colors={faciesColors}
+                                      sizes={faciesSizes}
+                                      onColorChange={(k, c) => setFaciesColors((p) => ({ ...p, [k]: c }))}
+                                      onSizeChange={(k, s) => setFaciesSizes((p) => ({ ...p, [k]: s }))}
+                                      onNameChange={(k, n) => setFaciesNames((p) => ({ ...p, [k]: n }))}
+                                      defaultTitle="Water Hydro-Facies"
+                                      compact={true}
+                                    />
+                                  </div>
+
+                                  {/* Aquifer Classes Breakdown Distribution Table */}
+                                  <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-md space-y-2.5">
+                                    <div className="border-b border-slate-100 pb-1.5">
+                                      <h4 className="text-[11px] font-black uppercase text-slate-800 tracking-wider">
+                                        Classification Breakdown
+                                      </h4>
+                                      <p className="text-[9px] text-slate-400 font-bold mt-0.5">
+                                        Frequency and proportions inside {aq}
+                                      </p>
+                                    </div>
+
+                                    <div className="overflow-hidden rounded-xl border border-slate-200 max-h-[210px] overflow-y-auto custom-scrollbar">
+                                      <table className="w-full text-left text-[10px] border-collapse">
+                                        <thead className="bg-slate-50 text-slate-600 font-bold text-[8.5px] tracking-wider border-b border-slate-200 sticky top-0">
+                                          <tr>
+                                            <th className="px-2 py-1.5">Category</th>
+                                            <th className="px-2 py-1.5 text-center">Type</th>
+                                            <th className="px-2 py-1.5 text-center">Count</th>
+                                            <th className="px-2 py-1.5 text-center">%</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-150 text-slate-700 font-medium text-[10px]">
+                                          {/* USSL rows */}
+                                          {aqUsslStats.map((row) => (
+                                            <tr key={`ussl-${row.key}`} className="hover:bg-slate-50/50 transition-colors">
+                                              <td className="px-2 py-1.5 font-bold text-slate-800 flex items-center gap-1.5">
+                                                <span 
+                                                  className="w-1.5 h-1.5 rounded-full border border-slate-300 shadow-xs shrink-0" 
+                                                  style={{ backgroundColor: usslColors[row.key] || "#94a3b8" }}
+                                                />
+                                                {row.name}
+                                              </td>
+                                              <td className="px-2 py-1.5 text-center text-[8px] font-black text-indigo-500 uppercase tracking-widest">
+                                                USSL
+                                              </td>
+                                              <td className="px-2 py-1.5 text-center font-mono font-extrabold text-slate-900">
+                                                {row.count}
+                                              </td>
+                                              <td className="px-2 py-1.5 text-center font-mono text-slate-500">
+                                                {totalSamples > 0 ? ((row.count / totalSamples) * 100).toFixed(1) : "0.0"}%
+                                              </td>
+                                            </tr>
+                                          ))}
+                                          {/* Facies rows */}
+                                          {aqFaciesStats.map((row) => (
+                                            <tr key={`facies-${row.key}`} className="hover:bg-slate-50/50 transition-colors">
+                                              <td className="px-2 py-1.5 font-bold text-slate-800 flex items-center gap-1.5">
+                                                <span 
+                                                  className="w-1.5 h-1.5 rounded-full border border-slate-300 shadow-xs shrink-0" 
+                                                  style={{ backgroundColor: faciesColors[row.key] || "#94a3b8" }}
+                                                />
+                                                {row.name}
+                                              </td>
+                                              <td className="px-2 py-1.5 text-center text-[8px] font-black text-teal-600 uppercase tracking-widest">
+                                                Facies
+                                              </td>
+                                              <td className="px-2 py-1.5 text-center font-mono font-extrabold text-slate-900">
+                                                {row.count}
+                                              </td>
+                                              <td className="px-2 py-1.5 text-center font-mono text-slate-500">
+                                                {totalSamples > 0 ? ((row.count / totalSamples) * 100).toFixed(1) : "0.0"}%
+                                              </td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
-            {viewMode !== "gibbs" && (
+            {!["gibbs", "aquifer_compare"].includes(viewMode) && (
               <div className={isComparisonActive ? "w-full grid grid-cols-1 lg:grid-cols-2 gap-6 items-start" : "w-full max-w-xl mx-auto space-y-6"}>
                 {(() => {
                   const isUsslComparisonActive = usslCompareBy !== "none" && usslLeftVal && usslRightVal;
