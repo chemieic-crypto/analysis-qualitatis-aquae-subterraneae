@@ -18,6 +18,7 @@ import { CombinationAnalysisView } from "./components/CombinationAnalysisView";
 import PcaAnalysisView from "./components/PcaAnalysisView";
 import FortnightlyAlertsView from "./components/FortnightlyAlertsView";
 import LimitsManagerView from "./components/LimitsManagerView";
+import AdvancedAnalysisView from "./components/AdvancedAnalysisView";
 import { generateOfflineChartBase64 } from "./utils/chartHelpers";
 
 import {
@@ -33,6 +34,7 @@ import {
   LayoutTemplate,
   FileText,
   CheckCircle,
+  Activity,
   X,
   AlertCircle,
   Compass,
@@ -97,7 +99,7 @@ if (typeof Highcharts === "object") {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<
-    "single" | "master" | "multi" | "bar" | "aisummary" | "bulletin" | "about" | "guidelines" | "ussl" | "ranking" | "monsoon" | "gis" | "hydrochemistry" | "combination" | "pca" | "fortnightly" | "limits"
+    "single" | "master" | "multi" | "bar" | "aisummary" | "bulletin" | "about" | "guidelines" | "ussl" | "ranking" | "monsoon" | "gis" | "hydrochemistry" | "combination" | "pca" | "fortnightly" | "limits" | "advancedAnalysis"
   >("single");
 
   // State to trigger dynamic recalculation and re-rendering of all components on parameter limit changes
@@ -105,6 +107,21 @@ export default function App() {
 
   // Live modern date and time state with high precision
   const [currentDateTime, setCurrentDateTime] = useState<Date>(new Date());
+  const [tableFont, setTableFont] = useState<string>(() => localStorage.getItem("table_num_font") || "Inter");
+
+  useEffect(() => {
+    localStorage.setItem("table_num_font", tableFont);
+    const fontMapping: Record<string, string> = {
+      "Roboto": "'Roboto', sans-serif",
+      "Poppins": "'Poppins', sans-serif",
+      "Manrope": "'Manrope', sans-serif",
+      "IBM Plex Sans": "'IBM Plex Sans', sans-serif",
+      "Segoe UI": "'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
+      "Inter": "'Inter', sans-serif"
+    };
+    const fontValue = fontMapping[tableFont] || "'Inter', sans-serif";
+    document.documentElement.style.setProperty("--table-num-font", fontValue);
+  }, [tableFont]);
 
   useEffect(() => {
     let animationFrameId: number;
@@ -248,6 +265,7 @@ export default function App() {
       season: find(["Season", "season"]),
       aquifer: find(["Aquifer", "Aquifer Type", "Aquifer_Type", "Aquifer Name", "Aquifer_Name"]),
       source: find(["Source", "Well Type", "Well_Type", "Source Type", "Source_Type", "Water Source", "Water_Source", "src"]),
+      depth: find(["Depth", "Well Depth", "Depth BGL", "Well_Depth", "Casing Depth", "Drill Depth", "Depth(m)", "Depth (m)", "BGL", "depth_m"]),
       params: [],
     };
 
@@ -404,6 +422,93 @@ export default function App() {
     setMappingModalOpen(false);
     showToast("Mapping canceled. Data was not imported.", "error");
   };
+
+  useEffect(() => {
+    // Attempt to auto-load default data Pre-Monsoon 2025.xlsx from public/root path
+    const autoLoadDefaultData = async () => {
+      try {
+        let response = await fetch("./Pre-Monsoon 2025.xlsx");
+        if (!response.ok) {
+          response = await fetch("/Pre-Monsoon 2025.xlsx");
+        }
+        if (!response.ok) {
+          throw new Error("Default file not found");
+        }
+        const ct = response.headers.get("content-type") || "";
+        if (ct.includes("text/html") || ct.includes("application/xhtml+xml")) {
+          throw new Error("Returned HTML instead of Excel (404 fallback)");
+        }
+        return response;
+      } catch (err) {
+        console.log("Pre-Monsoon 2025.xlsx could not be auto-loaded. Waiting for user upload.", err);
+        return null;
+      }
+    };
+
+    autoLoadDefaultData().then(async (res) => {
+      if (!res) return;
+      try {
+        const arrayBuffer = await res.arrayBuffer();
+        const wb = XLSX.read(new Uint8Array(arrayBuffer), { type: "array", cellFormula: false, cellHTML: false, cellText: false });
+        if (!wb || !wb.SheetNames || wb.SheetNames.length === 0) return;
+
+        const wsName = wb.SheetNames[0];
+        const ws = wb.Sheets[wsName];
+        if (!ws) return;
+
+        const parsedData = XLSX.utils.sheet_to_json(ws);
+        if (!parsedData || parsedData.length === 0) return;
+
+        const headersList: string[] = [];
+        if (ws["!ref"]) {
+          const range = XLSX.utils.decode_range(ws["!ref"]);
+          const R = range.s.r;
+          for (let C = range.s.c; C <= range.e.c; ++C) {
+            const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
+            const cell = ws[cellRef];
+            if (cell && (cell.v !== undefined && cell.v !== null)) {
+              headersList.push(String(cell.v).trim());
+            } else if (cell && cell.w !== undefined) {
+              headersList.push(String(cell.w).trim());
+            }
+          }
+        }
+
+        const allKeys = new Set<string>();
+        parsedData.forEach((row: any) => {
+          if (row && typeof row === "object") {
+            Object.keys(row).forEach((k) => {
+              if (k && !k.startsWith("__EMPTY")) {
+                allKeys.add(String(k).trim());
+              }
+            });
+          }
+        });
+
+        const headersSet = new Set<string>(headersList.filter(Boolean));
+        allKeys.forEach((k) => headersSet.add(k));
+        const uniqueHeaders = Array.from(headersSet);
+
+        setRawData(parsedData);
+        setUploadedHeaders(uniqueHeaders);
+
+        const { guessed, map } = guessHeaders(uniqueHeaders);
+        setHeaders(guessed);
+        setHeaderMap(map);
+
+        if (guessed.params.length > 0) {
+          const firstParam = guessed.params[0]!;
+          setActiveParam(firstParam);
+          setExportParams([...guessed.params]);
+          setCombinedParams([...guessed.params]);
+        }
+
+        showToast("Auto-loaded default data: Pre-Monsoon 2025 successfully!", "success");
+      } catch (err) {
+        console.error("Error parsing auto-loaded default data:", err);
+      }
+    });
+  }, []);
 
   // State Options dropdown values List
   const stateList = useMemo(() => {
@@ -1015,6 +1120,21 @@ export default function App() {
             <span className="text-xs font-extrabold text-[#8B4513] tracking-wide uppercase">
               {currentDateTime.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
             </span>
+            <div className="flex items-center gap-1.5 mt-1.5 bg-slate-100/80 border border-slate-200 px-2.5 py-1.5 rounded-xl shadow-inner">
+              <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Table Font:</span>
+              <select
+                value={tableFont}
+                onChange={(e) => setTableFont(e.target.value)}
+                className="text-[10px] font-black text-indigo-950 bg-transparent border-none focus:ring-0 cursor-pointer focus:outline-none uppercase"
+              >
+                <option value="Inter">Inter</option>
+                <option value="Roboto">Roboto</option>
+                <option value="Poppins">Poppins</option>
+                <option value="Manrope">Manrope</option>
+                <option value="IBM Plex Sans">IBM Plex</option>
+                <option value="Segoe UI">Segoe UI</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -1114,6 +1234,7 @@ export default function App() {
               className="w-full glossy-input rounded-2xl p-4 font-black text-slate-700 bg-white cursor-pointer select-none text-sm border-2 border-slate-200 outline-none focus:border-indigo-500 shadow-md transition-all"
             >
               <option value="single">📊 Detailed Analysis</option>
+              <option value="advancedAnalysis">🧪 Advanced Data Analysis</option>
               <option value="ranking">📈 Ranking Stats</option>
               <option value="ussl">📈 USSL & Piper Diagram</option>
               <option value="combination">🧬 Combination Analysis</option>
@@ -1161,6 +1282,7 @@ export default function App() {
         <div className="hidden md:flex flex-wrap gap-x-4 gap-y-4 mb-8 select-none p-4 bg-slate-50/75 rounded-3xl border border-slate-200 shadow-inner">
           {[
             { id: "single", label: "Detailed Analysis", icon: LayoutDashboard, baseColor: "blue" },
+            { id: "advancedAnalysis", label: "Advanced Data Analysis", icon: Activity, baseColor: "indigo" },
             { id: "ranking", label: "Ranking Stats", icon: TrendingUp, baseColor: "violet" },
             { id: "ussl", label: "USSL & Piper Analysis", icon: Compass, baseColor: "indigo" },
             { id: "combination", label: "Combination Analysis", icon: Layers, baseColor: "indigo" },
@@ -1322,6 +1444,9 @@ export default function App() {
               setExportCombinedExceedance={setExportCombinedExceedance}
               sharedBulletinMaps={sharedBulletinMaps}
               setSharedBulletinMaps={setSharedBulletinMaps}
+              allRawData={rawData}
+              selectedYear={selectedYear}
+              selectedSeason={selectedSeason}
             />
           )}
 
@@ -1462,6 +1587,18 @@ export default function App() {
               onLimitsChanged={() => setLimitsVersion((v) => v + 1)}
             />
           )}
+
+          <div className={activeTab === "advancedAnalysis" ? "block" : "hidden"}>
+            <AdvancedAnalysisView
+              rawData={yearSeasonFilteredData}
+              headers={headers}
+              headerMap={headerMap}
+              selectedState={selectedState}
+              selectedDistrict={selectedDistrict}
+              showToast={showToast}
+              isVisible={activeTab === "advancedAnalysis"}
+            />
+          </div>
 
         </div>
 

@@ -855,6 +855,71 @@ export default function GisMapView({
   const [layers, setLayers] = useState<ShapefileLayer[]>([]);
   const [clipTarget, setClipTarget] = useState<string>("india"); // "none" | "india" | "layer-id"
 
+  useEffect(() => {
+    // Attempt to automatically pre-load default shapefiles (State and Districts) from root
+    const loadDefaultShapefiles = async () => {
+      const filesToTry = [
+        { name: "State Layer", url: "./State.zip" },
+        { name: "Districts Layer", url: "./Districts.zip" }
+      ];
+
+      for (const item of filesToTry) {
+        try {
+          let response = await fetch(item.url);
+          if (!response.ok) {
+            response = await fetch(item.url.substring(2));
+          }
+          if (!response.ok) continue;
+
+          const ct = response.headers.get("content-type") || "";
+          if (ct.includes("text/html") || ct.includes("application/xhtml+xml")) {
+            continue;
+          }
+
+          const buffer = await response.arrayBuffer();
+          const geojson = (await shp(buffer)) as any;
+          if (!geojson) continue;
+
+          let labelKey = "";
+          const sampleFeatures = geojson.type === "FeatureCollection" ? geojson.features : (Array.isArray(geojson) ? geojson[0]?.features : null);
+          if (sampleFeatures && sampleFeatures.length > 0) {
+            const props = sampleFeatures[0].properties || {};
+            const keys = Object.keys(props);
+            labelKey = keys.find(k => k.toLowerCase().includes("state") || k.toLowerCase().includes("dist") || k.toLowerCase() === "dt_name" || k.toLowerCase() === "dist_name" || k.toLowerCase() === "district_n") || keys[0] || "";
+          }
+
+          const id = `${item.name.toLowerCase().replace(/\s+/g, "_")}_${Date.now()}`;
+          const newLayer: ShapefileLayer = {
+            id,
+            name: item.name,
+            geoJson: geojson,
+            visible: true,
+            strokeColor: item.name.includes("State") ? "#dc2626" : "#2563eb",
+            strokeWidth: item.name.includes("State") ? 2.5 : 1.5,
+            fillColor: item.name.includes("State") ? "#fca5a5" : "#93c5fd",
+            fillOpacity: 10,
+            showLabels: true,
+            labelKey,
+            labelColor: "#1e293b",
+            labelSize: 10,
+            showInLegend: true,
+            showStroke: true,
+          };
+
+          setLayers(prev => {
+            if (prev.some(l => l.name === item.name)) return prev;
+            return [...prev, newLayer];
+          });
+          console.log(`Auto-loaded shapefile: ${item.name} successfully!`);
+        } catch (err) {
+          console.warn(`Default shapefile ${item.name} not found. Skipping auto-load.`, err);
+        }
+      }
+    };
+
+    loadDefaultShapefiles();
+  }, []);
+
   // Shapefile/GeoJSON State (for backwards compatibility)
   const [uploadedGeoJson, setUploadedGeoJson] = useState<any>(null);
   const [shapefileName, setShapefileName] = useState<string>("");

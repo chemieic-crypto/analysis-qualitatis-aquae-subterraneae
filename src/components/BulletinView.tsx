@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import JSZip from "jszip";
 import { DataHeaders } from "../types";
 import { PARAM_CONFIG } from "../data/config";
-import { getStats } from "../utils/math";
+import { getStats, getPercentile } from "../utils/math";
 import { generateParamDonutChart, generateOfflineChartBase64, buildColumnsChartOptions } from "../utils/chartHelpers";
 import { downloadMhtmlWordDoc, convertHtmlToWordDocHtml, convertHtmlToMhtml, convertHtmlToDocxBlob } from "../utils/export";
 import {
@@ -2136,16 +2136,19 @@ export default function BulletinView({
     let tableHTML = `
       <div style="margin-top: 15px; margin-bottom: 25px; page-break-inside: avoid;">
         ${tableCaption}
-        <table border="1" cellpadding="5" cellspacing="0" style="width: 100%; border-collapse: collapse; font-family: 'Times New Roman', Times, serif; font-size: 10pt; text-align: center; margin-bottom: 20px;">
+        <table border="1" cellpadding="4" cellspacing="0" style="width: auto; margin-left: auto; margin-right: auto; border-collapse: collapse; font-family: 'Times New Roman', Times, serif; font-size: 9.5pt; text-align: center; margin-bottom: 20px; white-space: nowrap;">
           <thead style="background-color: #f8fafc;">
             <tr>
-              <th rowspan="2" style="padding: 8px; border: 1px solid #475569; font-size: 9.5pt; width: 5%;">Sl. No.</th>
-              <th rowspan="2" style="padding: 8px; border: 1px solid #475569; font-size: 9.5pt; text-align: left; width: 25%;">${tblLevelName}</th>
-              <th rowspan="2" style="padding: 8px; border: 1px solid #475569; font-size: 9.5pt; width: 10%;">Samples Analysed</th>
-              <th colspan="3" style="padding: 6px; border: 1px solid #475569; font-size: 9.5pt;">${config.name} (${paramKey}) ${config.unit ? `(${config.unit})` : ""} - No. of Samples in Ranges</th>
-              <th rowspan="2" style="padding: 8px; border: 1px solid #475569; font-size: 9.5pt; width: 8%;">Min</th>
-              <th rowspan="2" style="padding: 8px; border: 1px solid #475569; font-size: 9.5pt; width: 8%;">Max</th>
-              <th rowspan="2" style="padding: 8px; border: 1px solid #475569; font-size: 9.5pt; width: 10%;">Std Dev</th>
+              <th rowspan="2" style="padding: 6px; border: 1px solid #475569; font-size: 9pt;">Sl. No.</th>
+              <th rowspan="2" style="padding: 6px; border: 1px solid #475569; font-size: 9pt; text-align: left;">${tblLevelName}</th>
+              <th rowspan="2" style="padding: 6px; border: 1px solid #475569; font-size: 9pt;">Samples Analysed</th>
+              <th colspan="3" style="padding: 6px; border: 1px solid #475569; font-size: 9pt;">${config.name} (${paramKey}) ${config.unit ? `(${config.unit})` : ""} - No. of Samples in Ranges</th>
+              <th rowspan="2" style="padding: 6px; border: 1px solid #475569; font-size: 9pt;">Min</th>
+              <th rowspan="2" style="padding: 6px; border: 1px solid #475569; font-size: 9pt;">Max</th>
+              <th rowspan="2" style="padding: 6px; border: 1px solid #475569; font-size: 9pt;">75%ile</th>
+              <th rowspan="2" style="padding: 6px; border: 1px solid #475569; font-size: 9pt;">90%ile</th>
+              <th rowspan="2" style="padding: 6px; border: 1px solid #475569; font-size: 9pt;">95%ile</th>
+              <th rowspan="2" style="padding: 6px; border: 1px solid #475569; font-size: 9pt;">Std Dev</th>
             </tr>
             <tr>
               ${rangesHeader}
@@ -2189,6 +2192,9 @@ export default function BulletinView({
 
       const minVal = Math.min(...vals).toFixed(2);
       const maxVal = Math.max(...vals).toFixed(2);
+      const p75Val = getPercentile(vals, 75).toFixed(2);
+      const p90Val = getPercentile(vals, 90).toFixed(2);
+      const p95Val = getPercentile(vals, 95).toFixed(2);
       
       const sum = vals.reduce((s, x) => s + x, 0);
       const mean = sum / vals.length;
@@ -2196,15 +2202,18 @@ export default function BulletinView({
 
       tableHTML += `
         <tr>
-          <td style="padding: 6px; border: 1px solid #94a3b8;">${idx++}</td>
-          <td style="padding: 6px; border: 1px solid #94a3b8; text-align: left; font-weight: bold; font-size: 9.5pt;">${locName}</td>
-          <td style="padding: 6px; border: 1px solid #94a3b8;">${vals.length}</td>
-          <td style="padding: 6px; border: 1px solid #94a3b8; background-color: #f0fdf4;">${r1}</td>
-          <td style="padding: 6px; border: 1px solid #94a3b8; background-color: #fefce8;">${r2}</td>
-          <td style="padding: 6px; border: 1px solid #94a3b8; background-color: #fef2f2; color: ${r3 > 0 ? "#b91c1c" : "#1e293b"}; font-weight: ${r3 > 0 ? "bold" : "normal"};">${r3}</td>
-          <td style="padding: 6px; border: 1px solid #94a3b8;">${minVal}</td>
-          <td style="padding: 6px; border: 1px solid #94a3b8;">${maxVal}</td>
-          <td style="padding: 6px; border: 1px solid #94a3b8; font-style: italic;">${stdDevVal}</td>
+          <td style="padding: 4px 6px; border: 1px solid #94a3b8;">${idx++}</td>
+          <td style="padding: 4px 6px; border: 1px solid #94a3b8; text-align: left; font-weight: bold; font-size: 9pt;">${locName}</td>
+          <td style="padding: 4px 6px; border: 1px solid #94a3b8;">${vals.length}</td>
+          <td style="padding: 4px 6px; border: 1px solid #94a3b8; background-color: #f0fdf4;">${r1}</td>
+          <td style="padding: 4px 6px; border: 1px solid #94a3b8; background-color: #fefce8;">${r2}</td>
+          <td style="padding: 4px 6px; border: 1px solid #94a3b8; background-color: #fef2f2; color: ${r3 > 0 ? "#b91c1c" : "#1e293b"}; font-weight: ${r3 > 0 ? "bold" : "normal"};">${r3}</td>
+          <td style="padding: 4px 6px; border: 1px solid #94a3b8;">${minVal}</td>
+          <td style="padding: 4px 6px; border: 1px solid #94a3b8;">${maxVal}</td>
+          <td style="padding: 4px 6px; border: 1px solid #94a3b8;">${p75Val}</td>
+          <td style="padding: 4px 6px; border: 1px solid #94a3b8;">${p90Val}</td>
+          <td style="padding: 4px 6px; border: 1px solid #94a3b8;">${p95Val}</td>
+          <td style="padding: 4px 6px; border: 1px solid #94a3b8; font-style: italic;">${stdDevVal}</td>
         </tr>
       `;
     });
@@ -2212,20 +2221,26 @@ export default function BulletinView({
     if (globalAllVals.length > 0) {
       const gMin = Math.min(...globalAllVals).toFixed(2);
       const gMax = Math.max(...globalAllVals).toFixed(2);
+      const gP75 = getPercentile(globalAllVals, 75).toFixed(2);
+      const gP90 = getPercentile(globalAllVals, 90).toFixed(2);
+      const gP95 = getPercentile(globalAllVals, 95).toFixed(2);
       const gSum = globalAllVals.reduce((s, x) => s + x, 0);
       const gMean = gSum / globalAllVals.length;
       const gStd = getStdDev(globalAllVals, gMean).toFixed(2);
 
       tableHTML += `
         <tr style="font-weight: bold; background-color: #f1f5f9; border-top: 1.5pt solid #475569;">
-          <td colspan="2" style="padding: 6px; border: 1px solid #475569; text-align: right;">GRAND TOTAL</td>
-          <td style="padding: 6px; border: 1px solid #475569;">${globalAllVals.length}</td>
-          <td style="padding: 6px; border: 1px solid #475569; background-color: #f0fdf4;">${globalR1}</td>
-          <td style="padding: 6px; border: 1px solid #475569; background-color: #fefce8;">${globalR2}</td>
-          <td style="padding: 6px; border: 1px solid #475569; background-color: #fef2f2; color: #b91c1c;">${globalR3}</td>
-          <td style="padding: 6px; border: 1px solid #475569;">${gMin}</td>
-          <td style="padding: 6px; border: 1px solid #475569;">${gMax}</td>
-          <td style="padding: 6px; border: 1px solid #475569; font-style: italic;">${gStd}</td>
+          <td colspan="2" style="padding: 4px 6px; border: 1px solid #475569; text-align: right;">GRAND TOTAL</td>
+          <td style="padding: 4px 6px; border: 1px solid #475569;">${globalAllVals.length}</td>
+          <td style="padding: 4px 6px; border: 1px solid #475569; background-color: #f0fdf4;">${globalR1}</td>
+          <td style="padding: 4px 6px; border: 1px solid #475569; background-color: #fefce8;">${globalR2}</td>
+          <td style="padding: 4px 6px; border: 1px solid #475569; background-color: #fef2f2; color: #b91c1c;">${globalR3}</td>
+          <td style="padding: 4px 6px; border: 1px solid #475569;">${gMin}</td>
+          <td style="padding: 4px 6px; border: 1px solid #475569;">${gMax}</td>
+          <td style="padding: 4px 6px; border: 1px solid #475569;">${gP75}</td>
+          <td style="padding: 4px 6px; border: 1px solid #475569;">${gP90}</td>
+          <td style="padding: 4px 6px; border: 1px solid #475569;">${gP95}</td>
+          <td style="padding: 4px 6px; border: 1px solid #475569; font-style: italic;">${gStd}</td>
         </tr>
       `;
     }

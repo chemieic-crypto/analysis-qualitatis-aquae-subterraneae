@@ -31,6 +31,7 @@ export default function MappingModal({
   const [seasonCol, setSeasonCol] = useState("");
   const [aquiferCol, setAquiferCol] = useState("");
   const [sourceCol, setSourceCol] = useState("");
+  const [depthCol, setDepthCol] = useState("");
 
   // Parameter mappings: key is PARAM_CONFIG key, value is uploaded Excel header
   const [paramMappings, setParamMappings] = useState<Record<string, string>>({});
@@ -48,6 +49,7 @@ export default function MappingModal({
       setSeasonCol(initialHeaders.season || "");
       setAquiferCol(initialHeaders.aquifer || "");
       setSourceCol(initialHeaders.source || "");
+      setDepthCol(initialHeaders.depth || "");
 
       // Invert initialHeaderMap to match param keys
       const mapping: Record<string, string> = {};
@@ -83,6 +85,7 @@ export default function MappingModal({
       season: seasonCol || undefined,
       aquifer: aquiferCol || undefined,
       source: sourceCol || undefined,
+      depth: depthCol || undefined,
       params: [],
     };
 
@@ -286,6 +289,21 @@ export default function MappingModal({
                 <select
                   value={sourceCol}
                   onChange={(e) => setSourceCol(e.target.value)}
+                  className="w-full text-xs p-2 rounded-lg bg-white border border-slate-300 font-bold text-slate-700"
+                >
+                  <option value="">-- None / Ignore --</option>
+                  {uploadedHeaders.map((h, i) => (
+                    <option key={i} value={h}>{h}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Depth */}
+              <div className="flex flex-col gap-1.5 bg-white/50 p-2.5 rounded-xl border border-white/60 shadow-inner">
+                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-widest truncate">Depth (m bgl)</label>
+                <select
+                  value={depthCol}
+                  onChange={(e) => setDepthCol(e.target.value)}
                   className="w-full text-xs p-2 rounded-lg bg-white border border-slate-300 font-bold text-slate-700"
                 >
                   <option value="">-- None / Ignore --</option>

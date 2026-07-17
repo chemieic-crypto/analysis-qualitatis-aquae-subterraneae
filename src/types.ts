@@ -28,6 +28,7 @@ export interface DataHeaders {
   season?: string;
   aquifer?: string;
   source?: string;
+  depth?: string;
   params: string[];
 }
 
@@ -47,6 +48,9 @@ export interface GroupedStatRow {
   max: number;
   avg: number;
   std: number;
+  p75?: number;
+  p90?: number;
+  p95?: number;
   nSarS1?: number;
   nPctSarS1?: number;
   nSarS2?: number;
@@ -55,6 +59,7 @@ export interface GroupedStatRow {
   nPctSarS3?: number;
   nSarS4?: number;
   nPctSarS4?: number;
+  periodStats?: Record<string, any>;
 }
 
 export interface ExceedingLocationItem {
