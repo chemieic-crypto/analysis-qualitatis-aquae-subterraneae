@@ -1687,7 +1687,7 @@ export default function App() {
           </div>
 
           <div className={activeTab === "calculatorius" ? "block" : "hidden"}>
-            <CalculatoriusView rawData={rawData} headerMap={headerMap} />
+            <CalculatoriusView rawData={rawData} headerMap={headerMap} headers={headers} />
           </div>
 
           <div className={activeTab === "gis" ? "block" : "hidden"}>

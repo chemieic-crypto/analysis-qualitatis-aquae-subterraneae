@@ -3,6 +3,7 @@ import { INDIA_BOUNDARY } from "../data/india_boundary";
 import { Plus, Minus, RotateCcw, Info, Globe, Calendar, Send, Table } from "lucide-react";
 import { ShapefileLayer } from "../types";
 import { getShortName } from "../utils/stateAbbreviations";
+import { PARAM_CONFIG } from "../data/config";
 
 interface GisChoroplethMapProps {
   rawData: any[];
@@ -149,7 +150,7 @@ export default function GisChoroplethMap({
   
 
   const [useShortNames, setUseShortNames] = useState(false);
-  const pixelRatio = typeof window !== "undefined" ? Math.min(window.devicePixelRatio || 1, 2) * 2 : 4; // High DPI
+  const pixelRatio = typeof window !== "undefined" ? Math.min(window.devicePixelRatio || 1, 3) : 2; // Exact screen crispness without over-multiplying
   const [mapTheme, setMapTheme] = useState<"light" | "dark" | "blueprint">("light");
 
   const handleExportImage = () => {
@@ -329,6 +330,8 @@ export default function GisChoroplethMap({
   const [stateFontFamily, setStateFontFamily] = useState<string>("Inter");
   const [stateFontSize, setStateFontSize] = useState<number>(10);
   const [showRegionNames, setShowRegionNames] = useState<boolean>(true);
+  const [showStateNames, setShowStateNames] = useState<boolean>(true);
+  const [showDistrictNames, setShowDistrictNames] = useState<boolean>(true);
   const [drawnNames] = useState<Set<string>>(new Set());
   const [stateFontStyle, setStateFontStyle] = useState<string>("bold");
   const [stateFontColor, setStateFontColor] = useState<string>("#1e293b");
@@ -793,9 +796,9 @@ export default function GisChoroplethMap({
     const height = canvas.height / pixelRatio;
 
     // Clear canvas - support transparent background
+    drawnNames.clear();
     if (transparentBackground) {
       ctx.clearRect(0, 0, width, height);
-      drawnNames.clear();
     } else {
       ctx.fillStyle = "#f8fafc";
       ctx.fillRect(0, 0, width, height);
@@ -1108,7 +1111,12 @@ export default function GisChoroplethMap({
               
               if (sx >= 0 && sx <= width && sy >= 0 && sy <= height) {
                 const baseLabel = String(f.properties?.[layer.labelKey] || "");
-                if (showRegionNames && baseLabel) {
+                const isLayerState = (layer.name || "").toLowerCase().includes("state");
+                const isLayerDist = (layer.name || "").toLowerCase().includes("dist") || (layer.name || "").toLowerCase().includes("district");
+                const showThisLayerLabels = showRegionNames && (
+                  isLayerState ? showStateNames : isLayerDist ? showDistrictNames : true
+                );
+                if (showThisLayerLabels && baseLabel) {
                   const labelText = nameOverrides[baseLabel] || baseLabel;
                   const labelLower = labelText.trim().toLowerCase();
                   if (!drawnNames.has(labelLower)) {
@@ -1383,35 +1391,65 @@ export default function GisChoroplethMap({
     // Draw Compass Rose (North Arrow)
     if (showCompass) {
       ctx.save();
-      const cx = width - 40;
-      const cy = 40;
-      
+      const cx = northArrowPos.x === 550 ? width - 40 : northArrowPos.x;
+      const cy = northArrowPos.y === 40 ? 50 : northArrowPos.y;
+
+      // Draw beautiful outer ring
       ctx.beginPath();
-      ctx.arc(cx, cy, 14, 0, 2 * Math.PI);
-      ctx.strokeStyle = "rgba(79, 70, 229, 0.4)";
+      ctx.arc(cx, cy, 18, 0, 2 * Math.PI);
+      ctx.strokeStyle = "rgba(15, 23, 42, 0.15)";
       ctx.lineWidth = 1;
       ctx.stroke();
 
+      // Inner precise circle
       ctx.beginPath();
-      ctx.moveTo(cx, cy - 13);
-      ctx.lineTo(cx + 4, cy);
-      ctx.lineTo(cx, cy - 2);
+      ctx.arc(cx, cy, 3, 0, 2 * Math.PI);
+      ctx.fillStyle = "#0f172a";
+      ctx.fill();
+
+      // Sharp North Pointer (Left side - filled dark, right side - white/contrasting)
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - 18); // top tip
+      ctx.lineTo(cx - 5, cy);  // left tip
+      ctx.lineTo(cx, cy - 2);  // inner join
       ctx.closePath();
-      ctx.fillStyle = "#ef4444";
+      ctx.fillStyle = "#0f172a"; // solid dark slate
       ctx.fill();
 
       ctx.beginPath();
-      ctx.moveTo(cx, cy + 13);
-      ctx.lineTo(cx + 4, cy);
-      ctx.lineTo(cx, cy + 2);
+      ctx.moveTo(cx, cy - 18); // top tip
+      ctx.lineTo(cx + 5, cy);  // right tip
+      ctx.lineTo(cx, cy - 2);  // inner join
       ctx.closePath();
-      ctx.fillStyle = "#94a3b8";
+      ctx.fillStyle = "#f1f5f9"; // solid light grey
+      ctx.strokeStyle = "#0f172a";
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
       ctx.fill();
 
-      ctx.font = "bold 8px Courier, monospace";
-      ctx.fillStyle = "#ef4444";
+      // Sharp South Pointer (Left side - light, right side - dark)
+      ctx.beginPath();
+      ctx.moveTo(cx, cy + 18); // bottom tip
+      ctx.lineTo(cx - 5, cy);  // left tip
+      ctx.lineTo(cx, cy + 2);  // inner join
+      ctx.closePath();
+      ctx.fillStyle = "#cbd5e1"; // light grey-blue
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(cx, cy + 18); // bottom tip
+      ctx.lineTo(cx + 5, cy);  // right tip
+      ctx.lineTo(cx, cy + 2);  // inner join
+      ctx.closePath();
+      ctx.fillStyle = "#475569"; // slate dark grey
+      ctx.fill();
+
+      // Premium elegant "N" lettering above the pointer
+      ctx.font = `bold 10px ${fontFamily || "sans-serif"}`;
+      ctx.fillStyle = "#0f172a";
       ctx.textAlign = "center";
-      ctx.fillText("N", cx, cy - 16);
+      ctx.textBaseline = "bottom";
+      ctx.fillText("N", cx, cy - 20);
 
       ctx.restore();
     }
@@ -1458,7 +1496,14 @@ export default function GisChoroplethMap({
     }
 
     // Draw Centroids as text labels
-    if (showRegionNames) {
+    const shouldDrawCentroidLabels = showRegionNames && (
+      reportingLevel === "State"
+        ? showStateNames
+        : reportingLevel === "District"
+        ? showDistrictNames
+        : showDistrictNames
+    );
+    if (shouldDrawCentroidLabels) {
       screenCentroids.forEach(({ sx, sy, g }) => {
         if (sx < -20 || sx > width + 20 || sy < -20 || sy > height + 20) return;
         
@@ -1476,43 +1521,45 @@ export default function GisChoroplethMap({
           ctx.fillStyle = stateFontColor;
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
-          ctx.fillText(shortName, sx, sy);
+          ctx.fillText(shortName, Math.round(sx), Math.round(sy));
           ctx.restore();
         }
       });
     }
 
-    // Draw customizable map title & subtitle (Rule 5 & 8) - Draggable!
+    // Draw customizable map title & subtitle (Rule 5 & 8) - Centered & Draggable!
     ctx.save();
+    const tY = Math.round(titlePos.y);
+    const titleX = titlePos.x === 20 ? Math.round(width / 2) : Math.round(titlePos.x);
+
     ctx.font = `${titleFontStyle} ${titleFontSize}px ${titleFontFamily}`;
     ctx.fillStyle = titleFontColor;
-    ctx.textAlign = "left";
-    ctx.fillText(titleText, titlePos.x, titlePos.y);
+    ctx.textAlign = "center";
+    ctx.fillText(titleText, titleX, tY);
 
     ctx.font = `${subtitleFontStyle} ${subtitleFontSize}px ${subtitleFontFamily}`;
     ctx.fillStyle = subtitleFontColor;
-    ctx.fillText(subtitleText, titlePos.x, titlePos.y + 16);
+    ctx.textAlign = "center";
+    ctx.fillText(subtitleText, titleX, tY + Math.round(titleFontSize * 1.2));
     ctx.restore();
 
     // Draw Customizable map legend with transparent/translucent background (Rule 4 & 6 & 8) - Draggable!
     ctx.save();
-    const lX = legendPos.x;
-    const lY = legendPos.y;
     const lW = 160;
     const lH = Math.max(110, (activeClasses.length + 2) * 15 + 30);
+    const lX = legendPos.x === 420 ? Math.round(width - 180) : Math.round(legendPos.x);
+    const lY = legendPos.y === 280 ? Math.round(height - lH - 20) : Math.round(legendPos.y);
 
     if (!legendTransparent) {
-      ctx.fillStyle = "rgba(255, 255, 255, 0.88)";
-      ctx.strokeStyle = "rgba(15, 23, 42, 0.12)";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+      ctx.strokeStyle = "rgba(15, 23, 42, 0.15)";
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.roundRect(lX, lY, lW, lH, 12);
       ctx.fill();
       ctx.stroke();
-
-
     } else {
-      ctx.strokeStyle = "rgba(148, 163, 184, 0.15)";
+      ctx.strokeStyle = "rgba(148, 163, 184, 0.25)";
       ctx.setLineDash([4, 4]);
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -1547,11 +1594,9 @@ export default function GisChoroplethMap({
         ctx.beginPath();
         ctx.roundRect(lX + 12, itemY - 8, 9, 9, 2.5);
         ctx.fill();
-
-
         ctx.restore();
 
-        ctx.font = `normal ${legendFontSize - 1}px ${legendFontFamily}`;
+        ctx.font = `${legendFontStyle} ${legendFontSize}px ${legendFontFamily}`;
         ctx.fillStyle = legendFontColor;
         ctx.fillText(item.label, lX + 27, itemY);
       }
@@ -1590,20 +1635,28 @@ export default function GisChoroplethMap({
     let yearStr = "";
     if (rawData && rawData.length > 0 && headers.year) {
       const years = Array.from(new Set(rawData.map((d: any) => d[headers.year]).filter(Boolean)));
-      if (years.length > 0) yearStr = ` ${years.join(", ")}`;
+      if (years.length > 0) yearStr = `${years.join(", ")}`;
     }
+
+    const fullName = PARAM_CONFIG[activeParam]?.name || activeParam;
 
     if (canvasRef.current) {
       const gList = sideBySide ? groupListPre : groupList;
-      const baseTitle = sideBySide ? `Heat Map For ${activeParam} (Pre)` : customMapTitle || `Heat Map For ${activeParam}`;
-      const title = `${baseTitle}${yearStr}`;
-      const subtitle = sideBySide ? `Pre-Monsoon` : `${seasonFilter === "both" ? "All Seasons" : seasonFilter === "pre" ? "Pre-Monsoon" : "Post-Monsoon"}`;
+      const baseTitle = sideBySide ? `Heat Map For ${fullName} (Pre)` : customMapTitle || `Heat Map For ${fullName}`;
+      const title = baseTitle;
+
+      const seasonText = sideBySide ? `Pre-Monsoon` : `${seasonFilter === "both" ? "All Seasons" : seasonFilter === "pre" ? "Pre-Monsoon" : "Post-Monsoon"}`;
+      const subtitle = yearStr ? `${seasonText} ${yearStr}` : seasonText;
+
       drawMapOnCanvas(canvasRef.current, gList, title, subtitle);
     }
     if (sideBySide && canvasPostRef.current) {
-      const baseTitle = `Heat Map For ${activeParam} (Post)`;
-      const title = `${baseTitle}${yearStr}`;
-      const subtitle = `Post-Monsoon`;
+      const baseTitle = `Heat Map For ${fullName} (Post)`;
+      const title = baseTitle;
+
+      const seasonText = `Post-Monsoon`;
+      const subtitle = yearStr ? `${seasonText} ${yearStr}` : seasonText;
+
       drawMapOnCanvas(canvasPostRef.current, groupListPost, title, subtitle);
     }
   };
@@ -1629,6 +1682,8 @@ export default function GisChoroplethMap({
     showScaleBar, 
     showGridLines,
     showRegionNames, 
+    showStateNames,
+    showDistrictNames,
     showIndiaBoundary,
     layoutMode,
     showMapBorder,
@@ -1679,23 +1734,29 @@ export default function GisChoroplethMap({
     const y = (e.clientY - rect.top) * scaleY;
 
     // 1. Check if clicked near North Arrow (Compass)
-    if (showCompass && Math.sqrt((x - northArrowPos.x)**2 + (y - northArrowPos.y)**2) < 25) {
+    const compassX = northArrowPos.x === 550 ? (canvas.width / pixelRatio) - 40 : northArrowPos.x;
+    const compassY = northArrowPos.y === 40 ? 50 : northArrowPos.y;
+    if (showCompass && Math.sqrt((x - compassX)**2 + (y - compassY)**2) < 25) {
       setIsDraggingNorthArrow(true);
-      dragElementStartOffset.current = { x: x - northArrowPos.x, y: y - northArrowPos.y };
+      dragElementStartOffset.current = { x: x - compassX, y: y - compassY };
       return;
     }
 
-    // 2. Check if clicked in Legend box (bounds: legendPos.x to legendPos.x+160, legendPos.y to legendPos.y+110)
-    if (x >= legendPos.x && x <= legendPos.x + 160 && y >= legendPos.y && y <= legendPos.y + Math.max(110, (activeClasses.length + 2) * 15 + 30)) {
+    // 2. Check if clicked in Legend box (bounds: lX to lX+160, lY to lY+lH)
+    const lH = Math.max(110, (activeClasses.length + 2) * 15 + 30);
+    const lX = legendPos.x === 420 ? Math.round((canvas.width / pixelRatio) - 180) : legendPos.x;
+    const lY = legendPos.y === 280 ? Math.round((canvas.height / pixelRatio) - lH - 20) : legendPos.y;
+    if (x >= lX && x <= lX + 160 && y >= lY && y <= lY + lH) {
       setIsDraggingLegend(true);
-      dragElementStartOffset.current = { x: x - legendPos.x, y: y - legendPos.y };
+      dragElementStartOffset.current = { x: x - lX, y: y - lY };
       return;
     }
 
-    // 3. Check if clicked near Title (bounds: titlePos.x to titlePos.x+250, titlePos.y to titlePos.y+30)
-    if (x >= titlePos.x && x <= titlePos.x + 250 && y >= titlePos.y - 15 && y <= titlePos.y + 25) {
+    // 3. Check if clicked near Title (bounds: titleX - 150 to titleX + 150, titlePos.y to titlePos.y + 35)
+    const titleX = titlePos.x === 20 ? (canvas.width / pixelRatio) / 2 : titlePos.x;
+    if (x >= titleX - 150 && x <= titleX + 150 && y >= titlePos.y - 15 && y <= titlePos.y + 35) {
       setIsDraggingTitle(true);
-      dragElementStartOffset.current = { x: x - titlePos.x, y: y - titlePos.y };
+      dragElementStartOffset.current = { x: x - titleX, y: y - titlePos.y };
       return;
     }
 
@@ -1717,34 +1778,35 @@ export default function GisChoroplethMap({
     const x = cssX * scaleX;
     const y = cssY * scaleY;
 
+    const width = canvas.width / pixelRatio;
+    const height = canvas.height / pixelRatio;
+
     if (isDraggingNorthArrow) {
       setNorthArrowPos({
-        x: Math.max(10, Math.min(canvas.width - 10, x - dragElementStartOffset.current.x)),
-        y: Math.max(10, Math.min(canvas.height - 10, y - dragElementStartOffset.current.y))
+        x: Math.max(10, Math.min(width - 10, x - dragElementStartOffset.current.x)),
+        y: Math.max(10, Math.min(height - 10, y - dragElementStartOffset.current.y))
       });
     } else if (isDraggingLegend) {
+      const lH = Math.max(110, (activeClasses.length + 2) * 15 + 30);
       setLegendPos({
-        x: Math.max(10, Math.min(canvas.width - 160, x - dragElementStartOffset.current.x)),
-        y: Math.max(10, Math.min(canvas.height - Math.max(110, (activeClasses.length + 2) * 15 + 30), y - dragElementStartOffset.current.y))
+        x: Math.max(10, Math.min(width - 160, x - dragElementStartOffset.current.x)),
+        y: Math.max(10, Math.min(height - lH, y - dragElementStartOffset.current.y))
       });
     } else if (isDraggingTitle) {
       setTitlePos({
-        x: Math.max(5, Math.min(canvas.width - 50, x - dragElementStartOffset.current.x)),
-        y: Math.max(15, Math.min(canvas.height - 15, y - dragElementStartOffset.current.y))
+        x: Math.max(5, Math.min(width - 50, x - dragElementStartOffset.current.x)),
+        y: Math.max(15, Math.min(height - 15, y - dragElementStartOffset.current.y))
       });
     } else if (isDragging) {
       setPanX(e.clientX * scaleX - dragStart.x);
       setPanY(e.clientY * scaleY - dragStart.y);
     } else {
       // Find nearest centroid in screen coordinates to trigger interactive tooltips
-      const width = canvas.width;
-      const height = canvas.height;
-
       let nearest: GroupData | null = null;
       let minDist = 35; // Maximum distance to trigger tooltip (in pixels)
 
       groupList.forEach((g) => {
-        const [sx, sy] = project(g.centroidLon, g.centroidLat, width, height);
+        const [sx, sy] = project(g.centroidLon, g.centroidLat, canvas.width, canvas.height);
         const dx = x - sx;
         const dy = y - sy;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -1773,9 +1835,17 @@ export default function GisChoroplethMap({
     const y = (e.clientY - rect.top) * scaleY;
 
     // 1. Skip if clicked on North arrow, legend or title dragging areas
-    if (showCompass && Math.sqrt((x - northArrowPos.x)**2 + (y - northArrowPos.y)**2) < 25) return;
-    if (x >= legendPos.x && x <= legendPos.x + 160 && y >= legendPos.y && y <= legendPos.y + Math.max(110, (activeClasses.length + 2) * 15 + 30)) return;
-    if (x >= titlePos.x && x <= titlePos.x + 250 && y >= titlePos.y - 15 && y <= titlePos.y + 25) return;
+    const compassX = northArrowPos.x === 550 ? (canvas.width / pixelRatio) - 40 : northArrowPos.x;
+    const compassY = northArrowPos.y === 40 ? 50 : northArrowPos.y;
+    if (showCompass && Math.sqrt((x - compassX)**2 + (y - compassY)**2) < 25) return;
+
+    const lH = Math.max(110, (activeClasses.length + 2) * 15 + 30);
+    const lX = legendPos.x === 420 ? Math.round((canvas.width / pixelRatio) - 180) : legendPos.x;
+    const lY = legendPos.y === 280 ? Math.round((canvas.height / pixelRatio) - lH - 20) : legendPos.y;
+    if (x >= lX && x <= lX + 160 && y >= lY && y <= lY + lH) return;
+
+    const titleX = titlePos.x === 20 ? (canvas.width / pixelRatio) / 2 : titlePos.x;
+    if (x >= titleX - 150 && x <= titleX + 150 && y >= titlePos.y - 15 && y <= titlePos.y + 35) return;
 
     // 2. Unproject screen click to geographic lon/lat
     const [lon, lat] = unproject(x, y, canvas.width, canvas.height);
@@ -2076,16 +2146,40 @@ export default function GisChoroplethMap({
 
           {/* Options */}
           <div className="bg-slate-50/50 p-2.5 rounded-xl border border-slate-200/50 space-y-2">
-            
-            <label className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-slate-100/50 transition-all mt-2">
-              <input
-                type="checkbox"
-                checked={useShortNames}
-                onChange={(e) => setUseShortNames(e.target.checked)}
-                className="text-indigo-600 focus:ring-indigo-500 rounded border-slate-300 w-3 h-3"
-              />
-              <span className="text-[10px] font-bold text-slate-800">Use Short Names (State/UT/Dist)</span>
-            </label>
+            <span className="text-[9px] font-black uppercase text-indigo-950 tracking-wider block">
+              Label & Name Settings
+            </span>
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-slate-100/50 transition-all">
+                <input
+                  type="checkbox"
+                  checked={showStateNames}
+                  onChange={(e) => setShowStateNames(e.target.checked)}
+                  className="text-indigo-600 focus:ring-indigo-500 rounded border-slate-300 w-3 h-3"
+                />
+                <span className="text-[10px] font-bold text-slate-800">Show State/UT Names</span>
+              </label>
+
+              <label className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-slate-100/50 transition-all">
+                <input
+                  type="checkbox"
+                  checked={showDistrictNames}
+                  onChange={(e) => setShowDistrictNames(e.target.checked)}
+                  className="text-indigo-600 focus:ring-indigo-500 rounded border-slate-300 w-3 h-3"
+                />
+                <span className="text-[10px] font-bold text-slate-800">Show District Names</span>
+              </label>
+
+              <label className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-slate-100/50 transition-all border-t border-slate-200/50 pt-1.5 mt-0.5">
+                <input
+                  type="checkbox"
+                  checked={useShortNames}
+                  onChange={(e) => setUseShortNames(e.target.checked)}
+                  className="text-indigo-600 focus:ring-indigo-500 rounded border-slate-300 w-3 h-3"
+                />
+                <span className="text-[10px] font-bold text-slate-800">Use Short Names (Abbreviate)</span>
+              </label>
+            </div>
           </div>
 
 
@@ -2342,11 +2436,11 @@ export default function GisChoroplethMap({
                       </select>
                     </div>
                     <div className="space-y-0.5">
-                    <label className="flex items-center gap-1.5 cursor-pointer mt-3">
+                    <label className="flex items-center gap-1.5 cursor-pointer mt-1">
                       <input type="checkbox" checked={showRegionNames} onChange={(e) => setShowRegionNames(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500 w-2.5 h-2.5" />
-                      <span className="text-[9px] font-bold text-slate-600">Show Region Names</span>
+                      <span className="text-[9px] font-bold text-slate-600">Master Label Toggle</span>
                     </label>
-                      <label className="text-[8px] font-bold text-slate-500">Font Size</label>
+                      <label className="text-[8px] font-bold text-slate-500 mt-1 block">Font Size</label>
                       <input
                         type="number"
                         min="6"
@@ -2762,7 +2856,7 @@ export default function GisChoroplethMap({
 
         {/* Main Map Interactive Viewport */}
         <div className={`flex flex-col sm:flex-row gap-4 ${currentLayout.style} relative flex-1 min-w-0 border border-slate-100 rounded-2xl bg-slate-50/30 overflow-hidden select-none`}>
-          <div className="flex-1 relative min-w-0 h-full">
+          <div className="flex-1 relative min-w-0 h-full flex items-center justify-center">
             <canvas
               ref={canvasRef}
               width={currentLayout.width * pixelRatio}
@@ -2771,12 +2865,18 @@ export default function GisChoroplethMap({
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
               onMouseLeave={handleMouseUp}
-              className={`w-full h-full block bg-transparent pointer-events-auto ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
-              style={{ width: "100%", height: "100%", objectFit: "contain" }}
+              className={`block bg-transparent pointer-events-auto mx-auto ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+              style={{
+                width: `${currentLayout.width}px`,
+                height: `${currentLayout.height}px`,
+                maxWidth: "100%",
+                maxHeight: "100%",
+                objectFit: "contain"
+              }}
             />
           </div>
           {sideBySide && (
-            <div className="flex-1 relative min-w-0 h-full border-l border-slate-200/50">
+            <div className="flex-1 relative min-w-0 h-full border-l border-slate-200/50 flex items-center justify-center">
               <canvas
                 ref={canvasPostRef}
                 width={currentLayout.width * pixelRatio}
@@ -2785,8 +2885,14 @@ export default function GisChoroplethMap({
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleMouseUp}
-                className={`w-full h-full block bg-transparent pointer-events-auto ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
-                style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                className={`block bg-transparent pointer-events-auto mx-auto ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+                style={{
+                  width: `${currentLayout.width}px`,
+                  height: `${currentLayout.height}px`,
+                  maxWidth: "100%",
+                  maxHeight: "100%",
+                  objectFit: "contain"
+                }}
               />
             </div>
           )}
