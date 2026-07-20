@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { DataHeaders } from "../types";
+import { DataHeaders, ShapefileLayer } from "../types";
 import { PARAM_CONFIG } from "../data/config";
 import { 
   SlidersHorizontal, Download, Layers, Compass, 
@@ -15,6 +15,7 @@ interface CombinationAnalysisViewProps {
   selectedDistrict?: string;
   selectedYear?: string;
   selectedSeason?: string;
+  layers?: ShapefileLayer[];
 }
 
 export function CombinationAnalysisView({
@@ -24,7 +25,8 @@ export function CombinationAnalysisView({
   selectedState = "",
   selectedDistrict = "",
   selectedYear = "",
-  selectedSeason = ""
+  selectedSeason = "",
+  layers
 }: CombinationAnalysisViewProps) {
   const L = (window as any).L;
 
@@ -61,7 +63,7 @@ export function CombinationAnalysisView({
   }, [selectedSeason]);
 
   // Map Controls
-  const [mapTheme, setMapTheme] = useState<"light" | "satellite" | "terrain">("light");
+  const [mapTheme, setMapTheme] = useState<"light" | "dark" | "satellite" | "terrain" | "topo" | "osm">("light");
   const [pointSize, setPointSize] = useState<number>(7);
   const [mapStatusFilters, setMapStatusFilters] = useState({ clean: true, single: true, multi: true });
 
@@ -78,6 +80,7 @@ export function CombinationAnalysisView({
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
   const markerGroupRef = useRef<any>(null);
+  const geojsonLayersRef = useRef<any[]>([]);
 
   // Map column mapping helper
   const columnMapping = useMemo(() => {
@@ -339,14 +342,70 @@ export function CombinationAnalysisView({
 
     const tileUrls = {
       light: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-      satellite: "http://mt0.google.com/vt/lyrs=y&hl=en&x={x}&y={y}&z={z}",
-      terrain: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
+      dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+      satellite: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      topo: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+      osm: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      terrain: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}"
     };
 
     L.tileLayer(tileUrls[mapTheme], {
       attribution: "© Map Tiles"
     }).addTo(map);
   }, [mapTheme, L]);
+
+  // Synchronize GeoJSON shapefile layers on Leaflet Map
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !L) return;
+
+    // Remove previous geojson layers
+    geojsonLayersRef.current.forEach((l: any) => {
+      try {
+        map.removeLayer(l);
+      } catch (err) {
+        // ignore
+      }
+    });
+    geojsonLayersRef.current = [];
+
+    if (layers && layers.length > 0) {
+      layers.forEach((layer) => {
+        if (!layer.visible || !layer.geoJson) return;
+
+        const strokeColor = layer.strokeColor || "#3b82f6";
+        const strokeWidth = layer.strokeWidth || 1.5;
+        const fillColor = layer.fillColor || "#3b82f6";
+        const fillOpacity = (layer.fillOpacity !== undefined ? layer.fillOpacity : 10) / 100;
+
+        try {
+          const geojsonLayer = L.geoJSON(layer.geoJson, {
+            style: () => ({
+              color: strokeColor,
+              weight: strokeWidth,
+              fillColor: fillColor,
+              fillOpacity: layer.showStroke === false ? 0 : fillOpacity,
+              opacity: layer.showStroke === false ? 0 : 1
+            }),
+            onEachFeature: (feature: any, leafletLayer: any) => {
+              if (layer.showLabels && layer.labelKey && feature.properties?.[layer.labelKey]) {
+                const labelText = String(feature.properties[layer.labelKey]);
+                leafletLayer.bindTooltip(labelText, {
+                  permanent: true,
+                  direction: "center",
+                  className: "custom-map-label"
+                });
+              }
+            }
+          }).addTo(map);
+
+          geojsonLayersRef.current.push(geojsonLayer);
+        } catch (e) {
+          console.error("Error drawing GeoJSON layer in leaflet:", e);
+        }
+      });
+    }
+  }, [layers, L, mapTheme]);
 
   // Marker updating on data
   useEffect(() => {
@@ -743,8 +802,11 @@ export function CombinationAnalysisView({
                 className="bg-slate-50 border border-slate-200 rounded-xl px-2 py-1 text-[9px] font-black uppercase tracking-wider outline-none text-slate-600"
               >
                 <option value="light">Classic Light</option>
+                <option value="dark">Dark Canvas</option>
                 <option value="satellite">Satellite View</option>
-                <option value="terrain">Terrain Map</option>
+                <option value="terrain">Esri Terrain</option>
+                <option value="topo">Esri Topographic</option>
+                <option value="osm">OpenStreetMap</option>
               </select>
             </div>
           </div>

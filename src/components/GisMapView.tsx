@@ -53,6 +53,10 @@ interface GisMapViewProps {
   isVisible: boolean;
   bulletinMaps?: Record<string, string>;
   setBulletinMaps?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  layers: ShapefileLayer[];
+  setLayers: React.Dispatch<React.SetStateAction<ShapefileLayer[]>>;
+  choroplethClasses?: { limit: number; color: string; label: string }[];
+  setChoroplethClasses?: React.Dispatch<React.SetStateAction<{ limit: number; color: string; label: string }[]>>;
 }
 
 export interface ShapefileLayer {
@@ -836,7 +840,11 @@ export default function GisMapView({
   showToast,
   isVisible,
   bulletinMaps,
-  setBulletinMaps
+  setBulletinMaps,
+  layers,
+  setLayers,
+  choroplethClasses,
+  setChoroplethClasses
 }: GisMapViewProps) {
   // Canvas references for dual panels (Comparison mode)
   const canvasRefLeft = useRef<HTMLCanvasElement>(null);
@@ -852,73 +860,7 @@ export default function GisMapView({
   const [utmZone, setUtmZone] = useState<number>(44);
 
   // Shapefile Layers State
-  const [layers, setLayers] = useState<ShapefileLayer[]>([]);
   const [clipTarget, setClipTarget] = useState<string>("india"); // "none" | "india" | "layer-id"
-
-  useEffect(() => {
-    // Attempt to automatically pre-load default shapefiles (State and Districts) from root
-    const loadDefaultShapefiles = async () => {
-      const filesToTry = [
-        { name: "State Layer", url: "./State.zip" },
-        { name: "Districts Layer", url: "./Districts.zip" }
-      ];
-
-      for (const item of filesToTry) {
-        try {
-          let response = await fetch(item.url);
-          if (!response.ok) {
-            response = await fetch(item.url.substring(2));
-          }
-          if (!response.ok) continue;
-
-          const ct = response.headers.get("content-type") || "";
-          if (ct.includes("text/html") || ct.includes("application/xhtml+xml")) {
-            continue;
-          }
-
-          const buffer = await response.arrayBuffer();
-          const geojson = (await shp(buffer)) as any;
-          if (!geojson) continue;
-
-          let labelKey = "";
-          const sampleFeatures = geojson.type === "FeatureCollection" ? geojson.features : (Array.isArray(geojson) ? geojson[0]?.features : null);
-          if (sampleFeatures && sampleFeatures.length > 0) {
-            const props = sampleFeatures[0].properties || {};
-            const keys = Object.keys(props);
-            labelKey = keys.find(k => k.toLowerCase().includes("state") || k.toLowerCase().includes("dist") || k.toLowerCase() === "dt_name" || k.toLowerCase() === "dist_name" || k.toLowerCase() === "district_n") || keys[0] || "";
-          }
-
-          const id = `${item.name.toLowerCase().replace(/\s+/g, "_")}_${Date.now()}`;
-          const newLayer: ShapefileLayer = {
-            id,
-            name: item.name,
-            geoJson: geojson,
-            visible: true,
-            strokeColor: item.name.includes("State") ? "#dc2626" : "#2563eb",
-            strokeWidth: item.name.includes("State") ? 2.5 : 1.5,
-            fillColor: item.name.includes("State") ? "#fca5a5" : "#93c5fd",
-            fillOpacity: 10,
-            showLabels: true,
-            labelKey,
-            labelColor: "#1e293b",
-            labelSize: 10,
-            showInLegend: true,
-            showStroke: true,
-          };
-
-          setLayers(prev => {
-            if (prev.some(l => l.name === item.name)) return prev;
-            return [...prev, newLayer];
-          });
-          console.log(`Auto-loaded shapefile: ${item.name} successfully!`);
-        } catch (err) {
-          console.warn(`Default shapefile ${item.name} not found. Skipping auto-load.`, err);
-        }
-      }
-    };
-
-    loadDefaultShapefiles();
-  }, []);
 
   // Shapefile/GeoJSON State (for backwards compatibility)
   const [uploadedGeoJson, setUploadedGeoJson] = useState<any>(null);
@@ -1759,13 +1701,15 @@ export default function GisMapView({
 
   // Parse raw data into coordinates
   const parsedData = useMemo(() => {
-    if (!rawData || rawData.length === 0) return [];
+    if (!rawData || !Array.isArray(rawData) || rawData.length === 0) return [];
     
-    const latKey = headerMap["latitude"] || headers.latitude || "Latitude";
-    const lngKey = headerMap["longitude"] || headers.longitude || "Longitude";
-    const stateKey = headerMap["state"] || headers.state || "State";
-    const districtKey = headerMap["district"] || headers.district || "District";
-    const seasonKey = headers.season || Object.keys(rawData[0]).find(k => {
+    const latKey = (headerMap && headerMap["latitude"]) || (headers && headers.latitude) || "Latitude";
+    const lngKey = (headerMap && headerMap["longitude"]) || (headers && headers.longitude) || "Longitude";
+    const stateKey = (headerMap && headerMap["state"]) || (headers && headers.state) || "State";
+    const districtKey = (headerMap && headerMap["district"]) || (headers && headers.district) || "District";
+    
+    const firstRow = rawData[0] || {};
+    const seasonKey = (headers && headers.season) || Object.keys(firstRow).find(k => {
       const low = k.toLowerCase();
       return low.includes("season") || 
              low.includes("monsoon") || 
@@ -1775,11 +1719,11 @@ export default function GisMapView({
              low.includes("wet") || 
              low.includes("dry");
     }) || "Season";
-    const yearKey = headers.year || Object.keys(rawData[0]).find(k => k.toLowerCase().includes("year") || k.toLowerCase() === "date") || "Year";
+    const yearKey = (headers && headers.year) || Object.keys(firstRow).find(k => k.toLowerCase().includes("year") || k.toLowerCase() === "date") || "Year";
 
     const findHeader = (id: string, keywords: string[]) => {
       if (headerMap && headerMap[id]) return headerMap[id];
-      const keys = Object.keys(rawData[0] || {});
+      const keys = Object.keys(firstRow);
       return keys.find(k => {
         const l = k.toLowerCase().trim();
         return keywords.some(kw => l === kw.toLowerCase() || l.includes(kw.toLowerCase()));
@@ -2889,13 +2833,114 @@ export default function GisMapView({
 
     // 5b. Render Custom Shapefile / GeoJSON Boundaries (Drawn above base layers but below points)
     if (showShapefile) {
-      if (layers.length > 0) {
+      if (layers && Array.isArray(layers) && layers.length > 0) {
         layers.forEach(layer => {
-          if (!layer.visible) return;
+          try {
+            if (!layer || !layer.visible) return;
+            ctx.save();
+            
+            const drawPolygonRing = (ring: number[][], customFill: string) => {
+              if (!ring || ring.length === 0) return;
+              ctx.beginPath();
+              const startX = getX(ring[0][0]);
+              const startY = getY(ring[0][1]);
+              ctx.moveTo(startX, startY);
+              for (let i = 1; i < ring.length; i++) {
+                ctx.lineTo(getX(ring[i][0]), getY(ring[i][1]));
+              }
+              ctx.closePath();
+              ctx.fillStyle = customFill;
+              ctx.globalAlpha = (layer.fillOpacity || 0) / 100;
+              ctx.fill();
+              if (layer.showStroke !== false) {
+                ctx.strokeStyle = layer.strokeColor || "#3b82f6";
+                ctx.lineWidth = (layer.strokeWidth || 1.0) * scale;
+                ctx.globalAlpha = 1.0;
+                ctx.stroke();
+              }
+            };
+
+            const drawFeatureGeometry = (geom: any, f: any) => {
+              if (!geom) return;
+              const customFill = getFeatureFillColor(layer, f);
+
+              if (geom.type === "Polygon" && geom.coordinates) {
+                geom.coordinates.forEach((ring: number[][]) => drawPolygonRing(ring, customFill));
+              } else if (geom.type === "MultiPolygon" && geom.coordinates) {
+                geom.coordinates.forEach((poly: number[][][]) => {
+                  poly.forEach((ring: number[][]) => drawPolygonRing(ring, customFill));
+                });
+              } else if (geom.type === "LineString" && geom.coordinates) {
+                ctx.beginPath();
+                if (geom.coordinates.length > 0) {
+                  ctx.moveTo(getX(geom.coordinates[0][0]), getY(geom.coordinates[0][1]));
+                  for (let i = 1; i < geom.coordinates.length; i++) {
+                    ctx.lineTo(getX(geom.coordinates[i][0]), getY(geom.coordinates[i][1]));
+                  }
+                  if (layer.showStroke !== false) {
+                    ctx.strokeStyle = layer.strokeColor || "#3b82f6";
+                    ctx.lineWidth = (layer.strokeWidth || 1.0) * scale;
+                    ctx.stroke();
+                  }
+                }
+              } else if (geom.type === "MultiLineString" && geom.coordinates) {
+                geom.coordinates.forEach((line: number[][]) => {
+                  ctx.beginPath();
+                  if (line.length > 0) {
+                    ctx.moveTo(getX(line[0][0]), getY(line[0][1]));
+                    for (let i = 1; i < line.length; i++) {
+                      ctx.lineTo(getX(line[i][0]), getY(line[i][1]));
+                    }
+                    if (layer.showStroke !== false) {
+                      ctx.strokeStyle = layer.strokeColor || "#3b82f6";
+                      ctx.lineWidth = (layer.strokeWidth || 1.0) * scale;
+                      ctx.stroke();
+                    }
+                  }
+                });
+              } else if (geom.type === "Point" && geom.coordinates) {
+                const px = getX(geom.coordinates[0]);
+                const py = getY(geom.coordinates[1]);
+                ctx.beginPath();
+                ctx.arc(px, py, 4 * scale, 0, Math.PI * 2);
+                ctx.fillStyle = customFill;
+                ctx.fill();
+                ctx.strokeStyle = layer.strokeColor || "#3b82f6";
+                ctx.lineWidth = (layer.strokeWidth || 1.0) * scale;
+                ctx.stroke();
+              } else if (geom.type === "GeometryCollection") {
+                geom.geometries?.forEach((g: any) => drawFeatureGeometry(g, f));
+              }
+            };
+
+            const gj = layer.geoJson;
+            if (gj) {
+              if (gj.type === "FeatureCollection") {
+                gj.features?.forEach((f: any) => {
+                  try {
+                    if (f) drawFeatureGeometry(f.geometry, f);
+                  } catch (err) {
+                    console.error("Error drawing custom layer feature:", err);
+                  }
+                });
+              } else if (gj.type === "Feature") {
+                drawFeatureGeometry(gj.geometry, gj);
+              } else {
+                drawFeatureGeometry(gj, null);
+              }
+            }
+            ctx.restore();
+          } catch (err) {
+            console.error("Error drawing custom layer:", err);
+            try { ctx.restore(); } catch (_) {}
+          }
+        });
+      } else if (effectiveClipGeoJson && uploadedGeoJson) {
+        try {
           ctx.save();
           
-          const drawPolygonRing = (ring: number[][], customFill: string) => {
-            if (ring.length === 0) return;
+          const drawPolygonRing = (ring: number[][]) => {
+            if (!ring || ring.length === 0) return;
             ctx.beginPath();
             const startX = getX(ring[0][0]);
             const startY = getY(ring[0][1]);
@@ -2904,134 +2949,31 @@ export default function GisMapView({
               ctx.lineTo(getX(ring[i][0]), getY(ring[i][1]));
             }
             ctx.closePath();
-            ctx.fillStyle = customFill;
-            ctx.globalAlpha = layer.fillOpacity / 100;
+            ctx.fillStyle = shapeFillColor;
+            ctx.globalAlpha = shapeFillOpacity / 100;
             ctx.fill();
-            if (layer.showStroke !== false) {
-              ctx.strokeStyle = layer.strokeColor;
-              ctx.lineWidth = layer.strokeWidth * scale;
+            if (showGlobalShapefileOutline !== false) {
+              ctx.strokeStyle = shapeStrokeColor;
+              ctx.lineWidth = shapeStrokeWidth * scale;
               ctx.globalAlpha = 1.0;
               ctx.stroke();
             }
           };
 
-          const drawFeatureGeometry = (geom: any, f: any) => {
+          const drawFeatureGeometry = (geom: any) => {
             if (!geom) return;
-            const customFill = getFeatureFillColor(layer, f);
-
-            if (geom.type === "Polygon") {
-              geom.coordinates.forEach((ring: number[][]) => drawPolygonRing(ring, customFill));
-            } else if (geom.type === "MultiPolygon") {
+            if (geom.type === "Polygon" && geom.coordinates) {
+              geom.coordinates.forEach((ring: number[][]) => drawPolygonRing(ring));
+            } else if (geom.type === "MultiPolygon" && geom.coordinates) {
               geom.coordinates.forEach((poly: number[][][]) => {
-                poly.forEach((ring: number[][]) => drawPolygonRing(ring, customFill));
+                poly.forEach((ring: number[][]) => drawPolygonRing(ring));
               });
-            } else if (geom.type === "LineString") {
+            } else if (geom.type === "LineString" && geom.coordinates) {
               ctx.beginPath();
               if (geom.coordinates.length > 0) {
                 ctx.moveTo(getX(geom.coordinates[0][0]), getY(geom.coordinates[0][1]));
                 for (let i = 1; i < geom.coordinates.length; i++) {
                   ctx.lineTo(getX(geom.coordinates[i][0]), getY(geom.coordinates[i][1]));
-                }
-                if (layer.showStroke !== false) {
-                  ctx.strokeStyle = layer.strokeColor;
-                  ctx.lineWidth = layer.strokeWidth * scale;
-                  ctx.stroke();
-                }
-              }
-            } else if (geom.type === "MultiLineString") {
-              geom.coordinates.forEach((line: number[][]) => {
-                ctx.beginPath();
-                if (line.length > 0) {
-                  ctx.moveTo(getX(line[0][0]), getY(line[0][1]));
-                  for (let i = 1; i < line.length; i++) {
-                    ctx.lineTo(getX(line[i][0]), getY(line[i][1]));
-                  }
-                  if (layer.showStroke !== false) {
-                    ctx.strokeStyle = layer.strokeColor;
-                    ctx.lineWidth = layer.strokeWidth * scale;
-                    ctx.stroke();
-                  }
-                }
-              });
-            } else if (geom.type === "Point") {
-              const px = getX(geom.coordinates[0]);
-              const py = getY(geom.coordinates[1]);
-              ctx.beginPath();
-              ctx.arc(px, py, 4 * scale, 0, Math.PI * 2);
-              ctx.fillStyle = customFill;
-              ctx.fill();
-              ctx.strokeStyle = layer.strokeColor;
-              ctx.lineWidth = layer.strokeWidth * scale;
-              ctx.stroke();
-            } else if (geom.type === "GeometryCollection") {
-              geom.geometries?.forEach((g: any) => drawFeatureGeometry(g, f));
-            }
-          };
-
-          const gj = layer.geoJson;
-          if (gj) {
-            if (gj.type === "FeatureCollection") {
-              gj.features?.forEach((f: any) => drawFeatureGeometry(f.geometry, f));
-            } else if (gj.type === "Feature") {
-              drawFeatureGeometry(gj.geometry, gj);
-            } else {
-              drawFeatureGeometry(gj, null);
-            }
-          }
-          ctx.restore();
-        });
-      } else if (effectiveClipGeoJson && uploadedGeoJson) {
-        ctx.save();
-        
-        const drawPolygonRing = (ring: number[][]) => {
-          if (ring.length === 0) return;
-          ctx.beginPath();
-          const startX = getX(ring[0][0]);
-          const startY = getY(ring[0][1]);
-          ctx.moveTo(startX, startY);
-          for (let i = 1; i < ring.length; i++) {
-            ctx.lineTo(getX(ring[i][0]), getY(ring[i][1]));
-          }
-          ctx.closePath();
-          ctx.fillStyle = shapeFillColor;
-          ctx.globalAlpha = shapeFillOpacity / 100;
-          ctx.fill();
-          if (showGlobalShapefileOutline !== false) {
-            ctx.strokeStyle = shapeStrokeColor;
-            ctx.lineWidth = shapeStrokeWidth * scale;
-            ctx.globalAlpha = 1.0;
-            ctx.stroke();
-          }
-        };
-
-        const drawFeatureGeometry = (geom: any) => {
-          if (!geom) return;
-          if (geom.type === "Polygon") {
-            geom.coordinates.forEach((ring: number[][]) => drawPolygonRing(ring));
-          } else if (geom.type === "MultiPolygon") {
-            geom.coordinates.forEach((poly: number[][][]) => {
-              poly.forEach((ring: number[][]) => drawPolygonRing(ring));
-            });
-          } else if (geom.type === "LineString") {
-            ctx.beginPath();
-            if (geom.coordinates.length > 0) {
-              ctx.moveTo(getX(geom.coordinates[0][0]), getY(geom.coordinates[0][1]));
-              for (let i = 1; i < geom.coordinates.length; i++) {
-                ctx.lineTo(getX(geom.coordinates[i][0]), getY(geom.coordinates[i][1]));
-              }
-              if (showGlobalShapefileOutline !== false) {
-                ctx.strokeStyle = shapeStrokeColor;
-                ctx.lineWidth = shapeStrokeWidth * scale;
-                ctx.stroke();
-              }
-            }
-          } else if (geom.type === "MultiLineString") {
-            geom.coordinates.forEach((line: number[][]) => {
-              ctx.beginPath();
-              if (line.length > 0) {
-                ctx.moveTo(getX(line[0][0]), getY(line[0][1]));
-                for (let i = 1; i < line.length; i++) {
-                  ctx.lineTo(getX(line[i][0]), getY(line[i][1]));
                 }
                 if (showGlobalShapefileOutline !== false) {
                   ctx.strokeStyle = shapeStrokeColor;
@@ -3039,30 +2981,54 @@ export default function GisMapView({
                   ctx.stroke();
                 }
               }
-            });
-          } else if (geom.type === "Point") {
-            const px = getX(geom.coordinates[0]);
-            const py = getY(geom.coordinates[1]);
-            ctx.beginPath();
-            ctx.arc(px, py, 4 * scale, 0, Math.PI * 2);
-            ctx.fillStyle = shapeFillColor;
-            ctx.fill();
-            ctx.strokeStyle = shapeStrokeColor;
-            ctx.lineWidth = shapeStrokeWidth * scale;
-            ctx.stroke();
-          } else if (geom.type === "GeometryCollection") {
-            geom.geometries?.forEach((g: any) => drawFeatureGeometry(g));
-          }
-        };
+            } else if (geom.type === "MultiLineString" && geom.coordinates) {
+              geom.coordinates.forEach((line: number[][]) => {
+                ctx.beginPath();
+                if (line.length > 0) {
+                  ctx.moveTo(getX(line[0][0]), getY(line[0][1]));
+                  for (let i = 1; i < line.length; i++) {
+                    ctx.lineTo(getX(line[i][0]), getY(line[i][1]));
+                  }
+                  if (showGlobalShapefileOutline !== false) {
+                    ctx.strokeStyle = shapeStrokeColor;
+                    ctx.lineWidth = shapeStrokeWidth * scale;
+                    ctx.stroke();
+                  }
+                }
+              });
+            } else if (geom.type === "Point" && geom.coordinates) {
+              const px = getX(geom.coordinates[0]);
+              const py = getY(geom.coordinates[1]);
+              ctx.beginPath();
+              ctx.arc(px, py, 4 * scale, 0, Math.PI * 2);
+              ctx.fillStyle = shapeFillColor;
+              ctx.fill();
+              ctx.strokeStyle = shapeStrokeColor;
+              ctx.lineWidth = shapeStrokeWidth * scale;
+              ctx.stroke();
+            } else if (geom.type === "GeometryCollection") {
+              geom.geometries?.forEach((g: any) => drawFeatureGeometry(g));
+            }
+          };
 
-        if (effectiveClipGeoJson.type === "FeatureCollection") {
-          effectiveClipGeoJson.features?.forEach((f: any) => drawFeatureGeometry(f.geometry));
-        } else if (effectiveClipGeoJson.type === "Feature") {
-          drawFeatureGeometry(effectiveClipGeoJson.geometry);
-        } else {
-          drawFeatureGeometry(effectiveClipGeoJson);
+          if (effectiveClipGeoJson.type === "FeatureCollection") {
+            effectiveClipGeoJson.features?.forEach((f: any) => {
+              try {
+                if (f) drawFeatureGeometry(f.geometry);
+              } catch (err) {
+                console.error("Error drawing feature for uploadedGeoJson:", err);
+              }
+            });
+          } else if (effectiveClipGeoJson.type === "Feature") {
+            drawFeatureGeometry(effectiveClipGeoJson.geometry);
+          } else {
+            drawFeatureGeometry(effectiveClipGeoJson);
+          }
+          ctx.restore();
+        } catch (err) {
+          console.error("Error drawing uploadedGeoJson:", err);
+          try { ctx.restore(); } catch (_) {}
         }
-        ctx.restore();
       }
     }
 

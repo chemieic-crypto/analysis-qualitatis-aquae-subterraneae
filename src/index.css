@@ -210,6 +210,7 @@ table td, table th, .tabular-nums, .font-mono {
 /* Dropdown overflow overrides */
 .glossy-panel-dropdown {
   overflow: visible !important;
+  z-index: 50 !important;
 }
 .glossy-panel-dropdown::before {
   display: none !important;

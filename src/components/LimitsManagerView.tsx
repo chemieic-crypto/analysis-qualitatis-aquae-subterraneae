@@ -1,12 +1,23 @@
 import React, { useState } from "react";
-import { PARAM_CONFIG, DEFAULT_PARAM_CONFIG, updateParamLimits, resetParamLimits } from "../data/config";
-import { Settings, RotateCcw, Save, Search, Check, AlertCircle, Info, Sliders } from "lucide-react";
+import { PARAM_CONFIG, DEFAULT_PARAM_CONFIG, updateParamLimits, resetParamLimits, addCustomParam } from "../data/config";
+import { Settings, RotateCcw, Save, Search, Check, AlertCircle, Info, Sliders, Plus, Sparkles } from "lucide-react";
+import { DataHeaders } from "../types";
 
 interface LimitsManagerViewProps {
   onLimitsChanged: () => void;
+  headers?: DataHeaders;
+  uploadedHeaders?: string[];
+  headerMap?: Record<string, string>;
+  onUpdateHeaders?: (headers: DataHeaders, headerMap: Record<string, string>) => void;
 }
 
-export default function LimitsManagerView({ onLimitsChanged }: LimitsManagerViewProps) {
+export default function LimitsManagerView({
+  onLimitsChanged,
+  headers,
+  uploadedHeaders,
+  headerMap,
+  onUpdateHeaders
+}: LimitsManagerViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const isExcluded = (key: string) => {
     return ["CO3", "HCO3", "Na", "K"].includes(key.toUpperCase());
@@ -26,6 +37,15 @@ export default function LimitsManagerView({ onLimitsChanged }: LimitsManagerView
 
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+
+  // Custom Parameter Addition Form State
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newParamKey, setNewParamKey] = useState("");
+  const [newParamName, setNewParamName] = useState("");
+  const [newParamUnit, setNewParamUnit] = useState("");
+  const [newParamB1, setNewParamB1] = useState("");
+  const [newParamB2, setNewParamB2] = useState("");
+  const [addError, setAddError] = useState("");
 
   const handleInputChange = (key: string, field: "b1" | "b2", value: string) => {
     setEditingLimits((prev) => {
@@ -52,6 +72,7 @@ export default function LimitsManagerView({ onLimitsChanged }: LimitsManagerView
     const errors: Record<string, string> = {};
     Object.keys(PARAM_CONFIG).forEach((key) => {
       if (isExcluded(key)) return;
+      if (!editingLimits[key]) return;
       const b1Val = parseFloat(editingLimits[key].b1);
       const b2Val = parseFloat(editingLimits[key].b2);
 
@@ -81,6 +102,7 @@ export default function LimitsManagerView({ onLimitsChanged }: LimitsManagerView
 
     Object.keys(editingLimits).forEach((key) => {
       if (isExcluded(key)) return;
+      if (!editingLimits[key]) return;
       const b1 = parseFloat(editingLimits[key].b1);
       const b2 = parseFloat(editingLimits[key].b2);
       updateParamLimits(key, b1, b2);
@@ -91,6 +113,101 @@ export default function LimitsManagerView({ onLimitsChanged }: LimitsManagerView
     setTimeout(() => {
       setShowSuccessToast(false);
     }, 3000);
+  };
+
+  const handleAddNewParam = () => {
+    if (!newParamKey) {
+      setAddError("Parameter Code/Key is required.");
+      return;
+    }
+    const cleanKey = newParamKey.trim();
+    if (!/^[a-zA-Z0-9_\-+²³()/ ]+$/.test(cleanKey)) {
+      setAddError("Parameter Code/Key contains invalid characters. Use alphanumeric, spaces, or simple standard characters.");
+      return;
+    }
+    if (PARAM_CONFIG[cleanKey]) {
+      setAddError(`Parameter "${cleanKey}" already exists in configuration.`);
+      return;
+    }
+    if (!newParamName) {
+      setAddError("Full Parameter Name is required.");
+      return;
+    }
+
+    const b1 = parseFloat(newParamB1);
+    const b2 = parseFloat(newParamB2);
+
+    if (isNaN(b1) || b1 < 0) {
+      setAddError("Acceptable limit must be a valid non-negative number.");
+      return;
+    }
+    if (isNaN(b2) || b2 < 0) {
+      setAddError("Permissible limit must be a valid non-negative number.");
+      return;
+    }
+    if (b1 > b2 && cleanKey !== "pH") {
+      setAddError("Acceptable limit should not be greater than Permissible limit.");
+      return;
+    }
+
+    // Call config add function
+    addCustomParam(cleanKey, newParamName, newParamUnit, b1, b2);
+
+    // Update local editing limits state
+    setEditingLimits(prev => ({
+      ...prev,
+      [cleanKey]: { b1: String(b1), b2: String(b2) }
+    }));
+
+    // Reset inputs
+    setNewParamKey("");
+    setNewParamName("");
+    setNewParamUnit("");
+    setNewParamB1("");
+    setNewParamB2("");
+    setAddError("");
+    setShowAddForm(false);
+
+    // Call parents' onLimitsChanged
+    onLimitsChanged();
+
+    // Check if uploaded headers contain a matching column to map it automatically
+    let matchedColumnMessage = "";
+    if (uploadedHeaders && headers && onUpdateHeaders) {
+      const keyLower = cleanKey.toLowerCase().trim();
+      const nameLower = newParamName.toLowerCase().trim();
+
+      const matchingHeader = uploadedHeaders.find(h => {
+        const hLower = h.toLowerCase().trim();
+        return hLower === keyLower || hLower === nameLower || hLower.includes(keyLower) || hLower.includes(nameLower);
+      });
+
+      if (matchingHeader) {
+        const newParams = [...(headers.params || [])];
+        if (!newParams.includes(matchingHeader)) {
+          newParams.push(matchingHeader);
+        }
+        const newHeaders = {
+          ...headers,
+          params: newParams
+        };
+
+        const newHeaderMap = {
+          ...(headerMap || {}),
+          [matchingHeader]: cleanKey
+        };
+
+        onUpdateHeaders(newHeaders, newHeaderMap);
+        matchedColumnMessage = ` Dataset column "${matchingHeader}" matched with "${cleanKey}" and was added automatically for all analysis purposes!`;
+      }
+    }
+
+    setShowSuccessToast(true);
+    setTimeout(() => {
+      setShowSuccessToast(false);
+    }, 3000);
+
+    alert(`Successfully added custom parameter "${cleanKey}" (${newParamName})!${matchedColumnMessage}`);
   };
 
   const handleReset = () => {
@@ -151,21 +268,144 @@ export default function LimitsManagerView({ onLimitsChanged }: LimitsManagerView
 
         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
           <button
+            onClick={() => setShowAddForm(!showAddForm)}
+            className="flex-1 md:flex-initial flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-4 py-3 rounded-2xl border border-emerald-500 transition-all active:scale-95 shadow-md shadow-emerald-100 cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            Add Parameter
+          </button>
+          <button
             onClick={handleReset}
-            className="flex-1 md:flex-initial flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-250 text-slate-700 hover:text-slate-900 font-extrabold text-xs px-4 py-3 rounded-2xl border border-slate-200 transition-all active:scale-95 shadow-sm"
+            className="flex-1 md:flex-initial flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-250 text-slate-700 hover:text-slate-900 font-extrabold text-xs px-4 py-3 rounded-2xl border border-slate-200 transition-all active:scale-95 shadow-sm cursor-pointer"
           >
             <RotateCcw className="w-4 h-4" />
             Reset to BIS Defaults
           </button>
           <button
             onClick={handleSave}
-            className="flex-1 md:flex-initial flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs px-5 py-3 rounded-2xl transition-all active:scale-95 shadow-md shadow-indigo-100 border border-indigo-500"
+            className="flex-1 md:flex-initial flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs px-5 py-3 rounded-2xl transition-all active:scale-95 shadow-md shadow-indigo-100 border border-indigo-500 cursor-pointer"
           >
             <Save className="w-4 h-4" />
             Save & Recompute Limits
           </button>
         </div>
       </div>
+
+      {showAddForm && (
+        <div className="bg-slate-50 border border-slate-200 rounded-3xl p-5 mb-6 space-y-4 shadow-inner relative">
+          <div className="flex justify-between items-center border-b border-slate-200 pb-2.5">
+            <div>
+              <h3 className="text-xs font-black text-indigo-950 uppercase tracking-widest flex items-center gap-1.5">
+                <Plus className="w-4 h-4 text-emerald-600" /> Define Custom Parameter
+              </h3>
+              <p className="text-[10px] text-slate-500 font-bold uppercase mt-0.5">
+                Register a new parameter to map it automatically with columns in your dataset
+              </p>
+            </div>
+            <button
+              onClick={() => setShowAddForm(false)}
+              className="text-xs font-black uppercase tracking-wider text-slate-400 hover:text-slate-650 cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+
+          {addError && (
+            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold rounded-xl flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{addError}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                Parameter Code <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. PO4, DO, BOD"
+                value={newParamKey}
+                onChange={(e) => {
+                  setNewParamKey(e.target.value);
+                  setAddError("");
+                }}
+                className="w-full bg-white border border-slate-200 hover:border-slate-350 focus:border-indigo-500 rounded-xl p-2.5 text-xs font-black outline-none transition-all placeholder:text-slate-400"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                Full Parameter Name <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Phosphate, Dissolved Oxygen"
+                value={newParamName}
+                onChange={(e) => {
+                  setNewParamName(e.target.value);
+                  setAddError("");
+                }}
+                className="w-full bg-white border border-slate-200 hover:border-slate-350 focus:border-indigo-500 rounded-xl p-2.5 text-xs font-bold outline-none transition-all placeholder:text-slate-400"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                Unit (Optional)
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. mg/L, ppb, %"
+                value={newParamUnit}
+                onChange={(e) => setNewParamUnit(e.target.value)}
+                className="w-full bg-white border border-slate-200 hover:border-slate-350 focus:border-indigo-500 rounded-xl p-2.5 text-xs font-bold outline-none transition-all placeholder:text-slate-400"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                Acceptable Limit <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. 0.3, 5, 500"
+                value={newParamB1}
+                onChange={(e) => {
+                  setNewParamB1(e.target.value);
+                  setAddError("");
+                }}
+                className="w-full bg-white border border-slate-200 hover:border-slate-350 focus:border-indigo-500 rounded-xl p-2.5 text-xs font-bold font-mono text-center outline-none transition-all placeholder:text-slate-400"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                Permissible Limit <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. 1.0, 10, 1000"
+                value={newParamB2}
+                onChange={(e) => {
+                  setNewParamB2(e.target.value);
+                  setAddError("");
+                }}
+                className="w-full bg-white border border-slate-200 hover:border-slate-350 focus:border-indigo-500 rounded-xl p-2.5 text-xs font-bold font-mono text-center outline-none transition-all placeholder:text-slate-400"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end pt-2">
+            <button
+              onClick={handleAddNewParam}
+              className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl transition-all active:scale-95 shadow-md shadow-emerald-100 border border-emerald-500 cursor-pointer font-sans"
+            >
+              <Plus className="w-4 h-4" /> Add Parameter & Scan Dataset
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-2xl mb-6 flex gap-3">
         <Info className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />

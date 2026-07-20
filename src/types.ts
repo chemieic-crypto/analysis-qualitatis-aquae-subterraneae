@@ -73,3 +73,23 @@ export interface ExceedingLocationItem {
   type: string;
   rawParams: string[];
 }
+
+export interface ShapefileLayer {
+  id: string;
+  name: string;
+  geoJson: any;
+  visible: boolean;
+  strokeColor: string;
+  strokeWidth: number;
+  fillColor: string;
+  fillOpacity: number;
+  showLabels: boolean;
+  labelKey: string;
+  labelColor: string;
+  labelSize: number;
+  colorAttribute?: string;
+  colorMapping?: Record<string, string>;
+  showStroke?: boolean;
+  showInLegend?: boolean;
+}
+

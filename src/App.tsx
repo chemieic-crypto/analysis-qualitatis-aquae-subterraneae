@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
-import { DataHeaders } from "./types";
+import shp from "shpjs";
+import { DataHeaders, ShapefileLayer } from "./types";
 import { PARAM_CONFIG } from "./data/config";
 import { getStats } from "./utils/math";
 import MappingModal from "./components/MappingModal";
@@ -19,6 +20,8 @@ import PcaAnalysisView from "./components/PcaAnalysisView";
 import FortnightlyAlertsView from "./components/FortnightlyAlertsView";
 import LimitsManagerView from "./components/LimitsManagerView";
 import AdvancedAnalysisView from "./components/AdvancedAnalysisView";
+import CalculatoriusView from "./components/CalculatoriusView";
+import GisChoroplethMap from "./components/GisChoroplethMap";
 import { generateOfflineChartBase64 } from "./utils/chartHelpers";
 
 import {
@@ -44,7 +47,9 @@ import {
   Cpu,
   Settings,
   Clock,
-  Calendar
+  Calendar,
+  Map,
+  Calculator
 } from "lucide-react";
 
 import Highcharts from "highcharts";
@@ -99,7 +104,7 @@ if (typeof Highcharts === "object") {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<
-    "single" | "master" | "multi" | "bar" | "aisummary" | "bulletin" | "about" | "guidelines" | "ussl" | "ranking" | "monsoon" | "gis" | "hydrochemistry" | "combination" | "pca" | "fortnightly" | "limits" | "advancedAnalysis"
+    "single" | "master" | "multi" | "bar" | "aisummary" | "bulletin" | "about" | "guidelines" | "ussl" | "ranking" | "monsoon" | "gis" | "choropleth" | "hydrochemistry" | "combination" | "pca" | "fortnightly" | "limits" | "advancedAnalysis" | "calculatorius"
   >("single");
 
   // State to trigger dynamic recalculation and re-rendering of all components on parameter limit changes
@@ -176,6 +181,83 @@ export default function App() {
 
   // Shared state to transfer maps directly to Bulletin Report
   const [sharedBulletinMaps, setSharedBulletinMaps] = useState<Record<string, string>>({});
+
+  // Shared Shapefile Layers State
+  const [sharedLayers, setSharedLayers] = useState<ShapefileLayer[]>([]);
+
+  // Shared Choropleth Classes config (limits, colors, and labels)
+  const [choroplethClasses, setChoroplethClasses] = useState<{ limit: number; color: string; label: string }[]>([
+    { limit: 5, color: "#22c55e", label: "0% - 5%" },
+    { limit: 10, color: "#eab308", label: ">5% - 10%" },
+    { limit: 15, color: "#f97316", label: "10% - 15%" },
+    { limit: 25, color: "#ef4444", label: "15% - 25%" },
+    { limit: 100, color: "#a855f7", label: ">25%" }
+  ]);
+
+  useEffect(() => {
+    // Attempt to automatically pre-load default shapefiles (State and Districts) from root
+    const loadDefaultShapefiles = async () => {
+      const filesToTry = [
+        { name: "State Layer", url: "./State.zip" },
+        { name: "Districts Layer", url: "./Districts.zip" },
+        { name: "District Layer", url: "./District.zip" }
+      ];
+
+      for (const item of filesToTry) {
+        try {
+          let response = await fetch(item.url);
+          if (!response.ok) {
+            response = await fetch(item.url.substring(2));
+          }
+          if (!response.ok) continue;
+
+          const ct = response.headers.get("content-type") || "";
+          if (ct.includes("text/html") || ct.includes("application/xhtml+xml")) {
+            continue;
+          }
+
+          const buffer = await response.arrayBuffer();
+          const geojson = (await shp(buffer)) as any;
+          if (!geojson) continue;
+
+          let labelKey = "";
+          const sampleFeatures = geojson.type === "FeatureCollection" ? geojson.features : (Array.isArray(geojson) ? geojson[0]?.features : null);
+          if (sampleFeatures && sampleFeatures.length > 0) {
+            const props = sampleFeatures[0].properties || {};
+            const keys = Object.keys(props);
+            labelKey = keys.find(k => k.toLowerCase().includes("state") || k.toLowerCase().includes("dist") || k.toLowerCase() === "dt_name" || k.toLowerCase() === "dist_name" || k.toLowerCase() === "district_n") || keys[0] || "";
+          }
+
+          const id = `${item.name.toLowerCase().replace(/\s+/g, "_")}_${Date.now()}`;
+          const newLayer: ShapefileLayer = {
+            id,
+            name: item.name,
+            geoJson: geojson,
+            visible: true,
+            strokeColor: item.name.includes("State") ? "#dc2626" : "#2563eb",
+            strokeWidth: item.name.includes("State") ? 2.5 : 1.5,
+            fillColor: item.name.includes("State") ? "#fca5a5" : "#93c5fd",
+            fillOpacity: 10,
+            showLabels: true,
+            labelKey,
+            labelColor: "#1e293b",
+            labelSize: 10,
+            showInLegend: true,
+            showStroke: true,
+          };
+
+          setSharedLayers(prev => {
+            if (prev.some(l => l.name === item.name)) return prev;
+            return [...prev, newLayer];
+          });
+        } catch (err) {
+          console.warn("Could not pre-load " + item.name + ":", err);
+        }
+      }
+    };
+
+    loadDefaultShapefiles();
+  }, []);
 
   // Mapping Modal state overlay
   const [mappingModalOpen, setMappingModalOpen] = useState(false);
@@ -424,31 +506,60 @@ export default function App() {
   };
 
   useEffect(() => {
-    // Attempt to auto-load default data Pre-Monsoon 2025.xlsx from public/root path
+    // Attempt to auto-load default data from public/root path with multiple fallback file options
     const autoLoadDefaultData = async () => {
-      try {
-        let response = await fetch("./Pre-Monsoon 2025.xlsx");
-        if (!response.ok) {
-          response = await fetch("/Pre-Monsoon 2025.xlsx");
+      const dataFilesToTry = [
+        "./Pre-Monsoon.xlsx",
+        "/Pre-Monsoon.xlsx",
+        "./Pre-Monsoon 2025.xlsx",
+        "/Pre-Monsoon 2025.xlsx",
+        "./Pre-Monsoon.xlsx.xlsx",
+        "/Pre-Monsoon.xlsx.xlsx",
+        "./Pre-Monsoon 2025.xlsx.xlsx",
+        "/Pre-Monsoon 2025.xlsx.xlsx",
+        "./Pre_Monsoon.xlsx",
+        "/Pre_Monsoon.xlsx",
+        "./PreMonsoon.xlsx",
+        "/PreMonsoon.xlsx",
+        "./pre-monsoon.xlsx",
+        "/pre-monsoon.xlsx",
+        "./Pre-Monsoon.xls",
+        "/Pre-Monsoon.xls",
+        "./Pre-Monsoon 2025.xls",
+        "/Pre-Monsoon 2025.xls",
+        "./groundwater_data.xlsx",
+        "/groundwater_data.xlsx",
+        "./data.xlsx",
+        "/data.xlsx",
+        "./groundwater.xlsx",
+        "/groundwater.xlsx",
+        "./data.csv",
+        "/data.csv"
+      ];
+
+      for (const fileUrl of dataFilesToTry) {
+        try {
+          const response = await fetch(fileUrl);
+          if (response.ok) {
+            const ct = response.headers.get("content-type") || "";
+            if (!ct.includes("text/html") && !ct.includes("application/xhtml+xml")) {
+              console.log(`Auto-loading default data from: ${fileUrl}`);
+              return { response, filename: fileUrl.split("/").pop() || "Default Data" };
+            }
+          }
+        } catch (err) {
+          // Continue trying other files
         }
-        if (!response.ok) {
-          throw new Error("Default file not found");
-        }
-        const ct = response.headers.get("content-type") || "";
-        if (ct.includes("text/html") || ct.includes("application/xhtml+xml")) {
-          throw new Error("Returned HTML instead of Excel (404 fallback)");
-        }
-        return response;
-      } catch (err) {
-        console.log("Pre-Monsoon 2025.xlsx could not be auto-loaded. Waiting for user upload.", err);
-        return null;
       }
+      console.log("No default spreadsheet could be auto-loaded. Waiting for user upload.");
+      return null;
     };
 
-    autoLoadDefaultData().then(async (res) => {
-      if (!res) return;
+    autoLoadDefaultData().then(async (result) => {
+      if (!result) return;
+      const { response, filename } = result;
       try {
-        const arrayBuffer = await res.arrayBuffer();
+        const arrayBuffer = await response.arrayBuffer();
         const wb = XLSX.read(new Uint8Array(arrayBuffer), { type: "array", cellFormula: false, cellHTML: false, cellText: false });
         if (!wb || !wb.SheetNames || wb.SheetNames.length === 0) return;
 
@@ -503,7 +614,7 @@ export default function App() {
           setCombinedParams([...guessed.params]);
         }
 
-        showToast("Auto-loaded default data: Pre-Monsoon 2025 successfully!", "success");
+        showToast(`Auto-loaded default data: ${filename} successfully!`, "success");
       } catch (err) {
         console.error("Error parsing auto-loaded default data:", err);
       }
@@ -1120,21 +1231,6 @@ export default function App() {
             <span className="text-xs font-extrabold text-[#8B4513] tracking-wide uppercase">
               {currentDateTime.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
             </span>
-            <div className="flex items-center gap-1.5 mt-1.5 bg-slate-100/80 border border-slate-200 px-2.5 py-1.5 rounded-xl shadow-inner">
-              <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Table Font:</span>
-              <select
-                value={tableFont}
-                onChange={(e) => setTableFont(e.target.value)}
-                className="text-[10px] font-black text-indigo-950 bg-transparent border-none focus:ring-0 cursor-pointer focus:outline-none uppercase"
-              >
-                <option value="Inter">Inter</option>
-                <option value="Roboto">Roboto</option>
-                <option value="Poppins">Poppins</option>
-                <option value="Manrope">Manrope</option>
-                <option value="IBM Plex Sans">IBM Plex</option>
-                <option value="Segoe UI">Segoe UI</option>
-              </select>
-            </div>
           </div>
         </div>
 
@@ -1240,7 +1336,9 @@ export default function App() {
               <option value="combination">🧬 Combination Analysis</option>
               <option value="pca">📊 PCA Analysis</option>
               <option value="hydrochemistry">📋 Hydrochemistry Sheet</option>
+              <option value="calculatorius">🧮 Calculatorius</option>
               <option value="gis">🌍 Geospatial Map Module</option>
+              <option value="choropleth">✨ GIS Choropleth Map</option>
               <option value="master">📋 Master Summary Matrix</option>
               <option value="monsoon">🌧️ Dynamic Impact of Monsoon</option>
               <option value="bar">📊 Comparative Exceedance (Bar)</option>
@@ -1288,7 +1386,9 @@ export default function App() {
             { id: "combination", label: "Combination Analysis", icon: Layers, baseColor: "indigo" },
             { id: "pca", label: "PCA Analysis", icon: Cpu, baseColor: "violet" },
             { id: "hydrochemistry", label: "Hydrochemistry Sheet", icon: TableProperties, baseColor: "emerald" },
+            { id: "calculatorius", label: "Calculatorius", icon: Calculator, baseColor: "indigo" },
             { id: "gis", label: "Geospatial Map Module", icon: Globe, baseColor: "teal" },
+            { id: "choropleth", label: "GIS Choropleth Map", icon: Map, baseColor: "indigo" },
             { id: "master", label: "Master Summary", icon: Table2, baseColor: "amber" },
             { id: "monsoon", label: "Dynamic Monsoon Impact", icon: Database, baseColor: "emerald" },
             { id: "bar", label: "Comparative Exceedance (Bar)", icon: BarChart3, baseColor: "orange" },
@@ -1376,6 +1476,21 @@ export default function App() {
 
           {/* Desktop Right Action Panel - Side by side with Limits Manager */}
           <div className="flex items-center gap-3 ml-auto">
+            <div className="flex items-center gap-1.5 bg-slate-100/80 border border-slate-200 px-2.5 py-1.5 rounded-xl shadow-inner mr-2">
+              <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Table Font:</span>
+              <select
+                value={tableFont}
+                onChange={(e) => setTableFont(e.target.value)}
+                className="text-[10px] font-black text-indigo-950 bg-transparent border-none focus:ring-0 cursor-pointer focus:outline-none uppercase"
+              >
+                <option value="Inter">Inter</option>
+                <option value="Roboto">Roboto</option>
+                <option value="Poppins">Poppins</option>
+                <option value="Manrope">Manrope</option>
+                <option value="IBM Plex Sans">IBM Plex</option>
+                <option value="Segoe UI">Segoe UI</option>
+              </select>
+            </div>
             {rawData.length > 0 && (
               <button
                 onClick={handleExportIndividual}
@@ -1447,6 +1562,8 @@ export default function App() {
               allRawData={rawData}
               selectedYear={selectedYear}
               selectedSeason={selectedSeason}
+              layers={sharedLayers}
+              setLayers={setSharedLayers}
             />
           )}
 
@@ -1531,6 +1648,7 @@ export default function App() {
               selectedDistrict={selectedDistrict}
               selectedYear={selectedYear}
               selectedSeason={selectedSeason}
+              layers={sharedLayers}
             />
           )}
 
@@ -1568,6 +1686,10 @@ export default function App() {
             />
           </div>
 
+          <div className={activeTab === "calculatorius" ? "block" : "hidden"}>
+            <CalculatoriusView rawData={rawData} headerMap={headerMap} />
+          </div>
+
           <div className={activeTab === "gis" ? "block" : "hidden"}>
             <GisMapView
               rawData={yearSeasonFilteredData}
@@ -1579,12 +1701,97 @@ export default function App() {
               isVisible={activeTab === "gis"}
               bulletinMaps={sharedBulletinMaps}
               setBulletinMaps={setSharedBulletinMaps}
+              layers={sharedLayers}
+              setLayers={setSharedLayers}
+              choroplethClasses={choroplethClasses}
+              setChoroplethClasses={setChoroplethClasses}
             />
+          </div>
+
+          <div className={activeTab === "choropleth" ? "block" : "hidden"}>
+            {(() => {
+              const activeConfigKey = activeParam === "SAR" ? "SAR" : activeParam === "RSC" ? "RSC" : (headerMap[activeParam] || "");
+              const activeConfig = PARAM_CONFIG[activeConfigKey] || PARAM_CONFIG[activeParam] || { b1: 0, b2: 0, unit: "units", perm: 0 };
+              
+              return (
+                <div className="space-y-6 animate-fade-in">
+                  <div className="bg-white rounded-3xl border border-slate-100 shadow-md p-6">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                      <div>
+                        <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+                          <Map className="w-5 h-5 text-indigo-600" />
+                          Groundwater Quality Choropleth Map
+                        </h3>
+                        <p className="text-xs text-slate-500 mt-1">
+                          Dynamic geospatial visualization of groundwater quality parameter compliance and permissible limit exceedances.
+                        </p>
+                      </div>
+                      
+                      {/* Parameter selector */}
+                      <div className="flex items-center gap-2 bg-indigo-50/50 px-3.5 py-2 rounded-xl border border-indigo-100/50 w-full md:w-auto shrink-0">
+                        <span className="text-[10px] font-black uppercase text-indigo-950 tracking-wider">
+                          Active Parameter:
+                        </span>
+                        <select
+                          value={activeParam}
+                          onChange={(e) => setActiveParam(e.target.value)}
+                          className="bg-white border border-indigo-200 rounded-lg p-1.5 font-bold text-xs text-indigo-800 cursor-pointer min-w-[120px] shadow-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        >
+                          {(headers.params || ["pH", "TDS", "TH", "EC", "Cl", "NO3", "F"]).map((p, idx) => (
+                            <option key={idx} value={p}>{p}</option>
+                          ))}
+                          <option value="SAR">Sodium Adsorption Ratio (SAR)</option>
+                          <option value="RSC">Residual Sodium Carbonate (RSC)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {rawData.length > 0 ? (
+                    <GisChoroplethMap
+                      rawData={yearFilteredData}
+                      headers={headers}
+                      headerMap={headerMap}
+                      activeParam={activeParam}
+                      activeConfig={activeConfig}
+                      reportingLevel={reportingLevel}
+                      selectedState={selectedState}
+                      selectedDistrict={selectedDistrict}
+                      sendToBulletin={(title, base64) => {
+                        setSharedBulletinMaps((prev) => ({
+                          ...prev,
+                          [title]: base64,
+                        }));
+                      }}
+                      layers={sharedLayers}
+                      choroplethClasses={choroplethClasses}
+                      setChoroplethClasses={setChoroplethClasses}
+                      isVisible={activeTab === "choropleth"}
+                    />
+                  ) : (
+                    <div className="bg-white rounded-3xl border border-slate-100 shadow-md p-12 text-center text-slate-400 font-bold uppercase tracking-wider">
+                      No data uploaded yet. Please upload a spreadsheet to view the Choropleth Map.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           {activeTab === "limits" && (
             <LimitsManagerView
+              headers={headers}
+              uploadedHeaders={uploadedHeaders}
+              headerMap={headerMap}
               onLimitsChanged={() => setLimitsVersion((v) => v + 1)}
+              onUpdateHeaders={(newHeaders, newHeaderMap) => {
+                setHeaders(newHeaders);
+                setHeaderMap(newHeaderMap);
+                if (newHeaders.params && newHeaders.params.length > 0) {
+                  setExportParams([...newHeaders.params]);
+                  setCombinedParams([...newHeaders.params]);
+                }
+              }}
             />
           )}
 

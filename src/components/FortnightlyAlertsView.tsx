@@ -569,7 +569,17 @@ const MapContainer: React.FC<{ data: any[]; limits: any; geoJsonData: any }> = (
         attribution: 'Tiles &copy; Esri'
       });
 
+      const terrainLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles &copy; Esri'
+      });
+
       const lightCanvasLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; CARTO',
+        subdomains: 'abcd',
+        maxZoom: 20
+      });
+
+      const darkCanvasLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
         attribution: '&copy; CARTO',
         subdomains: 'abcd',
         maxZoom: 20
@@ -581,7 +591,9 @@ const MapContainer: React.FC<{ data: any[]; limits: any; geoJsonData: any }> = (
         "OpenStreetMap": osmLayer,
         "Satellite (Esri)": satelliteLayer,
         "Topographic": topoLayer,
-        "Light Canvas": lightCanvasLayer
+        "Terrain (Esri)": terrainLayer,
+        "Light Canvas": lightCanvasLayer,
+        "Dark Canvas": darkCanvasLayer
       };
 
       L.control.layers(baseMaps, null, { position: 'topright' }).addTo(mapRef.current);

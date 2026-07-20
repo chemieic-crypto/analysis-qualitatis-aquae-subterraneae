@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import Highcharts from "highcharts";
 import Highcharts3D from "highcharts/highcharts-3d";
 import ExcelJS from "exceljs";
+import GraphSettingsPanel, { GraphSettings, DEFAULT_GRAPH_SETTINGS } from "./GraphSettingsPanel";
 
 // Initialize the 3D module
 if (typeof Highcharts3D === "function") {
@@ -31,7 +32,8 @@ import {
   ArrowRightLeft,
   Calendar,
   TrendingUp,
-  RefreshCw
+  RefreshCw,
+  FileCode
 } from "lucide-react";
 import { DataHeaders } from "../types";
 import { PARAM_CONFIG } from "../data/config";
@@ -68,8 +70,22 @@ export default function AdvancedAnalysisView({
   showToast,
   isVisible
 }: AdvancedAnalysisViewProps) {
-  // GUI Sub Tabs: "frequency" | "depth" | "aquifer" | "aquiferTapped" | "stageExtraction" | "source" | "comparison"
-  const [activeSubTab, setActiveSubTab] = useState<"frequency" | "depth" | "aquifer" | "aquiferTapped" | "stageExtraction" | "source" | "comparison">("frequency");
+  // GUI Sub Tabs: "frequency" | "depth" | "aquifer" | "aquiferTapped" | "stageExtraction" | "source" | "comparison" | "biplots" | "correlation"
+  const [activeSubTab, setActiveSubTab] = useState<"frequency" | "depth" | "aquifer" | "aquiferTapped" | "stageExtraction" | "source" | "comparison" | "biplots" | "correlation">("frequency");
+
+  // --- BI-PLOTS CONFIG ---
+  const [biplotType, setBiplotType] = useState<"na-cl" | "ca-so4" | "ec-nasratio" | "cams-hco3so4">("na-cl");
+  const [biplotColorBy, setBiplotColorBy] = useState<"district" | "block" | "season" | "aquifer">("district");
+  const [biplotLocationFilter, setBiplotLocationFilter] = useState<string>("");
+  const [biplotSettings, setBiplotSettings] = useState<GraphSettings>(DEFAULT_GRAPH_SETTINGS);
+  const [colNaOverride, setColNaOverride] = useState<string>("");
+  const [colClOverride, setColClOverride] = useState<string>("");
+  const [colCaOverride, setColCaOverride] = useState<string>("");
+  const [colSO4Override, setColSO4Override] = useState<string>("");
+  const [colMgOverride, setColMgOverride] = useState<string>("");
+  const [colHCO3Override, setColHCO3Override] = useState<string>("");
+  const [colCO3Override, setColCO3Override] = useState<string>("");
+  const [colECOverride, setColECOverride] = useState<string>("");
 
   // Local column matching overrides (with fallback to uploaded headers)
   const [aquiferColumn, setAquiferColumn] = useState<string>("");
@@ -129,9 +145,19 @@ export default function AdvancedAnalysisView({
   const [sortFieldComparison, setSortFieldComparison] = useState<string>("name");
   const [sortAscComparison, setSortAscComparison] = useState<boolean>(true);
 
+  // --- SUB TAB: CORRELATION CONFIG ---
+  const [corrTargetParam, setCorrTargetParam] = useState<string>("");
+  const [corrDirectionFilter, setCorrDirectionFilter] = useState<"all" | "positive" | "negative">("all");
+  const [corrMinStrength, setCorrMinStrength] = useState<number>(0.0);
+  const [corrSelectedParam, setCorrSelectedParam] = useState<string | null>(null);
+  const [corrChartMode, setCorrChartMode] = useState<"scatter" | "bars">("scatter");
+
+  const corrChartRef = useRef<HTMLDivElement>(null);
+
   // Refs for chart target containers
   const freqChartRef = useRef<HTMLDivElement>(null);
   const depthChartRef = useRef<HTMLDivElement>(null);
+  const biplotChartRef = useRef<HTMLDivElement>(null);
 
   // Get list of all available keys in the uploaded data
   const availableHeaders = useMemo(() => {
@@ -237,6 +263,192 @@ export default function AdvancedAnalysisView({
     }
     return data;
   }, [rawData, localStateFilter, localDistrictFilter, localBlockFilter, headers]);
+
+  // Sync corrTargetParam with global selectedParam
+  useEffect(() => {
+    if (selectedParam) {
+      setCorrTargetParam(selectedParam);
+    }
+  }, [selectedParam]);
+
+  // Compute correlation results between target parameter and all other parameters
+  const correlationResults = useMemo(() => {
+    if (!isVisible || activeSubTab !== "correlation" || !analyzedData || analyzedData.length === 0) return [];
+    
+    const target = corrTargetParam || selectedParam;
+    if (!target) return [];
+
+    const targetCol = headers.params.find(p => p === target || headerMap[p] === target) || target;
+    const results: any[] = [];
+    
+    headers.params.forEach(col => {
+      if (col === targetCol) return;
+      
+      let sumX = 0;
+      let sumY = 0;
+      let sumXY = 0;
+      let sumX2 = 0;
+      let sumY2 = 0;
+      let n = 0;
+      
+      analyzedData.forEach(row => {
+        const xVal = row[targetCol];
+        const yVal = row[col];
+        if (xVal !== undefined && xVal !== null && yVal !== undefined && yVal !== null) {
+          const x = parseFloat(xVal);
+          const y = parseFloat(yVal);
+          if (!isNaN(x) && !isNaN(y)) {
+            sumX += x;
+            sumY += y;
+            sumXY += x * y;
+            sumX2 += x * x;
+            sumY2 += y * y;
+            n++;
+          }
+        }
+      });
+      
+      if (n >= 5) {
+        const numerator = n * sumXY - sumX * sumY;
+        const denominator = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
+        if (denominator !== 0) {
+          const r = numerator / denominator;
+          const rSquared = r * r;
+          const absR = Math.abs(r);
+          
+          let strength = "none";
+          if (absR >= 0.8) strength = "very_strong";
+          else if (absR >= 0.6) strength = "strong";
+          else if (absR >= 0.4) strength = "moderate";
+          else if (absR >= 0.2) strength = "weak";
+          
+          const standardCode = headerMap[col] || col;
+          const conf = PARAM_CONFIG[standardCode] || VIRTUAL_PARAM_CONFIGS[standardCode] || { name: col };
+          
+          results.push({
+            paramCode: standardCode,
+            paramName: conf.name || col,
+            originalHeader: col,
+            r,
+            rSquared,
+            count: n,
+            direction: r >= 0 ? "positive" : "negative",
+            strength
+          });
+        }
+      }
+    });
+    
+    // Sort by absolute correlation strength descending
+    return results.sort((a, b) => Math.abs(b.r) - Math.abs(a.r));
+  }, [isVisible, activeSubTab, analyzedData, corrTargetParam, selectedParam, headers.params, headerMap]);
+
+  // Autoselect first correlated parameter when results change
+  useEffect(() => {
+    if (correlationResults.length > 0) {
+      if (!corrSelectedParam || !correlationResults.some(r => r.originalHeader === corrSelectedParam)) {
+        setCorrSelectedParam(correlationResults[0].originalHeader);
+      }
+    } else {
+      setCorrSelectedParam(null);
+    }
+  }, [correlationResults]);
+
+  // Filter correlation results based on UI filters
+  const filteredCorrelations = useMemo(() => {
+    return correlationResults.filter(item => {
+      // Direction filter
+      if (corrDirectionFilter === "positive" && item.r <= 0) return false;
+      if (corrDirectionFilter === "negative" && item.r >= 0) return false;
+      
+      // Strength filter
+      if (Math.abs(item.r) < corrMinStrength) return false;
+      
+      return true;
+    });
+  }, [correlationResults, corrDirectionFilter, corrMinStrength]);
+
+  // Compute ordinary least-squares regression line and details
+  const regressionDetails = useMemo(() => {
+    if (!corrSelectedParam || !analyzedData || analyzedData.length === 0) return null;
+    
+    const target = corrTargetParam || selectedParam;
+    const targetCol = headers.params.find(p => p === target || headerMap[p] === target) || target;
+    const compareCol = corrSelectedParam;
+    
+    const points: { x: number; y: number; wellId: string; block: string; district: string }[] = [];
+    let sumX = 0;
+    let sumY = 0;
+    let sumXY = 0;
+    let sumX2 = 0;
+    let sumY2 = 0;
+    let n = 0;
+    
+    analyzedData.forEach(row => {
+      const xValStr = row[targetCol];
+      const yValStr = row[compareCol];
+      if (xValStr !== undefined && xValStr !== null && yValStr !== undefined && yValStr !== null) {
+        const x = parseFloat(xValStr);
+        const y = parseFloat(yValStr);
+        if (!isNaN(x) && !isNaN(y)) {
+          points.push({
+            x,
+            y,
+            wellId: row[headers.wellId || ""] || row["well_id"] || "N/A",
+            block: getBlockValue(row) || "N/A",
+            district: getDistrictValue(row) || "N/A"
+          });
+          sumX += x;
+          sumY += y;
+          sumXY += x * y;
+          sumX2 += x * x;
+          sumY2 += y * y;
+          n++;
+        }
+      }
+    });
+    
+    if (n < 3) return null;
+    
+    const meanX = sumX / n;
+    const meanY = sumY / n;
+    
+    const numerator = n * sumXY - sumX * sumY;
+    const denominatorX = n * sumX2 - sumX * sumX;
+    
+    let slope = 0;
+    let intercept = 0;
+    if (denominatorX !== 0) {
+      slope = numerator / denominatorX;
+      intercept = meanY - slope * meanX;
+    }
+    
+    const denominatorY = n * sumY2 - sumY * sumY;
+    let rSquared = 0;
+    if (denominatorX !== 0 && denominatorY !== 0) {
+      const r = numerator / Math.sqrt(denominatorX * denominatorY);
+      rSquared = r * r;
+    }
+    
+    const xValues = points.map(p => p.x);
+    const minX = Math.min(...xValues);
+    const maxX = Math.max(...xValues);
+    const regressionLine = [
+      [minX, slope * minX + intercept],
+      [maxX, slope * maxX + intercept]
+    ];
+    
+    return {
+      points,
+      slope,
+      intercept,
+      rSquared,
+      regressionLine,
+      n,
+      minX,
+      maxX
+    };
+  }, [corrSelectedParam, corrTargetParam, selectedParam, analyzedData, headers.params, headerMap, headers.wellId]);
 
   // Guess and synchronize columns initially
   useEffect(() => {
@@ -1195,82 +1407,63 @@ export default function AdvancedAnalysisView({
 
   // --- SUB TAB 1: FREQUENCY DISTRIBUTION DATA ---
   const frequencyDistributionData = useMemo(() => {
-    if (!analyzedData || analyzedData.length === 0) return { categories: [], series: [], percentages: [], total: 0, isTruncated: false, totalGroupsCount: 0 };
+    if (!analyzedData || analyzedData.length === 0) return { categories: [], series: [], percentages: [], total: 0, isTruncated: false, totalGroupsCount: 0, isSeasonal: false };
 
-    const samples = analyzedData.map(row => {
+    const samples: {value: number, season: string}[] = [];
+    const seasonCol = headers.season;
+    
+    let hasPre = false;
+    let hasPost = false;
+
+    analyzedData.forEach(row => {
       const v = getParamNumericValue(row, selectedParam);
-      return { value: v };
-    }).filter((x): x is { value: number } => x.value !== null);
+      if (v !== null) {
+        const s = seasonCol ? String(row[seasonCol] || "").toLowerCase() : "";
+        samples.push({ value: v, season: s });
+        if (s.includes("pre") || s.includes("before")) hasPre = true;
+        if (s.includes("post") || s.includes("after")) hasPost = true;
+      }
+    });
 
-    if (samples.length === 0) return { categories: [], series: [], percentages: [], total: 0, isTruncated: false, totalGroupsCount: 0 };
+    if (samples.length === 0) return { categories: [], series: [], percentages: [], total: 0, isTruncated: false, totalGroupsCount: 0, isSeasonal: false };
 
     const b1 = activeParamConfig.b1;
     const b2 = activeParamConfig.b2;
     const unit = activeParamConfig.unit;
     const totalCount = samples.length;
+    
+    const isSeasonal = hasPre && hasPost;
 
+    let categories: string[] = [];
+    let getBinIdx: (v: number) => number;
+    
     if (freqBinMode === "compliance") {
-      let categories: string[] = [];
       if (selectedParam === "pH") {
         categories = ["Acidic (< 6.5)", "Acceptable (6.5 - 8.5)", "Alkaline (> 8.5)"];
       } else if (b1 === b2) {
         categories = [`Desirable (≤ ${b1} ${unit})`, `Exceeding (> ${b1} ${unit})`];
       } else {
-        categories = [
-          `Desirable (≤ ${b1} ${unit})`,
-          `Permissible (${b1} - ${b2} ${unit})`,
-          `Non-Potable (> ${b2} ${unit})`
-        ];
+        categories = [`Desirable (≤ ${b1} ${unit})`, `Permissible (${b1} - ${b2} ${unit})`, `Exceeding (> ${b2} ${unit})`];
       }
 
-      const dataCounts = new Array(categories.length).fill(0);
-
-      samples.forEach(({ value }) => {
-        let binIdx = 0;
+      getBinIdx = (value: number) => {
         if (selectedParam === "pH") {
-          if (value < 6.5) binIdx = 0;
-          else if (value <= 8.5) binIdx = 1;
-          else binIdx = 2;
+          if (value < 6.5) return 0;
+          else if (value <= 8.5) return 1;
+          else return 2;
         } else if (b1 === b2) {
-          if (value <= b1) binIdx = 0;
-          else binIdx = 1;
+          if (value <= b1) return 0;
+          else return 1;
         } else {
-          if (value <= b1) binIdx = 0;
-          else if (value <= b2) binIdx = 1;
-          else binIdx = 2;
+          if (value <= b1) return 0;
+          else if (value <= b2) return 1;
+          else return 2;
         }
-        dataCounts[binIdx]++;
-      });
-
-      const percentages = dataCounts.map(cnt => (cnt / totalCount) * 100);
-      const series = [{
-        name: "Frequency Count",
-        data: dataCounts
-      }];
-
-      return { categories, series, percentages, total: totalCount, isTruncated: false, totalGroupsCount: 1 };
-
+      };
     } else if (freqBinMode === "custom") {
-      const categories = customRangesLabels.map(r => `${r.label} ${unit}`.trim());
-      const dataCounts = new Array(categories.length).fill(0);
-
-      samples.forEach(({ value }) => {
-        const binIdx = customRangesLabels.findIndex(rng => rng.check(value));
-        if (binIdx !== -1) {
-          dataCounts[binIdx]++;
-        }
-      });
-
-      const percentages = dataCounts.map(cnt => (cnt / totalCount) * 100);
-      const series = [{
-        name: "Frequency Count",
-        data: dataCounts
-      }];
-
-      return { categories, series, percentages, total: totalCount, isTruncated: false, totalGroupsCount: 1 };
-
+      categories = customRangesLabels.map(r => `${r.label} ${unit}`.trim());
+      getBinIdx = (value: number) => customRangesLabels.findIndex(rng => rng.check(value));
     } else {
-      // Equal numerical intervals histogram
       const valuesOnly = samples.map(x => x.value);
       const minVal = Math.min(...valuesOnly);
       const maxVal = Math.max(...valuesOnly);
@@ -1278,10 +1471,8 @@ export default function AdvancedAnalysisView({
       const numBins = Math.max(2, Math.min(20, customNumBins));
       const range = maxVal - minVal;
       const binWidth = range === 0 ? 1 : range / numBins;
-
-      const categories: string[] = [];
+      
       const binsLimits: { min: number; max: number }[] = [];
-
       for (let i = 0; i < numBins; i++) {
         const minL = minVal + i * binWidth;
         const maxL = minVal + (i + 1) * binWidth;
@@ -1289,28 +1480,55 @@ export default function AdvancedAnalysisView({
         categories.push(`${minL.toFixed(2)} - ${maxL.toFixed(2)} ${unit}`);
       }
 
-      const dataCounts = new Array(numBins).fill(0);
-
-      samples.forEach(({ value }) => {
+      getBinIdx = (value: number) => {
         let binIdx = binsLimits.findIndex(b => value >= b.min && value <= b.max);
         if (binIdx === -1) {
-          if (value < minVal) binIdx = 0;
-          if (value > maxVal) binIdx = numBins - 1;
+          if (value < minVal) return 0;
+          if (value > maxVal) return numBins - 1;
         }
+        return binIdx;
+      };
+    }
+
+    const series = [];
+    const overallCounts = new Array(categories.length).fill(0);
+
+    if (isSeasonal) {
+      const preCounts = new Array(categories.length).fill(0);
+      const postCounts = new Array(categories.length).fill(0);
+      const otherCounts = new Array(categories.length).fill(0);
+
+      samples.forEach(({ value, season }) => {
+        const binIdx = getBinIdx(value);
         if (binIdx !== -1) {
-          dataCounts[binIdx]++;
+          overallCounts[binIdx]++;
+          if (season.includes("pre") || season.includes("before")) {
+            preCounts[binIdx]++;
+          } else if (season.includes("post") || season.includes("after")) {
+            postCounts[binIdx]++;
+          } else {
+            otherCounts[binIdx]++;
+          }
         }
       });
 
-      const percentages = dataCounts.map(cnt => (cnt / totalCount) * 100);
-      const series = [{
-        name: "Frequency Count",
-        data: dataCounts
-      }];
-
-      return { categories, series, percentages, total: totalCount, isTruncated: false, totalGroupsCount: 1 };
+      series.push({ name: "Pre-Monsoon", data: preCounts, color: "#f59e0b" });
+      series.push({ name: "Post-Monsoon", data: postCounts, color: "#3b82f6" });
+      if (otherCounts.some(c => c > 0)) {
+         series.push({ name: "Other Seasons", data: otherCounts, color: "#94a3b8" });
+      }
+    } else {
+      samples.forEach(({ value }) => {
+        const binIdx = getBinIdx(value);
+        if (binIdx !== -1) overallCounts[binIdx]++;
+      });
+      series.push({ name: "Frequency Count", data: overallCounts });
     }
-  }, [analyzedData, freqBinMode, selectedParam, activeParamConfig, customNumBins, customRangesLabels]);
+
+    const percentages = overallCounts.map(cnt => (cnt / totalCount) * 100);
+
+    return { categories, series, percentages, total: totalCount, isTruncated: false, totalGroupsCount: 1, isSeasonal };
+  }, [analyzedData, freqBinMode, selectedParam, activeParamConfig, customNumBins, customRangesLabels, headers]);
 
 
   // --- SUB TAB 2: DEPTH SCATTER POINTS ---
@@ -2177,13 +2395,24 @@ export default function AdvancedAnalysisView({
           )
         : ["#3b82f6", "#06b6d4", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6"];
 
+      const isSeasonal = frequencyDistributionData.isSeasonal;
       const seriesFormatted = frequencyDistributionData.series.map(s => ({
-        name: "Samples Count",
+        name: s.name,
         data: s.data,
         type: "column" as const,
-        colorByPoint: true,
-        colors: seriesColors
+        colorByPoint: !isSeasonal,
+        colors: !isSeasonal ? seriesColors : undefined,
+        color: s.color
       }));
+
+      // Gather season and year for subtitle
+      const uniqueYears = Array.from(new Set(analyzedData.map(r => String(r[headers.year || "Year"] || "")).filter(Boolean)));
+      const uniqueSeasons = Array.from(new Set(analyzedData.map(r => String(r[headers.season || "Season"] || "")).filter(Boolean)));
+      
+      let subtitleParts = [];
+      if (uniqueSeasons.length > 0) subtitleParts.push(uniqueSeasons.join(", "));
+      if (uniqueYears.length > 0) subtitleParts.push(uniqueYears.join(", "));
+      const subTitleStr = subtitleParts.join(" | ");
 
       Highcharts.chart(freqChartRef.current, {
         chart: {
@@ -2200,23 +2429,27 @@ export default function AdvancedAnalysisView({
           height: 420
         },
         title: {
-          text: `Frequency Distribution of Parameter`,
+          text: `Frequency Distribution of ${label}`,
           align: "left",
           style: { fontSize: "14px", fontWeight: "bold", color: "#1e293b" }
         },
         subtitle: {
-          text: "",
+          text: subTitleStr || "",
           align: "left",
           style: { fontSize: "11px", color: "#64748b" }
         },
         xAxis: {
           categories: frequencyDistributionData.categories,
           crosshair: true,
-          labels: { style: { fontSize: "10px", color: "#475569", fontWeight: "bold" } }
+          labels: { style: { fontSize: "10px", color: "#475569", fontWeight: "bold" } },
+          title: {
+            text: `${label} (${unit})`,
+            style: { fontSize: "12px", fontWeight: "bold", color: "#475569", margin: 10 }
+          }
         },
         yAxis: {
           min: 0,
-          title: { text: "Frequency (Count of Wells)", style: { fontSize: "11px", color: "#475569", fontWeight: "bold" } },
+          title: { text: "Frequency (No. of Locations)", style: { fontSize: "12px", color: "#475569", fontWeight: "bold", margin: 10 } },
           gridLineDashStyle: "Dash",
           gridLineColor: "#e2e8f0"
         },
@@ -2397,6 +2630,1294 @@ export default function AdvancedAnalysisView({
     }
 
   }, [isVisible, analyzedData, activeSubTab, selectedParam, activeParamConfig, frequencyDistributionData, depthScatterPoints, depthColumn, freqGeographicLevel, freqBinMode, depthColorMode]);
+
+
+  // ==========================================
+  // BI-PLOTS CALCULATIONS & HIGHCHARTS RENDERING
+  // ==========================================
+  const biplotScatterPoints = useMemo(() => {
+    if (!isVisible || rawData.length === 0) return [];
+    
+    const pts: any[] = [];
+    
+    const getSeasonValue = (row: any): string => {
+      const col = headers.season;
+      if (col && row[col] !== undefined && row[col] !== null) return String(row[col]).trim();
+      const fallbackKey = Object.keys(row).find(k => ["season", "monsoon", "period"].includes(k.toLowerCase().trim()));
+      return fallbackKey ? String(row[fallbackKey]).trim() : "Unknown Season";
+    };
+
+    const getAquiferValue = (row: any): string => {
+      const col = headers.aquifer || aquiferColumn;
+      if (col && row[col] !== undefined && row[col] !== null) return String(row[col]).trim();
+      const fallbackKey = Object.keys(row).find(k => ["aquifer", "aq_type", "aquifer type", "aquifer_type"].includes(k.toLowerCase().trim()));
+      return fallbackKey ? String(row[fallbackKey]).trim() : "Unknown Aquifer";
+    };
+
+    const getBiplotCol = (standardKey: string, overrideVal: string): string | null => {
+      if (overrideVal) return overrideVal;
+      
+      const matchedHeader = Object.keys(headerMap).find(k => headerMap[k] === standardKey);
+      if (matchedHeader) return matchedHeader;
+
+      if (rawData.length > 0) {
+        const rowKeys = Object.keys(rawData[0]);
+        const aliasesMap: Record<string, string[]> = {
+          Na: ["na", "sodium", "na+"],
+          Cl: ["cl", "chloride", "cl-", "chlorine"],
+          Ca: ["ca", "calcium", "ca++", "ca2+"],
+          SO4: ["so4", "sulphate", "sulfate", "so4--"],
+          Mg: ["mg", "magnesium", "mg++", "mg2+"],
+          HCO3: ["hco3", "bicarbonate", "hco3-"],
+          CO3: ["co3", "carbonate", "co3--"],
+          EC: ["ec", "conductivity", "electrical conductivity", "cond"]
+        };
+        
+        const aliases = aliasesMap[standardKey] || [standardKey];
+        for (const alias of aliases) {
+          const found = rowKeys.find(k => k.toLowerCase().trim() === alias.toLowerCase().trim());
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    analyzedData.forEach((row, index) => {
+      const wellIdCol = headers.wellId || Object.keys(row).find(k => ["well id", "well_id", "wellid", "id"].includes(k.toLowerCase().trim())) || "";
+      const locationCol = headers.location || Object.keys(row).find(k => ["location", "site", "well name", "site name", "village", "hab_name", "habitation"].includes(k.toLowerCase().trim())) || "";
+      
+      const wellID = wellIdCol && row[wellIdCol] !== undefined ? String(row[wellIdCol]) : `Sample ${index + 1}`;
+      const siteName = locationCol && row[locationCol] !== undefined ? String(row[locationCol]) : "Unknown Location";
+      const state = getStateValue(row);
+      const district = getDistrictValue(row);
+      const block = getBlockValue(row);
+      const season = getSeasonValue(row);
+      const aquifer = getAquiferValue(row);
+
+      let xVal = 0;
+      let yVal = 0;
+      let isValid = false;
+
+      let rawXLabel = "";
+      let rawYLabel = "";
+      let rawXValText = "";
+      let rawYValText = "";
+
+      if (biplotType === "na-cl") {
+        const colCl = getBiplotCol("Cl", colClOverride);
+        const colNa = getBiplotCol("Na", colNaOverride);
+        if (colCl && colNa) {
+          const cl = parseFloat(row[colCl]);
+          const na = parseFloat(row[colNa]);
+          if (!isNaN(cl) && !isNaN(na)) {
+            const meqCl = cl / 35.45;
+            const meqNa = na / 22.99;
+            xVal = meqCl;
+            yVal = meqNa;
+            isValid = true;
+            rawXLabel = "Chloride";
+            rawYLabel = "Sodium";
+            rawXValText = `${cl.toFixed(1)} mg/L (${meqCl.toFixed(3)} meq/L)`;
+            rawYValText = `${na.toFixed(1)} mg/L (${meqNa.toFixed(3)} meq/L)`;
+          }
+        }
+      } else if (biplotType === "ca-so4") {
+        const colSO4 = getBiplotCol("SO4", colSO4Override);
+        const colCa = getBiplotCol("Ca", colCaOverride);
+        if (colSO4 && colCa) {
+          const so4 = parseFloat(row[colSO4]);
+          const ca = parseFloat(row[colCa]);
+          if (!isNaN(so4) && !isNaN(ca)) {
+            const meqSO4 = so4 / 48.03;
+            const meqCa = ca / 20.04;
+            xVal = meqSO4;
+            yVal = meqCa;
+            isValid = true;
+            rawXLabel = "Sulfate";
+            rawYLabel = "Calcium";
+            rawXValText = `${so4.toFixed(1)} mg/L (${meqSO4.toFixed(3)} meq/L)`;
+            rawYValText = `${ca.toFixed(1)} mg/L (${meqCa.toFixed(3)} meq/L)`;
+          }
+        }
+      } else if (biplotType === "ec-nasratio") {
+        const colEC = getBiplotCol("EC", colECOverride);
+        const colNa = getBiplotCol("Na", colNaOverride);
+        const colCl = getBiplotCol("Cl", colClOverride);
+        if (colEC && colNa && colCl) {
+          const ec = parseFloat(row[colEC]);
+          const na = parseFloat(row[colNa]);
+          const cl = parseFloat(row[colCl]);
+          if (!isNaN(ec) && !isNaN(na) && !isNaN(cl) && cl > 0) {
+            const meqNa = na / 22.99;
+            const meqCl = cl / 35.45;
+            const ratio = meqNa / meqCl;
+            xVal = ec;
+            yVal = ratio;
+            isValid = true;
+            rawXLabel = "EC";
+            rawYLabel = "Na/Cl Ratio (meq)";
+            rawXValText = `${ec.toFixed(0)} µS/cm`;
+            rawYValText = `${ratio.toFixed(3)}`;
+          }
+        }
+      } else if (biplotType === "cams-hco3so4") {
+        const colCa = getBiplotCol("Ca", colCaOverride);
+        const colMg = getBiplotCol("Mg", colMgOverride);
+        const colHCO3 = getBiplotCol("HCO3", colHCO3Override);
+        const colSO4 = getBiplotCol("SO4", colSO4Override);
+        const colCO3 = getBiplotCol("CO3", colCO3Override);
+        
+        if (colCa && colMg && colHCO3 && colSO4) {
+          const ca = parseFloat(row[colCa]);
+          const mg = parseFloat(row[colMg]);
+          const hco3 = parseFloat(row[colHCO3]);
+          const so4 = parseFloat(row[colSO4]);
+          const co3 = colCO3 ? parseFloat(row[colCO3]) : 0;
+          
+          if (!isNaN(ca) && !isNaN(mg) && !isNaN(hco3) && !isNaN(so4)) {
+            const meqCa = ca / 20.04;
+            const meqMg = mg / 12.16;
+            const meqHCO3 = hco3 / 61.02;
+            const meqSO4 = so4 / 48.03;
+            const meqCO3 = isNaN(co3) ? 0 : co3 / 30.0;
+            
+            const sumCaMg = meqCa + meqMg;
+            const sumHCO3SO4 = meqHCO3 + meqCO3 + meqSO4;
+            
+            xVal = sumHCO3SO4;
+            yVal = sumCaMg;
+            isValid = true;
+            
+            rawXLabel = "HCO3 + CO3 + SO4";
+            rawYLabel = "Ca + Mg";
+            rawXValText = `${sumHCO3SO4.toFixed(3)} meq/L (HCO3: ${hco3.toFixed(1)}mg/L, SO4: ${so4.toFixed(1)}mg/L)`;
+            rawYValText = `${sumCaMg.toFixed(3)} meq/L (Ca: ${ca.toFixed(1)}mg/L, Mg: ${mg.toFixed(1)}mg/L)`;
+          }
+        }
+      }
+
+      if (isValid) {
+        let colorGroup = "Other";
+        if (biplotColorBy === "district") {
+          colorGroup = district || "Unknown District";
+        } else if (biplotColorBy === "block") {
+          colorGroup = block || "Unknown Block";
+        } else if (biplotColorBy === "season") {
+          colorGroup = season || "Unknown Season";
+        } else if (biplotColorBy === "aquifer") {
+          colorGroup = aquifer || "Unknown Aquifer";
+        }
+
+        const numericParams: Record<string, number> = {};
+        Object.keys(row).forEach(k => {
+          const parsedVal = parseFloat(row[k]);
+          if (!isNaN(parsedVal)) {
+            numericParams[k] = parsedVal;
+          }
+        });
+
+        pts.push({
+          x: xVal,
+          y: yVal,
+          wellID,
+          siteName,
+          state,
+          district,
+          block,
+          season,
+          aquifer,
+          colorGroup,
+          rawXLabel,
+          rawYLabel,
+          rawXValText,
+          rawYValText,
+          numericParams,
+          row
+        });
+      }
+    });
+
+    return pts;
+  }, [
+    isVisible,
+    rawData,
+    analyzedData,
+    biplotType,
+    biplotColorBy,
+    colNaOverride,
+    colClOverride,
+    colCaOverride,
+    colSO4Override,
+    colMgOverride,
+    colHCO3Override,
+    colCO3Override,
+    colECOverride,
+    headers,
+    headerMap,
+    aquiferColumn
+  ]);
+
+  // Extract unique locations for filtering
+  const biplotLocationOptions = useMemo(() => {
+    const map = new Map<string, { wellID: string, siteName: string }>();
+    biplotScatterPoints.forEach(p => {
+      const label = p.siteName && p.siteName !== "Unknown Location"
+        ? `${p.siteName} (${p.wellID})`
+        : p.wellID;
+      if (label) {
+        map.set(label, { wellID: p.wellID, siteName: p.siteName });
+      }
+    });
+    return Array.from(map.entries()).map(([label, val]) => ({
+      label,
+      wellID: val.wellID,
+      siteName: val.siteName
+    })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [biplotScatterPoints]);
+
+  // Filter scatter points by selected location if any
+  const filteredBiplotScatterPoints = useMemo(() => {
+    if (!biplotLocationFilter) return biplotScatterPoints;
+    return biplotScatterPoints.filter(p => {
+      const label = p.siteName && p.siteName !== "Unknown Location"
+        ? `${p.siteName} (${p.wellID})`
+        : p.wellID;
+      return label === biplotLocationFilter;
+    });
+  }, [biplotScatterPoints, biplotLocationFilter]);
+
+  // Find all available numeric columns for bubble size scaling
+  const bpAvailableBubbleParams = useMemo(() => {
+    const keys = new Set<string>();
+    biplotScatterPoints.forEach(p => {
+      if (p.numericParams) {
+        Object.keys(p.numericParams).forEach(k => {
+          keys.add(k);
+        });
+      }
+    });
+    return Array.from(keys).sort();
+  }, [biplotScatterPoints]);
+
+  // Set default scaling parameter once available params load
+  useEffect(() => {
+    if (bpAvailableBubbleParams.length > 0 && !biplotSettings.bubbleScaleParam) {
+      const defaultParam = bpAvailableBubbleParams.find(p => 
+        ["ec", "tds", "na", "sodium"].includes(p.toLowerCase().trim())
+      ) || bpAvailableBubbleParams[0];
+      setBiplotSettings(prev => ({
+        ...prev,
+        bubbleScaleParam: defaultParam
+      }));
+    }
+  }, [bpAvailableBubbleParams, biplotSettings.bubbleScaleParam]);
+
+  // Synchronize theme presets when theme changes
+  useEffect(() => {
+    const t = biplotSettings.theme;
+    setBiplotSettings(prev => {
+      if (t === "light") {
+        return {
+          ...prev,
+          plotBgColor: "transparent",
+          chartBorderColor: "#cbd5e1",
+          chartBorderWidth: 1,
+          axisLineColor: "#cbd5e1",
+          tickColor: "#cbd5e1",
+          gridlineColor: "#f1f5f9",
+          titleFontColor: "#1e293b",
+          xTitleFontColor: "#334155",
+          yTitleFontColor: "#334155",
+          ticksFontColor: "#475569",
+          legendFontColor: "#334155",
+          legendBgColor: "rgba(255,255,255,0.9)",
+          legendBorderColor: "#e2e8f0"
+        };
+      } else if (t === "dark") {
+        return {
+          ...prev,
+          plotBgColor: "#0f172a",
+          chartBorderColor: "#334155",
+          chartBorderWidth: 1,
+          axisLineColor: "#475569",
+          tickColor: "#475569",
+          gridlineColor: "#1e293b",
+          titleFontColor: "#f8fafc",
+          xTitleFontColor: "#cbd5e1",
+          yTitleFontColor: "#cbd5e1",
+          ticksFontColor: "#94a3b8",
+          legendFontColor: "#cbd5e1",
+          legendBgColor: "rgba(15,23,42,0.95)",
+          legendBorderColor: "#334155"
+        };
+      } else if (t === "journal") {
+        return {
+          ...prev,
+          plotBgColor: "#ffffff",
+          chartBorderColor: "#000000",
+          chartBorderWidth: 1.5,
+          axisLineColor: "#000000",
+          tickColor: "#000000",
+          gridlineColor: "#e2e8f0",
+          titleFontColor: "#000000",
+          titleFontFamily: "Times New Roman",
+          xTitleFontColor: "#000000",
+          xTitleFontFamily: "Times New Roman",
+          yTitleFontColor: "#000000",
+          yTitleFontFamily: "Times New Roman",
+          ticksFontColor: "#000000",
+          ticksFontFamily: "Times New Roman",
+          legendFontColor: "#000000",
+          legendFontFamily: "Times New Roman",
+          legendBgColor: "#ffffff",
+          legendBorderColor: "#000000"
+        };
+      } else if (t === "presentation") {
+        return {
+          ...prev,
+          plotBgColor: "#fafafa",
+          chartBorderColor: "#cbd5e1",
+          chartBorderWidth: 2,
+          axisLineColor: "#1e293b",
+          tickColor: "#1e293b",
+          gridlineColor: "#e2e8f0",
+          titleFontColor: "#1e293b",
+          titleFontSize: 18,
+          xTitleFontColor: "#1e293b",
+          xTitleFontSize: 13,
+          yTitleFontColor: "#1e293b",
+          yTitleFontSize: 13,
+          ticksFontColor: "#1e293b",
+          ticksFontSize: 11,
+          legendFontColor: "#1e293b",
+          legendFontSize: 12,
+          legendBgColor: "#ffffff",
+          legendBorderColor: "#1e293b",
+          markerSize: 8,
+          bubbleMinSize: 8,
+          bubbleMaxSize: 26
+        };
+      }
+      return prev;
+    });
+  }, [biplotSettings.theme]);
+
+  // Find bubble parameter scale bounds
+  const biplotBubbleExtremes = useMemo(() => {
+    const param = biplotSettings.bubbleScaleParam;
+    if (!param) return { min: 0, max: 1 };
+    let min = Infinity;
+    let max = -Infinity;
+    filteredBiplotScatterPoints.forEach(p => {
+      const val = p.numericParams?.[param];
+      if (val !== undefined && !isNaN(val)) {
+        if (val < min) min = val;
+        if (val > max) max = val;
+      }
+    });
+    return {
+      min: min === Infinity ? 0 : min,
+      max: max === -Infinity ? 1 : max
+    };
+  }, [filteredBiplotScatterPoints, biplotSettings.bubbleScaleParam]);
+
+  // Unique categories list (for custom size list in the settings panel)
+  const biplotCategories = useMemo(() => {
+    const set = new Set<string>();
+    biplotScatterPoints.forEach(p => {
+      if (p.colorGroup) set.add(p.colorGroup);
+    });
+    return Array.from(set).sort();
+  }, [biplotScatterPoints]);
+
+  const COLOR_PALETTE = useMemo(() => [
+    "#2563eb", "#dc2626", "#16a34a", "#ca8a04", "#9333ea", "#06b6d4", "#ea580c", "#db2777",
+    "#4f46e5", "#0d9488", "#e11d48", "#7c3aed", "#b45309", "#4b5563"
+  ], []);
+
+  const groupColors = useMemo(() => {
+    const map: Record<string, string> = {};
+    biplotCategories.forEach((cat, idx) => {
+      map[cat] = COLOR_PALETTE[idx % COLOR_PALETTE.length];
+    });
+    return map;
+  }, [biplotCategories, COLOR_PALETTE]);
+
+  // Auto-clear selected location filter if it's no longer present in available options
+  useEffect(() => {
+    if (biplotLocationFilter && !biplotLocationOptions.some(opt => opt.label === biplotLocationFilter)) {
+      setBiplotLocationFilter("");
+    }
+  }, [biplotLocationOptions, biplotLocationFilter]);
+
+  const biplotStats = useMemo(() => {
+    const pts = filteredBiplotScatterPoints;
+    const n = pts.length;
+    
+    let rValue = 0;
+    if (n > 1) {
+      let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0, sumY2 = 0;
+      pts.forEach(p => {
+        sumX += p.x;
+        sumY += p.y;
+        sumXY += p.x * p.y;
+        sumX2 += p.x * p.x;
+        sumY2 += p.y * p.y;
+      });
+      const num = (n * sumXY) - (sumX * sumY);
+      const den = Math.sqrt(((n * sumX2) - (sumX * sumX)) * ((n * sumY2) - (sumY * sumY)));
+      rValue = den !== 0 ? num / den : 0;
+    }
+
+    let aboveEquilineCount = 0;
+    let belowEquilineCount = 0;
+    
+    pts.forEach(p => {
+      if (p.y > p.x) {
+        aboveEquilineCount++;
+      } else {
+        belowEquilineCount++;
+      }
+    });
+
+    const abovePct = n > 0 ? (aboveEquilineCount / n) * 100 : 0;
+    const belowPct = n > 0 ? (belowEquilineCount / n) * 100 : 0;
+
+    return {
+      count: n,
+      rValue,
+      aboveEquilineCount,
+      belowEquilineCount,
+      abovePct,
+      belowPct
+    };
+  }, [filteredBiplotScatterPoints]);
+
+  useEffect(() => {
+    if (!isVisible || activeSubTab !== "biplots" || !biplotChartRef.current || filteredBiplotScatterPoints.length === 0) return;
+
+    // Group scatter points by colorGroup
+    const groups: Record<string, any[]> = {};
+    filteredBiplotScatterPoints.forEach(p => {
+      if (!groups[p.colorGroup]) {
+        groups[p.colorGroup] = [];
+      }
+      groups[p.colorGroup].push(p);
+    });
+
+    // Format for Highcharts
+    const getPointRadius = (p: any) => {
+      if (!biplotSettings.use3DBubbles || !biplotSettings.bubbleScaleParam) {
+        return biplotSettings.categorySizes[p.colorGroup] ?? biplotSettings.markerSize;
+      }
+      const val = p.numericParams?.[biplotSettings.bubbleScaleParam];
+      if (val === undefined || isNaN(val)) {
+        return biplotSettings.bubbleMinSize;
+      }
+      const range = biplotBubbleExtremes.max - biplotBubbleExtremes.min;
+      if (range <= 0) return (biplotSettings.bubbleMinSize + biplotSettings.bubbleMaxSize) / 2;
+      const fraction = (val - biplotBubbleExtremes.min) / range;
+      return biplotSettings.bubbleMinSize + fraction * (biplotSettings.bubbleMaxSize - biplotSettings.bubbleMinSize);
+    };
+
+    const scatterSeries = Object.keys(groups).map(grp => {
+      const baseColor = groupColors[grp] || "#2563eb";
+      
+      const pointData = groups[grp].map(p => {
+        const r = getPointRadius(p);
+        const pointMarker: any = {
+          radius: r,
+          symbol: biplotSettings.markerShape
+        };
+
+        if (biplotSettings.use3DBubbles) {
+          pointMarker.fillColor = {
+            radialGradient: { cx: 0.4, cy: 0.3, r: 0.6 },
+            stops: [
+              [0, "rgba(255, 255, 255, 0.95)"],
+              [0.2, baseColor + "dd"],
+              [0.8, baseColor],
+              [1, "#00000033"]
+            ]
+          };
+          pointMarker.lineColor = "#ffffff88";
+          pointMarker.lineWidth = 1;
+        } else {
+          const opacityHex = Math.round(biplotSettings.markerAlpha * 255).toString(16).padStart(2, "0");
+          pointMarker.fillColor = baseColor + opacityHex;
+          pointMarker.lineColor = biplotSettings.markerBorderColor || "#ffffff";
+          pointMarker.lineWidth = biplotSettings.markerBorderWidth;
+        }
+
+        return {
+          x: p.x,
+          y: p.y,
+          wellID: p.wellID,
+          siteName: p.siteName,
+          state: p.state,
+          district: p.district,
+          block: p.block,
+          season: p.season,
+          aquifer: p.aquifer,
+          rawXLabel: p.rawXLabel,
+          rawYLabel: p.rawYLabel,
+          rawXValText: p.rawXValText,
+          rawYValText: p.rawYValText,
+          numericParams: p.numericParams,
+          row: p.row,
+          marker: pointMarker
+        };
+      });
+
+      return {
+        name: grp,
+        type: "scatter" as const,
+        data: pointData,
+        color: baseColor
+      };
+    });
+
+    // Axis titles & Chart titles
+    let xTitle = "";
+    let yTitle = "";
+    let chartTitle = "";
+    let chartSub = "";
+
+    if (biplotType === "na-cl") {
+      xTitle = "Chloride (Cl⁻) [meq/L]";
+      yTitle = "Sodium (Na⁺) [meq/L]";
+      chartTitle = "Sodium (Na⁺) vs. Chloride (Cl⁻) Milliequivalent Bi-Plot";
+      chartSub = "Used to identify halite dissolution (1:1 line), silicate weathering (Na > Cl), or reverse ion exchange (Na < Cl).";
+    } else if (biplotType === "ca-so4") {
+      xTitle = "Sulfate (SO₄²⁻) [meq/L]";
+      yTitle = "Calcium (Ca²⁺) [meq/L]";
+      chartTitle = "Calcium (Ca²⁺) vs. Sulfate (SO₄²⁻) Milliequivalent Bi-Plot";
+      chartSub = "Used to assess gypsum dissolution (1:1 line) and limestone weathering controls.";
+    } else if (biplotType === "ec-nasratio") {
+      xTitle = "Electrical Conductivity (EC) [µS/cm]";
+      yTitle = "Sodium/Chloride Ratio (Na⁺/Cl⁻) [meq ratio]";
+      chartTitle = "Na⁺/Cl⁻ Ratio vs. Electrical Conductivity (EC) Salinity Bi-Plot";
+      chartSub = "Identifies evaporation trends vs weathering as overall dissolved solids/conductivity increase.";
+    } else if (biplotType === "cams-hco3so4") {
+      xTitle = "Bicarbonate + Sulfate (HCO₃⁻ + CO₃²⁻ + SO₄²⁻) [meq/L]";
+      yTitle = "Calcium + Magnesium (Ca²⁺ + Mg²⁺) [meq/L]";
+      chartTitle = "(Ca²⁺ + Mg²⁺) vs. (HCO₃⁻ + SO₄²⁻) Milliequivalent Bi-Plot";
+      chartSub = "Assesses carbonate/silicate weathering controls (1:1 line), ion exchange, and mineral dissolution.";
+    }
+
+    // Series array
+    const allSeries: any[] = [...scatterSeries];
+
+    // Add 1:1 line if applicable
+    if (biplotType !== "ec-nasratio") {
+      const maxX = Math.max(...filteredBiplotScatterPoints.map(p => p.x));
+      const maxY = Math.max(...filteredBiplotScatterPoints.map(p => p.y));
+      const maxVal = Math.max(maxX, maxY) * 1.1 || 10;
+
+      allSeries.push({
+        name: "1:1 Equiline (y = x)",
+        type: "line" as const,
+        data: [[0, 0], [maxVal, maxVal]],
+        color: biplotSettings.theme === "dark" ? "#94a3b8" : "#475569",
+        dashStyle: "Dash",
+        lineWidth: 2,
+        marker: { enabled: false },
+        enableMouseTracking: false,
+        showInLegend: true
+      });
+    }
+
+    // Convert Hex to RGBA
+    const getRGBA = (hex: string, alpha: number) => {
+      const h = hex.replace("#", "");
+      if (h.length === 3) {
+        const r = parseInt(h[0] + h[0], 16);
+        const g = parseInt(h[1] + h[1], 16);
+        const b = parseInt(h[2] + h[2], 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+      }
+      if (h.length === 6) {
+        const r = parseInt(h.substring(0, 2), 16);
+        const g = parseInt(h.substring(2, 4), 16);
+        const b = parseInt(h.substring(4, 6), 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+      }
+      return hex;
+    };
+
+    const finalGridlineColor = getRGBA(biplotSettings.gridlineColor, biplotSettings.gridlineAlpha);
+
+    Highcharts.chart(biplotChartRef.current, {
+      chart: {
+        type: "scatter",
+        zoomType: "xy",
+        backgroundColor: biplotSettings.plotBgColor,
+        borderColor: biplotSettings.chartBorderColor,
+        borderWidth: biplotSettings.chartBorderWidth,
+        style: { fontFamily: `${biplotSettings.titleFontFamily}, sans-serif` },
+        height: 520,
+        spacingLeft: biplotSettings.marginLeft,
+        spacingRight: biplotSettings.marginRight,
+        spacingTop: biplotSettings.marginTop,
+        spacingBottom: biplotSettings.marginBottom
+      },
+      title: {
+        text: biplotSettings.titleText || chartTitle,
+        align: "left",
+        style: {
+          fontFamily: biplotSettings.titleFontFamily,
+          fontSize: `${biplotSettings.titleFontSize}px`,
+          color: biplotSettings.titleFontColor,
+          fontWeight: biplotSettings.titleFontWeight,
+          fontStyle: biplotSettings.titleFontStyle
+        }
+      },
+      subtitle: {
+        text: chartSub,
+        align: "left",
+        style: {
+          fontFamily: biplotSettings.titleFontFamily,
+          fontSize: `${biplotSettings.titleFontSize - 3}px`,
+          color: biplotSettings.theme === "dark" ? "#94a3b8" : "#475569"
+        }
+      },
+      xAxis: {
+        title: {
+          text: biplotSettings.xTitleText || xTitle,
+          style: {
+            fontFamily: biplotSettings.xTitleFontFamily,
+            fontSize: `${biplotSettings.xTitleFontSize}px`,
+            color: biplotSettings.xTitleFontColor,
+            fontWeight: biplotSettings.xTitleFontWeight,
+            fontStyle: biplotSettings.xTitleFontStyle
+          }
+        },
+        labels: {
+          style: {
+            fontFamily: biplotSettings.ticksFontFamily,
+            fontSize: `${biplotSettings.ticksFontSize}px`,
+            color: biplotSettings.ticksFontColor,
+            fontWeight: biplotSettings.ticksFontWeight
+          },
+          rotation: biplotSettings.ticksRotation
+        },
+        lineColor: biplotSettings.axisLineColor,
+        lineWidth: biplotSettings.axisLineThickness,
+        tickColor: biplotSettings.tickColor,
+        tickLength: biplotSettings.tickDirection === "inward" ? -biplotSettings.tickLength : biplotSettings.tickLength,
+        tickWidth: biplotSettings.tickWidth,
+        
+        minorTickInterval: biplotSettings.showMinorTicks ? "auto" : undefined,
+        minorTickColor: biplotSettings.minorTickColor,
+        minorTickLength: biplotSettings.tickDirection === "inward" ? -biplotSettings.minorTickLength : biplotSettings.minorTickLength,
+        minorTickWidth: biplotSettings.minorTickWidth,
+
+        gridLineDashStyle: biplotSettings.gridlineStyle as any,
+        gridLineColor: finalGridlineColor,
+        startOnTick: true,
+        endOnTick: true,
+        showLastLabel: true,
+        min: 0
+      },
+      yAxis: {
+        title: {
+          text: biplotSettings.yTitleText || yTitle,
+          style: {
+            fontFamily: biplotSettings.yTitleFontFamily,
+            fontSize: `${biplotSettings.yTitleFontSize}px`,
+            color: biplotSettings.yTitleFontColor,
+            fontWeight: biplotSettings.yTitleFontWeight,
+            fontStyle: biplotSettings.yTitleFontStyle
+          },
+          rotation: biplotSettings.yTitleRotation
+        },
+        labels: {
+          style: {
+            fontFamily: biplotSettings.ticksFontFamily,
+            fontSize: `${biplotSettings.ticksFontSize}px`,
+            color: biplotSettings.ticksFontColor,
+            fontWeight: biplotSettings.ticksFontWeight
+          }
+        },
+        lineColor: biplotSettings.axisLineColor,
+        lineWidth: biplotSettings.axisLineThickness,
+        tickColor: biplotSettings.tickColor,
+        tickLength: biplotSettings.tickDirection === "inward" ? -biplotSettings.tickLength : biplotSettings.tickLength,
+        tickWidth: biplotSettings.tickWidth,
+
+        minorTickInterval: biplotSettings.showMinorTicks ? "auto" : undefined,
+        minorTickColor: biplotSettings.minorTickColor,
+        minorTickLength: biplotSettings.tickDirection === "inward" ? -biplotSettings.minorTickLength : biplotSettings.minorTickLength,
+        minorTickWidth: biplotSettings.minorTickWidth,
+
+        gridLineDashStyle: biplotSettings.gridlineStyle as any,
+        gridLineColor: finalGridlineColor,
+        min: 0
+      },
+      legend: {
+        title: {
+          text: biplotSettings.legendTitleText,
+          style: {
+            fontFamily: biplotSettings.legendFontFamily,
+            fontSize: `${biplotSettings.legendFontSize}px`,
+            color: biplotSettings.legendFontColor,
+            fontWeight: biplotSettings.legendFontWeight
+          }
+        },
+        itemStyle: {
+          fontFamily: biplotSettings.legendFontFamily,
+          fontSize: `${biplotSettings.legendFontSize - 1}px`,
+          color: biplotSettings.legendFontColor,
+          fontWeight: biplotSettings.legendFontWeight
+        },
+        backgroundColor: biplotSettings.legendBgColor,
+        borderColor: biplotSettings.legendBorderColor,
+        borderWidth: biplotSettings.legendBorderColor ? 1 : 0,
+        borderRadius: biplotSettings.legendBorderRadius,
+        layout: biplotSettings.legendPosition === "right" || biplotSettings.legendPosition === "left" ? "vertical" : "horizontal",
+        align: biplotSettings.legendPosition === "right" ? "right" : biplotSettings.legendPosition === "left" ? "left" : "center",
+        verticalAlign: biplotSettings.legendPosition === "top" ? "top" : biplotSettings.legendPosition === "bottom" ? "bottom" : "middle"
+      },
+      plotOptions: {
+        scatter: {
+          marker: {
+            states: { hover: { enabled: true, lineColor: "rgb(100,100,100)" } }
+          }
+        }
+      },
+      tooltip: {
+        useHTML: true,
+        headerFormat: '<span style="font-size: 11px; font-weight: bold; color: #1e1b4b">{series.name}</span><br/>',
+        pointFormat: `<div style="padding: 6px; font-size: 11px; line-height: 1.4; min-width: 200px; color: #1e293b">
+          <div style="border-bottom: 1px solid #e2e8f0; padding-bottom: 3px; margin-bottom: 3px">
+            <b>Well ID:</b> {point.wellID}
+          </div>
+          <b>Location:</b> {point.siteName}<br/>
+          <b>Geographic Area:</b> {point.state} › {point.district} › {point.block}<br/>
+          <b>Season:</b> {point.season}<br/>
+          <b>Aquifer:</b> {point.aquifer}<br/>
+          <div style="border-top: 1px solid #e2e8f0; padding-top: 3px; margin-top: 3px">
+            <b>{point.rawXLabel} (X-axis):</b> <span style="font-family: monospace; color:#2563eb; font-weight: bold">{point.rawXValText}</span><br/>
+            <b>{point.rawYLabel} (Y-axis):</b> <span style="font-family: monospace; color:#dc2626; font-weight: bold">{point.rawYValText}</span>
+          </div>
+        </div>`,
+        backgroundColor: "#ffffff",
+        borderColor: "#cbd5e1",
+        borderRadius: 12,
+        shadow: true
+      },
+      credits: { enabled: false },
+      series: allSeries
+    });
+
+  }, [isVisible, activeSubTab, filteredBiplotScatterPoints, biplotType, biplotSettings, biplotBubbleExtremes, groupColors]);
+
+  const handleBiplotExport = (format: "png300" | "png600" | "svg" | "pdf") => {
+    const chart = Highcharts.charts.find(c => c && (((c as any).renderTo === biplotChartRef.current) || (c.container && c.container.id === biplotChartRef.current?.id))) as any;
+    if (!chart) {
+      showToast("Could not find the biplot chart to export", "error");
+      return;
+    }
+
+    if (format === "svg") {
+      const svgString = chart.getSVG();
+      const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `groundwater_biplot_${biplotType}.svg`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast("Vector SVG exported successfully", "success");
+    } else if (format === "pdf") {
+      const svgString = chart.getSVG();
+      const printWindow = window.open("", "_blank");
+      if (printWindow) {
+        printWindow.document.write(`
+          <html>
+            <head>
+              <title>Groundwater Bi-Plot Publication Export</title>
+              <style>
+                body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: white; }
+                svg { width: 100%; height: auto; max-width: 1000px; }
+              </style>
+            </head>
+            <body>
+              ${svgString}
+              <script>
+                window.onload = function() {
+                  window.print();
+                  setTimeout(function() { window.close(); }, 500);
+                };
+              </script>
+            </body>
+          </html>
+        `);
+        printWindow.document.close();
+        showToast("PDF Print dialog triggered", "success");
+      }
+    } else {
+      const dpi = format === "png600" ? 600 : 300;
+      const scale = dpi === 600 ? 6 : 3;
+      const svgString = chart.getSVG();
+      const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+      const blobURL = URL.createObjectURL(svgBlob);
+      
+      const image = new Image();
+      image.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = chart.chartWidth * scale;
+        canvas.height = chart.chartHeight * scale;
+        const context = canvas.getContext("2d");
+        if (context) {
+          context.fillStyle = biplotSettings.plotBgColor === "transparent" ? "#ffffff" : biplotSettings.plotBgColor;
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          
+          const pngURL = canvas.toDataURL("image/png");
+          const downloadLink = document.createElement("a");
+          downloadLink.href = pngURL;
+          downloadLink.download = `groundwater_biplot_${biplotType}_${dpi}dpi.png`;
+          document.body.appendChild(downloadLink);
+          downloadLink.click();
+          document.body.removeChild(downloadLink);
+          showToast(`PNG (${dpi} DPI) exported successfully`, "success");
+        }
+        URL.revokeObjectURL(blobURL);
+      };
+      image.onerror = (err) => {
+        console.error("Image loading failed:", err);
+        showToast("Failed to render high-res PNG", "error");
+        URL.revokeObjectURL(blobURL);
+      };
+      image.src = blobURL;
+    }
+  };
+
+  const handleCorrChartExport = (format: "png300" | "png600" | "svg" | "pdf") => {
+    const chart = Highcharts.charts.find(c => c && (((c as any).renderTo === corrChartRef.current) || (c.container && c.container.id === corrChartRef.current?.id))) as any;
+    if (!chart) {
+      showToast("Could not find the correlation chart to export", "error");
+      return;
+    }
+    
+    const target = corrTargetParam || selectedParam;
+    const chartName = corrChartMode === "scatter" ? `correlation_regression_${target}` : `correlation_matrix_${target}`;
+
+    if (format === "svg") {
+      const svgString = chart.getSVG();
+      const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${chartName}.svg`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast("Vector SVG exported successfully", "success");
+    } else if (format === "pdf") {
+      const svgString = chart.getSVG();
+      const printWindow = window.open("", "_blank");
+      if (printWindow) {
+        printWindow.document.write(`
+          <html>
+            <head>
+              <title>Groundwater Correlation Publication Export</title>
+              <style>
+                body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: white; }
+                svg { width: 100%; height: auto; max-width: 1000px; }
+              </style>
+            </head>
+            <body>
+              ${svgString}
+              <script>
+                window.onload = function() {
+                  window.print();
+                  setTimeout(function() { window.close(); }, 500);
+                };
+              </script>
+            </body>
+          </html>
+        `);
+        printWindow.document.close();
+        showToast("PDF Print dialog triggered", "success");
+      }
+    } else {
+      const dpi = format === "png600" ? 600 : 300;
+      const scale = dpi === 600 ? 6 : 3;
+      const svgString = chart.getSVG();
+      const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+      const blobURL = URL.createObjectURL(svgBlob);
+      
+      const image = new Image();
+      image.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = chart.chartWidth * scale;
+        canvas.height = chart.chartHeight * scale;
+        const context = canvas.getContext("2d");
+        if (context) {
+          context.fillStyle = "#ffffff";
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          
+          const pngURL = canvas.toDataURL("image/png");
+          const downloadLink = document.createElement("a");
+          downloadLink.href = pngURL;
+          downloadLink.download = `${chartName}_${dpi}dpi.png`;
+          document.body.appendChild(downloadLink);
+          downloadLink.click();
+          document.body.removeChild(downloadLink);
+          showToast(`PNG (${dpi} DPI) exported successfully`, "success");
+        }
+        URL.revokeObjectURL(blobURL);
+      };
+      image.onerror = (err) => {
+        console.error("Image loading failed:", err);
+        showToast("Failed to render high-res PNG", "error");
+        URL.revokeObjectURL(blobURL);
+      };
+      image.src = blobURL;
+    }
+  };
+
+  const handleExportCorrelationExcel = () => {
+    if (filteredCorrelations.length === 0) {
+      showToast("No correlation data available to export", "error");
+      return;
+    }
+    showToast("Generating correlation report...", "success");
+    try {
+      const workbook = new ExcelJS.Workbook();
+      const ws = workbook.addWorksheet("Correlation Analysis");
+      
+      ws.columns = [
+        { header: "Parameter Code", key: "paramCode", width: 15 },
+        { header: "Parameter Name", key: "paramName", width: 30 },
+        { header: "Original Column Header", key: "originalHeader", width: 30 },
+        { header: "Pearson Correlation (r)", key: "r", width: 22 },
+        { header: "Coeff of Determination (R²)", key: "rSquared", width: 25 },
+        { header: "Sample Count (N)", key: "count", width: 18 },
+        { header: "Correlation Direction", key: "direction", width: 20 },
+        { header: "Correlation Strength", key: "strength", width: 20 }
+      ];
+      
+      const headerRow = ws.getRow(1);
+      headerRow.font = { bold: true, color: { argb: "FFFFFF" } };
+      headerRow.eachCell((cell) => {
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "1E1B4B" }
+        };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+      });
+      
+      filteredCorrelations.forEach(item => {
+        ws.addRow({
+          paramCode: item.paramCode,
+          paramName: item.paramName,
+          originalHeader: item.originalHeader,
+          r: parseFloat(item.r.toFixed(5)),
+          rSquared: parseFloat(item.rSquared.toFixed(5)),
+          count: item.count,
+          direction: item.direction.toUpperCase(),
+          strength: item.strength.toUpperCase().replace("_", " ")
+        });
+      });
+      
+      workbook.xlsx.writeBuffer().then((buffer: any) => {
+        const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        const target = corrTargetParam || selectedParam;
+        link.download = `Correlation_Analysis_${target}_${new Date().toISOString().split('T')[0]}.xlsx`;
+        link.click();
+        showToast("Correlation report downloaded successfully!", "success");
+      });
+    } catch (err) {
+      console.error(err);
+      showToast("Correlation Excel export failed", "error");
+    }
+  };
+
+  // Correlation tab chart drawing Effect
+  useEffect(() => {
+    if (!isVisible || activeSubTab !== "correlation" || !corrChartRef.current) return;
+    
+    const target = corrTargetParam || selectedParam;
+    const targetName = PARAM_CONFIG[target]?.name || target;
+    
+    if (corrChartMode === "scatter") {
+      if (!regressionDetails) {
+        Highcharts.chart(corrChartRef.current, {
+          title: { text: "No Sufficient Data for Regression Scatter Plot" },
+          subtitle: { text: "Ensure both parameters have numerical data in common rows" },
+          series: []
+        });
+        return;
+      }
+      
+      const compareCode = headerMap[corrSelectedParam || ""] || corrSelectedParam || "";
+      const compareName = PARAM_CONFIG[compareCode]?.name || corrSelectedParam;
+      
+      const { points, slope, intercept, rSquared, regressionLine, n } = regressionDetails;
+      const scatterPoints = points.map(p => ({
+        x: p.x,
+        y: p.y,
+        wellId: p.wellId,
+        block: p.block,
+        district: p.district
+      }));
+      
+      const formulaText = `y = ${slope.toFixed(4)}x ${intercept >= 0 ? "+" : "-"} ${Math.abs(intercept).toFixed(4)}`;
+      const subtitleText = `Regression Equation: ${formulaText} | R² = ${rSquared.toFixed(4)} (N = ${n})`;
+      
+      Highcharts.chart(corrChartRef.current, {
+        chart: {
+          type: "scatter",
+          backgroundColor: "rgba(255, 255, 255, 0)",
+          style: { fontFamily: "Inter, sans-serif" },
+          height: 480
+        },
+        title: {
+          text: `Bivariate Scatter & Linear Regression: ${targetName} vs ${compareName}`,
+          align: "left",
+          style: { fontSize: "14px", fontWeight: "bold", color: "#1e293b" }
+        },
+        subtitle: {
+          text: subtitleText,
+          align: "left",
+          style: { fontSize: "11px", color: "#4f46e5", fontWeight: "600" }
+        },
+        xAxis: {
+          title: {
+            text: `${targetName} (${PARAM_CONFIG[target]?.unit || "unit"})`,
+            style: { fontWeight: "bold", color: "#475569" }
+          },
+          gridLineWidth: 1,
+          gridLineDashStyle: "Dash",
+          gridLineColor: "#f1f5f9"
+        },
+        yAxis: {
+          title: {
+            text: `${compareName} (${PARAM_CONFIG[compareCode]?.unit || "unit"})`,
+            style: { fontWeight: "bold", color: "#475569" }
+          },
+          gridLineWidth: 1,
+          gridLineDashStyle: "Dash",
+          gridLineColor: "#e2e8f0"
+        },
+        legend: {
+          enabled: true,
+          itemStyle: { fontSize: "10px", color: "#334155" }
+        },
+        tooltip: {
+          useHTML: true,
+          headerFormat: `<span style="font-size: 11px; font-weight: bold; color: #4338ca">${targetName} vs ${compareName}</span><br/>`,
+          pointFormat: `<div style="padding: 6px; font-size: 11px; line-height: 1.4; min-width: 200px; color: #1e293b">
+            <div style="border-bottom: 1px solid #e2e8f0; padding-bottom: 3px; margin-bottom: 3px">
+              <b>Well ID:</b> {point.wellId}
+            </div>
+            <b>Block / Taluk:</b> {point.block}<br/>
+            <b>District:</b> {point.district}<br/>
+            <div style="margin-top: 4px; border-top: 1px dashed #cbd5e1; padding-top: 3px">
+              <b>${targetName}:</b> {point.x:.3f}<br/>
+              <b>${compareName}:</b> {point.y:.3f}
+            </div>
+          </div>`
+        },
+        series: [
+          {
+            name: "Observed Samples",
+            type: "scatter",
+            data: scatterPoints,
+            color: "#4f46e5",
+            marker: {
+              radius: 5,
+              symbol: "circle",
+              fillColor: "rgba(79, 70, 229, 0.6)",
+              lineWidth: 1,
+              lineColor: "#ffffff"
+            }
+          },
+          {
+            name: `Linear Fit (${formulaText})`,
+            type: "line",
+            data: regressionLine,
+            color: "#ef4444",
+            lineWidth: 2.5,
+            dashStyle: "Solid",
+            marker: { enabled: false },
+            enableMouseTracking: false
+          }
+        ]
+      });
+    } else {
+      const categories = filteredCorrelations.map(c => c.paramName);
+      const rValues = filteredCorrelations.map(c => c.r);
+      const colors = filteredCorrelations.map(c => c.r >= 0 ? "rgba(16, 185, 129, 0.85)" : "rgba(239, 68, 68, 0.85)");
+      
+      const chartData = rValues.map((val, idx) => ({
+        y: val,
+        color: colors[idx],
+        paramCode: filteredCorrelations[idx].paramCode,
+        rText: val.toFixed(3),
+        strengthText: filteredCorrelations[idx].strength.toUpperCase().replace("_", " ")
+      }));
+      
+      Highcharts.chart(corrChartRef.current, {
+        chart: {
+          type: "bar",
+          backgroundColor: "rgba(255, 255, 255, 0)",
+          style: { fontFamily: "Inter, sans-serif" },
+          height: Math.max(320, categories.length * 30 + 100)
+        },
+        title: {
+          text: `Pearson Correlation Matrix: ${targetName} vs All Parameters`,
+          align: "left",
+          style: { fontSize: "14px", fontWeight: "bold", color: "#1e293b" }
+        },
+        subtitle: {
+          text: `Comparing the correlation strength (r coefficient ranging from -1 to +1)`,
+          align: "left",
+          style: { fontSize: "11px", color: "#64748b" }
+        },
+        xAxis: {
+          categories: categories,
+          title: { text: null },
+          labels: {
+            style: { fontSize: "10px", fontWeight: "600", color: "#334155" }
+          }
+        },
+        yAxis: {
+          title: {
+            text: "Pearson r",
+            style: { fontWeight: "bold", color: "#475569" }
+          },
+          min: -1,
+          max: 1,
+          gridLineWidth: 1,
+          gridLineDashStyle: "Dash",
+          gridLineColor: "#cbd5e1"
+        },
+        legend: { enabled: false },
+        tooltip: {
+          useHTML: true,
+          pointFormat: `<div style="padding: 6px; font-size: 11px; line-height: 1.4; color: #1e293b">
+            <b>Parameter:</b> {point.category}<br/>
+            <b>Pearson r:</b> <b>{point.y:.3f}</b><br/>
+            <b>Strength:</b> {point.strengthText}
+          </div>`
+        },
+        plotOptions: {
+          bar: {
+            dataLabels: {
+              enabled: true,
+              format: "{y:.3f}",
+              style: { fontSize: "9px", fontWeight: "bold" }
+            }
+          }
+        },
+        series: [
+          {
+            name: "Correlation Coeff.",
+            type: "bar",
+            data: chartData
+          }
+        ]
+      });
+    }
+  }, [isVisible, activeSubTab, corrChartMode, regressionDetails, filteredCorrelations, corrTargetParam, corrSelectedParam, selectedParam, headerMap]);
+
+  const handleExportBiplotExcel = () => {
+    if (filteredBiplotScatterPoints.length === 0) {
+      showToast("No biplot data available to export", "error");
+      return;
+    }
+
+    try {
+      const workbook = new ExcelJS.Workbook();
+      const ws = workbook.addWorksheet("Bi-Plot Chemical Data");
+
+      let xColHeader = "";
+      let yColHeader = "";
+      if (biplotType === "na-cl") {
+        xColHeader = "Chloride (Cl- meq/L)";
+        yColHeader = "Sodium (Na+ meq/L)";
+      } else if (biplotType === "ca-so4") {
+        xColHeader = "Sulfate (SO4-- meq/L)";
+        yColHeader = "Calcium (Ca++ meq/L)";
+      } else if (biplotType === "ec-nasratio") {
+        xColHeader = "Electrical Conductivity (EC uS/cm)";
+        yColHeader = "Na/Cl meq ratio";
+      } else if (biplotType === "cams-hco3so4") {
+        xColHeader = "HCO3 + SO4 (meq/L)";
+        yColHeader = "Ca + Mg (meq/L)";
+      }
+
+      ws.columns = [
+        { header: "Sample/Well ID", key: "wellID", width: 18 },
+        { header: "Location / Habitation", key: "siteName", width: 25 },
+        { header: "State", key: "state", width: 15 },
+        { header: "District", key: "district", width: 18 },
+        { header: "Block / Tehsil", key: "block", width: 18 },
+        { header: "Season", key: "season", width: 15 },
+        { header: "Principal Aquifer", key: "aquifer", width: 20 },
+        { header: xColHeader, key: "x", width: 25 },
+        { header: yColHeader, key: "y", width: 25 },
+        { header: "Raw X Parameter Value", key: "rawX", width: 35 },
+        { header: "Raw Y Parameter Value", key: "rawY", width: 35 }
+      ];
+
+      filteredBiplotScatterPoints.forEach(p => {
+        ws.addRow({
+          wellID: p.wellID,
+          siteName: p.siteName,
+          state: p.state,
+          district: p.district,
+          block: p.block,
+          season: p.season,
+          aquifer: p.aquifer,
+          x: p.x,
+          y: p.y,
+          rawX: p.rawXValText,
+          rawY: p.rawYValText
+        });
+      });
+
+      // Style header row
+      const headerRow = ws.getRow(1);
+      headerRow.font = { name: "Arial", size: 11, bold: true, color: { argb: "FFFFFF" } };
+      headerRow.eachCell(cell => {
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "1e1b4b" } // Deep Indigo
+        };
+        cell.alignment = { vertical: "middle", horizontal: "center" };
+      });
+
+      workbook.xlsx.writeBuffer().then(buffer => {
+        const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const fn = `Water_Chemistry_BiPlot_${biplotType.toUpperCase()}_${new Date().toISOString().slice(0,10)}.xlsx`;
+        a.download = fn;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        showToast("Bi-Plot Excel workbook exported successfully", "success");
+      });
+    } catch (e) {
+      console.error("Excel export failed:", e);
+      showToast("Excel export failed", "error");
+    }
+  };
 
 
   // ==========================================
@@ -2885,83 +4406,25 @@ export default function AdvancedAnalysisView({
           </div>
 
 
-          {/* SECTION 3: SUB NAVIGATION TABS BAR */}
-          <div className="flex items-center justify-start border-b border-slate-250 gap-2 pb-px select-none">
-            <button
-              onClick={() => setActiveSubTab("frequency")}
-              className={`pb-4 px-6 text-xs uppercase tracking-widest font-black transition-all flex items-center gap-2 border-b-2 relative ${
-                activeSubTab === "frequency" 
-                  ? "border-indigo-650 text-indigo-900" 
-                  : "border-transparent text-slate-600 hover:text-indigo-950 hover:border-slate-300"
-              }`}
-            >
-              <BarChart3 className="w-4 h-4" /> Frequency Distribution
-            </button>
-            <button
-              onClick={() => setActiveSubTab("depth")}
-              className={`pb-4 px-6 text-xs uppercase tracking-widest font-black transition-all flex items-center gap-2 border-b-2 relative ${
-                activeSubTab === "depth" 
-                  ? "border-indigo-650 text-indigo-900" 
-                  : "border-transparent text-slate-600 hover:text-indigo-950 hover:border-slate-300"
-              }`}
-              disabled={!depthColumn}
-              title={!depthColumn ? "Match a Depth column first in the configuration workspace to activate this subtab" : ""}
-            >
-              <TrendingDown className="w-4 h-4" /> Depth to Concentration Chart
-              {!depthColumn && (
-                <span className="text-[8px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold uppercase tracking-normal">Disabled</span>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveSubTab("aquifer")}
-              className={`pb-4 px-6 text-xs uppercase tracking-widest font-black transition-all flex items-center gap-2 border-b-2 relative ${
-                activeSubTab === "aquifer" 
-                  ? "border-indigo-650 text-indigo-900" 
-                  : "border-transparent text-slate-600 hover:text-indigo-950 hover:border-slate-300"
-              }`}
-            >
-              <Table2 className="w-4 h-4" /> Principal Aquifer Table
-            </button>
-            <button
-              onClick={() => setActiveSubTab("aquiferTapped")}
-              className={`pb-4 px-6 text-xs uppercase tracking-widest font-black transition-all flex items-center gap-2 border-b-2 relative ${
-                activeSubTab === "aquiferTapped" 
-                  ? "border-indigo-650 text-indigo-900" 
-                  : "border-transparent text-slate-600 hover:text-indigo-950 hover:border-slate-300"
-              }`}
-            >
-              <GitMerge className="w-4 h-4" /> Aquifer Tapped Table
-            </button>
-            <button
-              onClick={() => setActiveSubTab("stageExtraction")}
-              className={`pb-4 px-6 text-xs uppercase tracking-widest font-black transition-all flex items-center gap-2 border-b-2 relative ${
-                activeSubTab === "stageExtraction" 
-                  ? "border-indigo-650 text-indigo-900" 
-                  : "border-transparent text-slate-600 hover:text-indigo-950 hover:border-slate-300"
-              }`}
-            >
-              <Activity className="w-4 h-4" /> Stage of Extraction Table
-            </button>
-            <button
-              onClick={() => setActiveSubTab("source")}
-              className={`pb-4 px-6 text-xs uppercase tracking-widest font-black transition-all flex items-center gap-2 border-b-2 relative ${
-                activeSubTab === "source" 
-                  ? "border-indigo-650 text-indigo-900" 
-                  : "border-transparent text-slate-600 hover:text-indigo-950 hover:border-slate-300"
-              }`}
-            >
-              <Database className="w-4 h-4" /> Source Table
-            </button>
-            <button
-              onClick={() => setActiveSubTab("comparison")}
-              className={`pb-4 px-6 text-xs uppercase tracking-widest font-black transition-all flex items-center gap-2 border-b-2 relative ${
-                activeSubTab === "comparison" 
-                  ? "border-indigo-650 text-indigo-900" 
-                  : "border-transparent text-slate-600 hover:text-indigo-950 hover:border-slate-300"
-              }`}
-            >
-              <ArrowRightLeft className="w-4 h-4" /> Seasonal & YoY Comparison
-            </button>
+          {/* SECTION 3: ANALYSIS SELECTION DROPDOWN */}
+          <div className="flex items-center justify-start border-b border-slate-250 pb-4 select-none">
+            <div className="flex items-center gap-3 bg-slate-50 p-2 rounded-xl border border-slate-200 shadow-sm w-full max-w-lg">
+              <span className="text-xs font-black text-slate-500 uppercase tracking-widest whitespace-nowrap pl-2">Analysis View:</span>
+              <select
+                value={activeSubTab}
+                onChange={(e) => setActiveSubTab(e.target.value as any)}
+                className="w-full bg-white border border-slate-300 text-slate-800 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block p-2 font-bold cursor-pointer"
+              >
+                <option value="frequency">📊 Frequency Distribution</option>
+                <option value="depth" disabled={!depthColumn}>📉 Depth to Concentration Chart {!depthColumn ? "(Disabled: Map Depth Col)" : ""}</option>
+                <option value="aquifer">🗄️ Principal Aquifer Table</option>
+                <option value="aquiferTapped">🔀 Aquifer Tapped Table</option>
+                <option value="stageExtraction">📈 Stage of Extraction Table</option>
+                <option value="source">🛢️ Source Table</option>
+                <option value="biplots">🔄 Bi-Plots</option>
+                <option value="correlation">🧬 Correlation Analysis</option>
+              </select>
+            </div>
           </div>
 
 
@@ -3082,7 +4545,7 @@ export default function AdvancedAnalysisView({
                       />
                       <button
                         onClick={handleAddThreshold}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-750 text-white hover:bg-indigo-850"
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-orange-500 text-white hover:bg-orange-600"
                       >
                         <PlusCircle className="w-3.5 h-3.5" /> Add Limit
                       </button>
@@ -3332,7 +4795,7 @@ export default function AdvancedAnalysisView({
                     />
                     <button
                       onClick={handleAddThreshold}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-750 text-white hover:bg-indigo-850"
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-orange-500 text-white hover:bg-orange-600"
                     >
                       <PlusCircle className="w-3.5 h-3.5" /> Add Limit
                     </button>
@@ -3638,7 +5101,7 @@ export default function AdvancedAnalysisView({
                     />
                     <button
                       onClick={handleAddThreshold}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-750 text-white hover:bg-indigo-850"
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-orange-500 text-white hover:bg-orange-600"
                     >
                       <PlusCircle className="w-3.5 h-3.5" /> Add Limit
                     </button>
@@ -3950,7 +5413,7 @@ export default function AdvancedAnalysisView({
                     />
                     <button
                       onClick={handleAddThreshold}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-750 text-white hover:bg-indigo-850"
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-orange-500 text-white hover:bg-orange-600"
                     >
                       <PlusCircle className="w-3.5 h-3.5" /> Add Limit
                     </button>
@@ -4262,7 +5725,7 @@ export default function AdvancedAnalysisView({
                     />
                     <button
                       onClick={handleAddThreshold}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-750 text-white hover:bg-indigo-850"
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-orange-500 text-white hover:bg-orange-600"
                     >
                       <PlusCircle className="w-3.5 h-3.5" /> Add Limit
                     </button>
@@ -4985,6 +6448,681 @@ export default function AdvancedAnalysisView({
                     )}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+
+          {/* SUBTAB CONTENT 8: BI-PLOTS */}
+          {activeSubTab === "biplots" && (
+            <div className="space-y-6">
+              {/* TOP: SELECTOR BENTO GRID */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {[
+                  {
+                    id: "na-cl",
+                    title: "Na⁺ vs Cl⁻ Milliequivalent",
+                    sub: "Halite Dissolution & Weathering",
+                    formula: "Na⁺ / 22.99  vs  Cl⁻ / 35.45"
+                  },
+                  {
+                    id: "ca-so4",
+                    title: "Ca²⁺ vs SO₄²⁻ Milliequivalent",
+                    sub: "Gypsum Dissolution & Sourcing",
+                    formula: "Ca²⁺ / 20.04  vs  SO₄²⁻ / 48.03"
+                  },
+                  {
+                    id: "ec-nasratio",
+                    title: "EC vs Na⁺/Cl⁻ Ratio",
+                    sub: "Salinity Sourcing & Evaporation",
+                    formula: "EC  vs  (Na⁺ / Cl⁻) meq ratio"
+                  },
+                  {
+                    id: "cams-hco3so4",
+                    title: "Ca²⁺+Mg²⁺ vs HCO₃⁻+SO₄²⁻",
+                    sub: "Carbonate Weathering Controls",
+                    formula: "(Ca²⁺+Mg²⁺)  vs  (HCO₃⁻+CO₃²⁻+SO₄²⁻)"
+                  }
+                ].map(item => {
+                  const isActive = biplotType === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => setBiplotType(item.id as any)}
+                      className={`text-left p-5 rounded-2xl border-2 transition-all shadow-sm flex flex-col justify-between h-32 cursor-pointer relative overflow-hidden group ${
+                        isActive
+                          ? "bg-gradient-to-br from-indigo-50/80 to-slate-50 border-indigo-600 shadow-md ring-1 ring-indigo-300"
+                          : "bg-white border-slate-200 hover:border-indigo-300 hover:shadow"
+                      }`}
+                    >
+                      <div className="space-y-1 z-10">
+                        <span className={`text-[10px] font-black uppercase tracking-widest ${isActive ? "text-indigo-600" : "text-slate-400"}`}>
+                          Bi-Plot Option
+                        </span>
+                        <h4 className="text-xs font-black text-slate-800 uppercase tracking-tight">{item.title}</h4>
+                        <p className="text-[10px] font-medium text-slate-500">{item.sub}</p>
+                      </div>
+                      <div className="font-mono text-[9px] bg-slate-100 px-2 py-1 rounded text-slate-600 font-bold z-10 self-start">
+                        {item.formula}
+                      </div>
+                      <div className="absolute right-2 bottom-2 opacity-5 group-hover:opacity-10 transition-all z-0">
+                        <ArrowRightLeft className="w-16 h-16 text-indigo-950" />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* MAIN BODY: CHART & SIDEBAR */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* CHART PANEL */}
+                <div className="lg:col-span-2 glossy-panel rounded-3xl p-6 bg-white border border-slate-250 shadow-md flex flex-col justify-between">
+                  {biplotScatterPoints.length > 0 ? (
+                    <div ref={biplotChartRef} className="w-full" style={{ minHeight: "520px" }} />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center p-16 text-center space-y-4 min-h-[520px]">
+                      <div className="p-4 rounded-full bg-amber-50 border border-amber-200 text-amber-500">
+                        <Info className="w-8 h-8 animate-pulse" />
+                      </div>
+                      <div className="space-y-1 max-w-md">
+                        <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">No Plottable Bi-Plot Samples Found</h4>
+                        <p className="text-[10px] text-slate-500 font-bold uppercase leading-relaxed">
+                          Your dataset is missing standard chemical columns or they could not be mapped automatically.
+                          Please use the column overrides panel in the sidebar to map your custom headers manually!
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="border-t border-slate-100 pt-4 mt-4 flex flex-col sm:flex-row sm:items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider gap-4">
+                    <span>Double click on any legend group to isolate that group. Drag on the chart to zoom into specific sample clusters.</span>
+                    <button
+                      onClick={handleExportBiplotExcel}
+                      className="bg-indigo-650 hover:bg-indigo-850 text-white font-black px-4 py-2.5 rounded-xl flex items-center gap-1.5 shadow transition-all cursor-pointer whitespace-nowrap self-end sm:self-auto"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Export Data (Excel)
+                    </button>
+                  </div>
+                </div>
+
+                {/* SIDEBAR PANEL */}
+                <div className="space-y-6">
+                  {/* INSIGHTS & CONFIG PANEL */}
+                  <div className="glossy-panel rounded-3xl p-5 bg-white border border-slate-250 shadow-md space-y-5">
+                    <div>
+                      <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                        <Info className="w-4 h-4 text-indigo-600" /> Chemistry Insights & Stats
+                      </h3>
+                      <p className="text-[9px] font-bold text-slate-400 uppercase mt-0.5">
+                        Scientific assessment of aquifer processes
+                      </p>
+                    </div>
+
+                    {/* COLOR BY SELECTOR */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                        Group Color-Coding By:
+                      </label>
+                      <select
+                        value={biplotColorBy}
+                        onChange={(e) => setBiplotColorBy(e.target.value as any)}
+                        className="w-full text-xs p-2.5 rounded-xl bg-slate-50 border border-slate-200 font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-sm"
+                      >
+                        <option value="district">📍 District Wise</option>
+                        <option value="block">🏢 Block / Tehsil Wise</option>
+                        <option value="season">🍂 Season Wise</option>
+                        <option value="aquifer">💧 Principal Aquifer Type</option>
+                      </select>
+                    </div>
+
+                    {/* LOCATION / SITE LEVEL FILTER */}
+                    <div className="space-y-1.5 border-t border-slate-100 pt-4">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center justify-between">
+                        <span>Location Level Filter:</span>
+                        {biplotLocationFilter && (
+                          <button
+                            onClick={() => setBiplotLocationFilter("")}
+                            className="text-[9px] text-rose-600 hover:text-rose-800 font-black uppercase tracking-normal"
+                          >
+                            Clear Filter
+                          </button>
+                        )}
+                      </label>
+                      <select
+                        value={biplotLocationFilter}
+                        onChange={(e) => setBiplotLocationFilter(e.target.value)}
+                        disabled={biplotLocationOptions.length === 0}
+                        className="w-full text-xs p-2.5 rounded-xl bg-slate-50 border border-slate-200 font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-sm disabled:opacity-55 disabled:cursor-not-allowed"
+                      >
+                        <option value="">🗺️ All Locations ({biplotLocationOptions.length})</option>
+                        {biplotLocationOptions.map(opt => (
+                          <option key={opt.label} value={opt.label}>
+                            📍 {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* PLOTTED COUNT */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-150 text-center">
+                        <span className="text-[9px] font-bold text-slate-400 uppercase block">Plotted Samples</span>
+                        <strong className="text-lg font-black text-slate-800">{biplotStats.count}</strong>
+                      </div>
+                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-150 text-center">
+                        <span className="text-[9px] font-bold text-slate-400 uppercase block">Pearson's R</span>
+                        <strong className="text-lg font-black text-slate-800">
+                          {biplotStats.count > 1 ? biplotStats.rValue.toFixed(3) : "N/A"}
+                        </strong>
+                      </div>
+                    </div>
+
+                    {/* CORRELATION INTERPRETATION */}
+                    {biplotStats.count > 1 && (
+                      <div className="text-[9.5px] font-bold text-slate-500 uppercase px-1 leading-relaxed">
+                        Correlation: <span className="text-slate-800 font-black">
+                          {Math.abs(biplotStats.rValue) > 0.8
+                            ? "Very Strong "
+                            : Math.abs(biplotStats.rValue) > 0.6
+                            ? "Strong "
+                            : Math.abs(biplotStats.rValue) > 0.4
+                            ? "Moderate "
+                            : "Weak "}
+                          {biplotStats.rValue > 0 ? "Positive Correlation (+)" : "Negative Correlation (-)"}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* EQUILINE DISTRIBUTION STATS */}
+                    {biplotType !== "ec-nasratio" && biplotStats.count > 0 && (
+                      <div className="space-y-2 border-t border-slate-100 pt-3">
+                        <span className="text-[9.5px] font-black text-slate-500 uppercase tracking-widest block">
+                          Equiline (1:1) Sourcing Analysis:
+                        </span>
+                        
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[9px] font-black text-slate-700 uppercase">
+                            <span>
+                              {biplotType === "na-cl" && "Na⁺ > Cl⁻ (Silicate Weathering)"}
+                              {biplotType === "ca-so4" && "Ca²⁺ > SO₄²⁻ (Dolomite/Calcite)"}
+                              {biplotType === "cams-hco3so4" && "Excess Ca+Mg (Carbonate)"}
+                            </span>
+                            <span>{biplotStats.abovePct.toFixed(1)}%</span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                            <div className="bg-indigo-600 h-full rounded-full" style={{ width: `${biplotStats.abovePct}%` }} />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1 pt-1">
+                          <div className="flex justify-between text-[9px] font-black text-slate-700 uppercase">
+                            <span>
+                              {biplotType === "na-cl" && "Na⁺ ≤ Cl⁻ (Halite / Marine)"}
+                              {biplotType === "ca-so4" && "Ca²⁺ ≤ SO₄²⁻ (Sulfate reduction)"}
+                              {biplotType === "cams-hco3so4" && "Deficit Ca+Mg (Ion Exchange)"}
+                            </span>
+                            <span>{biplotStats.belowPct.toFixed(1)}%</span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                            <div className="bg-amber-500 h-full rounded-full" style={{ width: `${biplotStats.belowPct}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* INTERPRETATION EXPLANATION BOX */}
+                    <div className="bg-indigo-50/30 border border-indigo-100 p-3 rounded-2xl text-[9.5px] font-medium text-indigo-950 leading-relaxed">
+                      {biplotType === "na-cl" && (
+                        <p>
+                          <strong>Hydrologic Interpretation:</strong> A 1:1 Na⁺:Cl⁻ relationship suggests halite dissolution as the primary source.
+                          Samples above the line indicate silicate weathering or ion exchange. Samples below the line point to reverse ion exchange or anthropogenic/marine chloride inputs.
+                        </p>
+                      )}
+                      {biplotType === "ca-so4" && (
+                        <p>
+                          <strong>Hydrologic Interpretation:</strong> Gypsum dissolution results in a 1:1 stoichiometric ratio of Ca²⁺ to SO₄²⁻.
+                          An excess of calcium suggests calcite/dolomite dissolution or silicate weathering. An excess of sulfate points to industrial sources or sulfate fertilizer infiltration.
+                        </p>
+                      )}
+                      {biplotType === "ec-nasratio" && (
+                        <p>
+                          <strong>Hydrologic Interpretation:</strong> Plots the ionic Na/Cl ratio against total dissolved solids (via EC).
+                          A constant Na/Cl ratio across varying salinity indicates halite dissolution controls, while dropping ratios as salinity increases suggest marine infiltration or reverse ion exchange.
+                        </p>
+                      )}
+                      {biplotType === "cams-hco3so4" && (
+                        <p>
+                          <strong>Hydrologic Interpretation:</strong> Plots the sum of alkaline earths against major acidic components.
+                          Samples on the 1:1 equiline indicate calcite, dolomite, and gypsum weathering. Samples above suggest silicate weathering or reverse ion exchange, while samples below indicate sodium-bicarbonate controls.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* COLLAPSIBLE COLUMN OVERRIDES */}
+                  <div className="glossy-panel rounded-3xl p-5 bg-white border border-slate-250 shadow-md space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                          <Settings2 className="w-4 h-4 text-emerald-600" /> Column Mapping Overrides
+                        </h3>
+                        <p className="text-[9px] font-bold text-slate-400 uppercase mt-0.5">
+                          Correct auto-detection errors manually
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 text-[9.5px]">
+                      <div className="space-y-1">
+                        <label className="font-black text-slate-500 uppercase block">Sodium (Na⁺)</label>
+                        <select
+                          value={colNaOverride}
+                          onChange={(e) => setColNaOverride(e.target.value)}
+                          className="w-full text-xs p-2 rounded-xl bg-slate-50 border border-slate-200 font-bold"
+                        >
+                          <option value="">Auto-Detect</option>
+                          {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-black text-slate-500 uppercase block">Chloride (Cl⁻)</label>
+                        <select
+                          value={colClOverride}
+                          onChange={(e) => setColClOverride(e.target.value)}
+                          className="w-full text-xs p-2 rounded-xl bg-slate-50 border border-slate-200 font-bold"
+                        >
+                          <option value="">Auto-Detect</option>
+                          {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-black text-slate-500 uppercase block">Calcium (Ca²⁺)</label>
+                        <select
+                          value={colCaOverride}
+                          onChange={(e) => setColCaOverride(e.target.value)}
+                          className="w-full text-xs p-2 rounded-xl bg-slate-50 border border-slate-200 font-bold"
+                        >
+                          <option value="">Auto-Detect</option>
+                          {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-black text-slate-500 uppercase block">Sulfate (SO₄²⁻)</label>
+                        <select
+                          value={colSO4Override}
+                          onChange={(e) => setColSO4Override(e.target.value)}
+                          className="w-full text-xs p-2 rounded-xl bg-slate-50 border border-slate-200 font-bold"
+                        >
+                          <option value="">Auto-Detect</option>
+                          {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-black text-slate-500 uppercase block">Magnesium (Mg²⁺)</label>
+                        <select
+                          value={colMgOverride}
+                          onChange={(e) => setColMgOverride(e.target.value)}
+                          className="w-full text-xs p-2 rounded-xl bg-slate-50 border border-slate-200 font-bold"
+                        >
+                          <option value="">Auto-Detect</option>
+                          {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-black text-slate-500 uppercase block">Bicarbonate (HCO₃⁻)</label>
+                        <select
+                          value={colHCO3Override}
+                          onChange={(e) => setColHCO3Override(e.target.value)}
+                          className="w-full text-xs p-2 rounded-xl bg-slate-50 border border-slate-200 font-bold"
+                        >
+                          <option value="">Auto-Detect</option>
+                          {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-black text-slate-500 uppercase block">Carbonate (CO₃²⁻)</label>
+                        <select
+                          value={colCO3Override}
+                          onChange={(e) => setColCO3Override(e.target.value)}
+                          className="w-full text-xs p-2 rounded-xl bg-slate-50 border border-slate-200 font-bold"
+                        >
+                          <option value="">Auto-Detect (Optional)</option>
+                          {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-black text-slate-500 uppercase block">Conductivity (EC)</label>
+                        <select
+                          value={colECOverride}
+                          onChange={(e) => setColECOverride(e.target.value)}
+                          className="w-full text-xs p-2 rounded-xl bg-slate-50 border border-slate-200 font-bold"
+                        >
+                          <option value="">Auto-Detect</option>
+                          {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        setColNaOverride("");
+                        setColClOverride("");
+                        setColCaOverride("");
+                        setColSO4Override("");
+                        setColMgOverride("");
+                        setColHCO3Override("");
+                        setColCO3Override("");
+                        setColECOverride("");
+                        showToast("Column mappings reset to auto-detect", "success");
+                      }}
+                      className="w-full text-center text-[9px] font-black uppercase text-slate-500 hover:text-slate-800 flex items-center justify-center gap-1 cursor-pointer pt-1"
+                    >
+                      <RefreshCw className="w-3 h-3" /> Reset all column overrides
+                    </button>
+                  </div>
+
+                  {/* GRAPH PUBLICATION & CUSTOMIZATION SETTINGS */}
+                  <div className="glossy-panel rounded-3xl p-5 bg-indigo-50/10 border border-indigo-100 shadow-md space-y-4">
+                    <div>
+                      <h3 className="text-xs font-black text-indigo-950 uppercase tracking-widest flex items-center gap-2">
+                        <SlidersHorizontal className="w-4 h-4 text-indigo-600" /> Publication Graph Settings
+                      </h3>
+                      <p className="text-[9px] font-bold text-indigo-600/80 uppercase mt-0.5">
+                        Design professional scientific graphics
+                      </p>
+                    </div>
+
+                    <GraphSettingsPanel
+                      settings={biplotSettings}
+                      onChange={setBiplotSettings}
+                      availableBubbleParams={bpAvailableBubbleParams}
+                      categories={biplotCategories}
+                      onExport={handleBiplotExport}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* SUBTAB CONTENT 9: CORRELATION ANALYSIS */}
+          {activeSubTab === "correlation" && (
+            <div className="space-y-6">
+              {/* TOP CONTROL GRID */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
+                <div className="md:col-span-12 glossy-panel bg-white border border-slate-150 p-6 rounded-3xl shadow-sm">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-100 pb-4 mb-4">
+                    <div>
+                      <h3 className="text-sm font-black text-indigo-950 uppercase tracking-wider flex items-center gap-2">
+                        <TrendingUp className="w-5 h-5 text-indigo-650" /> Bivariate Correlation & Statistical Co-dependency
+                      </h3>
+                      <p className="text-[10px] font-bold text-indigo-600 uppercase">
+                        Quantify linear dependency, coefficient of determination (R²), and OLS linear fits
+                      </p>
+                    </div>
+
+                    {/* ACTIONS */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={handleExportCorrelationExcel}
+                        className="px-3.5 py-2 bg-indigo-950 text-white hover:bg-indigo-900 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-md shadow-indigo-950/15 cursor-pointer"
+                      >
+                        <Download className="w-4 h-4" /> Export Correlation Excel
+                      </button>
+                      <button
+                        onClick={() => handleCorrChartExport("png300")}
+                        className="px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1 cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5 text-slate-500" /> PNG 300DPI
+                      </button>
+                      <button
+                        onClick={() => handleCorrChartExport("svg")}
+                        className="px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1 cursor-pointer"
+                      >
+                        <FileCode className="w-3.5 h-3.5 text-amber-500" /> SVG (Vector)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
+                    {/* TARGET PARAMETER SELECTOR */}
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">Target Parameter</label>
+                      <select
+                        value={corrTargetParam}
+                        onChange={(e) => setCorrTargetParam(e.target.value)}
+                        className="w-full text-xs p-2.5 rounded-xl bg-slate-50 border border-slate-200 font-bold text-slate-700"
+                      >
+                        {headers.params.map(p => {
+                          const standard = headerMap[p] || p;
+                          const conf = PARAM_CONFIG[standard] || VIRTUAL_PARAM_CONFIGS[standard] || { name: p };
+                          return (
+                            <option key={p} value={p}>
+                              {conf.name || p} ({standard})
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+
+                    {/* DIRECTION FILTER */}
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">Direction Filter</label>
+                      <select
+                        value={corrDirectionFilter}
+                        onChange={(e) => setCorrDirectionFilter(e.target.value as any)}
+                        className="w-full text-xs p-2.5 rounded-xl bg-slate-50 border border-slate-200 font-bold text-slate-700"
+                      >
+                        <option value="all">All Directions (Positive & Negative)</option>
+                        <option value="positive">Positive Correlation Only (r &gt; 0)</option>
+                        <option value="negative">Negative Correlation Only (r &lt; 0)</option>
+                      </select>
+                    </div>
+
+                    {/* MIN STRENGTH */}
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">Min Pearson Strength |r|</label>
+                      <select
+                        value={corrMinStrength}
+                        onChange={(e) => setCorrMinStrength(parseFloat(e.target.value))}
+                        className="w-full text-xs p-2.5 rounded-xl bg-slate-50 border border-slate-200 font-bold text-slate-700"
+                      >
+                        <option value="0.0">Show All (r &ge; 0.0)</option>
+                        <option value="0.2">Weak & Stronger (|r| &ge; 0.2)</option>
+                        <option value="0.4">Moderate & Stronger (|r| &ge; 0.4)</option>
+                        <option value="0.6">Strong & Very Strong (|r| &ge; 0.6)</option>
+                        <option value="0.8">Very Strong Only (|r| &ge; 0.8)</option>
+                      </select>
+                    </div>
+
+                    {/* VIEW MODE TABS */}
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">Visual Chart Mode</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          onClick={() => setCorrChartMode("scatter")}
+                          className={`p-2 rounded-xl text-xs font-black uppercase tracking-wider border transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                            corrChartMode === "scatter"
+                              ? "bg-indigo-950 border-indigo-950 text-white"
+                              : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                          }`}
+                        >
+                          <TrendingUp className="w-4 h-4" /> Bivariate Scatter
+                        </button>
+                        <button
+                          onClick={() => setCorrChartMode("bars")}
+                          className={`p-2 rounded-xl text-xs font-black uppercase tracking-wider border transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                            corrChartMode === "bars"
+                              ? "bg-indigo-950 border-indigo-950 text-white"
+                              : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                          }`}
+                        >
+                          <BarChart3 className="w-4 h-4" /> Pearson Matrix Bar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* MAIN BODY LAYOUT */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                {/* CHART CONTAINER: LEFT 7 COLS */}
+                <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-150 p-6 shadow-sm space-y-4">
+                  <div>
+                    <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest">
+                      {corrChartMode === "scatter" ? "Ordinary Least-Squares (OLS) Regression Fit" : "Pearson r Association Matrix"}
+                    </h3>
+                    <p className="text-[9px] font-bold text-slate-450 uppercase">
+                      Interactive high-fidelity analysis computed across active administrative regions
+                    </p>
+                  </div>
+
+                  <div 
+                    ref={corrChartRef} 
+                    id="correlation-chart-container" 
+                    className="w-full bg-slate-50/50 rounded-2xl border border-slate-100 p-2 overflow-hidden" 
+                    style={{ minHeight: "480px" }}
+                  />
+
+                  {/* INFO LEGEND CARDS */}
+                  {corrChartMode === "scatter" && regressionDetails && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="bg-emerald-50/30 border border-emerald-100 rounded-2xl p-3.5">
+                        <span className="text-[9px] font-black text-emerald-800 uppercase tracking-wider block">Pearson r</span>
+                        <span className="text-lg font-black text-emerald-950">
+                          {(() => {
+                            const selectedItem = correlationResults.find(r => r.originalHeader === corrSelectedParam);
+                            return selectedItem ? selectedItem.r.toFixed(4) : "0.0000";
+                          })()}
+                        </span>
+                        <p className="text-[9px] text-emerald-700/80 font-bold uppercase mt-1">
+                          Direction & correlation rate
+                        </p>
+                      </div>
+
+                      <div className="bg-indigo-50/30 border border-indigo-100 rounded-2xl p-3.5">
+                        <span className="text-[9px] font-black text-indigo-800 uppercase tracking-wider block">R-Squared (R²)</span>
+                        <span className="text-lg font-black text-indigo-950">
+                          {regressionDetails.rSquared.toFixed(4)}
+                        </span>
+                        <p className="text-[9px] text-indigo-700/80 font-bold uppercase mt-1">
+                          Explained variance proportion
+                        </p>
+                      </div>
+
+                      <div className="bg-slate-50 border border-slate-150 rounded-2xl p-3.5">
+                        <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider block">Regression Line</span>
+                        <span className="text-xs font-black text-slate-800 block truncate mt-1">
+                          Y = {regressionDetails.slope.toFixed(4)}X {regressionDetails.intercept >= 0 ? "+" : "-"} {Math.abs(regressionDetails.intercept).toFixed(4)}
+                        </span>
+                        <p className="text-[9px] text-slate-450 font-bold uppercase mt-1">
+                          Ordinary Least-Squares Fit
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* MATRIX LIST/TABLE: RIGHT 5 COLS */}
+                <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-150 p-6 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest">
+                        Correlation Leaderboard
+                      </h3>
+                      <p className="text-[9px] font-bold text-slate-450 uppercase">
+                        Click a parameter to visualize its scatter plot
+                      </p>
+                    </div>
+                    <span className="text-[9px] font-black text-indigo-900 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-lg">
+                      {filteredCorrelations.length} parameters
+                    </span>
+                  </div>
+
+                  <div className="overflow-y-auto max-h-[500px] rounded-2xl border border-slate-100">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-100">
+                          <th className="p-3 text-[9px] font-black uppercase text-slate-500 tracking-wider">Parameter</th>
+                          <th className="p-3 text-[9px] font-black uppercase text-slate-500 tracking-wider text-right">Pearson r</th>
+                          <th className="p-3 text-[9px] font-black uppercase text-slate-500 tracking-wider text-right">R²</th>
+                          <th className="p-3 text-[9px] font-black uppercase text-slate-500 tracking-wider text-center">Strength</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredCorrelations.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} className="p-12 text-center text-xs font-black uppercase text-slate-400 bg-slate-50/50">
+                              No matching correlated parameters found under current filters. Try lowering the Pearson strength threshold.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredCorrelations.map(item => {
+                            const isSelected = corrSelectedParam === item.originalHeader;
+                            return (
+                              <tr
+                                key={item.originalHeader}
+                                onClick={() => {
+                                  if (corrChartMode !== "scatter") {
+                                    setCorrChartMode("scatter");
+                                  }
+                                  setCorrSelectedParam(item.originalHeader);
+                                }}
+                                className={`group cursor-pointer border-b border-slate-50 hover:bg-indigo-50/30 transition-all ${
+                                  isSelected ? "bg-indigo-50/50 font-black text-indigo-950" : "text-slate-650"
+                                }`}
+                              >
+                                <td className="p-3">
+                                  <div className="text-xs font-black">{item.paramName}</div>
+                                  <div className="text-[9px] text-slate-400 font-mono mt-0.5">{item.originalHeader}</div>
+                                </td>
+                                <td className="p-3 text-right text-xs font-mono font-bold">
+                                  <span className={item.r >= 0 ? "text-emerald-600" : "text-rose-600"}>
+                                    {item.r >= 0 ? "+" : ""}{item.r.toFixed(4)}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-right text-xs font-mono font-bold text-slate-600">
+                                  {item.rSquared.toFixed(3)}
+                                </td>
+                                <td className="p-3 text-center">
+                                  <span className={`text-[8px] px-2 py-0.5 rounded-md font-black uppercase tracking-wider ${
+                                    item.strength === "very_strong" ? "bg-rose-100 text-rose-800 border border-rose-200" :
+                                    item.strength === "strong" ? "bg-orange-100 text-orange-800 border border-orange-200" :
+                                    item.strength === "moderate" ? "bg-yellow-100 text-yellow-800 border border-yellow-200" :
+                                    item.strength === "weak" ? "bg-indigo-50 text-indigo-800 border border-indigo-150" :
+                                    "bg-slate-100 text-slate-600 border border-slate-200"
+                                  }`}>
+                                    {item.strength.replace("_", " ")}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* CO-DEPENDENCY STATISTICS SUMMARY */}
+                  <div className="p-4 bg-indigo-50/20 rounded-2xl border border-indigo-100/30 text-xs text-slate-600 leading-relaxed space-y-1.5">
+                    <span className="text-[9px] font-black uppercase text-indigo-900 bg-indigo-100/60 px-2 py-0.5 rounded-md inline-block">
+                      Pearson r Interpretation Guide
+                    </span>
+                    <ul className="list-disc list-inside space-y-1 text-[11px]">
+                      <li><b className="text-indigo-950">|r| &ge; 0.8:</b> Highly coupled chemical/physical interaction (very strong).</li>
+                      <li><b className="text-indigo-950">0.4 &le; |r| &lt; 0.8:</b> Moderate to strong chemical geological processes.</li>
+                      <li><b className="text-indigo-950">0.2 &le; |r| &lt; 0.4:</b> Weak secondary processes or substantial background variance.</li>
+                      <li><b className="text-indigo-950">|r| &lt; 0.2:</b> Negligible linear correlation.</li>
+                    </ul>
+                  </div>
+                </div>
               </div>
             </div>
           )}

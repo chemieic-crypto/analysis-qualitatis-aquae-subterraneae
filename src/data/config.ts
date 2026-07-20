@@ -39,9 +39,23 @@ export const DEFAULT_PARAM_CONFIG: ParamConfigMap = {
 // Mutable PARAM_CONFIG copy that consumes files read from directly
 export const PARAM_CONFIG: ParamConfigMap = JSON.parse(JSON.stringify(DEFAULT_PARAM_CONFIG));
 
-// Self-invoking initializer to load saved overrides from localStorage on module boot
+// Self-invoking initializer to load saved overrides and custom parameters from localStorage on module boot
 (() => {
   try {
+    const savedCustom = typeof window !== "undefined" ? window.localStorage.getItem("water_quality_custom_params") : null;
+    if (savedCustom) {
+      const customs = JSON.parse(savedCustom);
+      Object.keys(customs).forEach((key) => {
+        PARAM_CONFIG[key] = {
+          b1: customs[key].b1,
+          b2: customs[key].b2,
+          unit: customs[key].unit || "",
+          name: customs[key].name || key,
+          keywords: customs[key].keywords || [key.toLowerCase(), (customs[key].name || "").toLowerCase()]
+        };
+      });
+    }
+
     const saved = typeof window !== "undefined" ? window.localStorage.getItem("water_quality_param_limits") : null;
     if (saved) {
       const overrides = JSON.parse(saved);
@@ -57,16 +71,46 @@ export const PARAM_CONFIG: ParamConfigMap = JSON.parse(JSON.stringify(DEFAULT_PA
   }
 })();
 
+export function addCustomParam(key: string, name: string, unit: string, b1: number, b2: number) {
+  const hLower = key.toLowerCase();
+  const keywords = [hLower, name.toLowerCase()];
+  
+  PARAM_CONFIG[key] = {
+    b1,
+    b2,
+    unit,
+    name,
+    keywords
+  };
+
+  try {
+    const saved = window.localStorage.getItem("water_quality_custom_params");
+    const customs = saved ? JSON.parse(saved) : {};
+    customs[key] = { b1, b2, unit, name, keywords };
+    window.localStorage.setItem("water_quality_custom_params", JSON.stringify(customs));
+  } catch (e) {
+    console.error("Failed to save custom parameter:", e);
+  }
+}
+
 export function updateParamLimits(key: string, b1: number, b2: number) {
   if (PARAM_CONFIG[key]) {
     PARAM_CONFIG[key].b1 = b1;
     PARAM_CONFIG[key].b2 = b2;
 
     try {
-      const saved = window.localStorage.getItem("water_quality_param_limits");
-      const overrides = saved ? JSON.parse(saved) : {};
-      overrides[key] = { b1, b2 };
-      window.localStorage.setItem("water_quality_param_limits", JSON.stringify(overrides));
+      const savedCustom = window.localStorage.getItem("water_quality_custom_params");
+      const customs = savedCustom ? JSON.parse(savedCustom) : {};
+      if (customs[key]) {
+        customs[key].b1 = b1;
+        customs[key].b2 = b2;
+        window.localStorage.setItem("water_quality_custom_params", JSON.stringify(customs));
+      } else {
+        const saved = window.localStorage.getItem("water_quality_param_limits");
+        const overrides = saved ? JSON.parse(saved) : {};
+        overrides[key] = { b1, b2 };
+        window.localStorage.setItem("water_quality_param_limits", JSON.stringify(overrides));
+      }
     } catch (e) {
       console.error("Failed to save custom water quality parameter limits:", e);
     }
@@ -76,13 +120,16 @@ export function updateParamLimits(key: string, b1: number, b2: number) {
 export function resetParamLimits() {
   try {
     window.localStorage.removeItem("water_quality_param_limits");
+    window.localStorage.removeItem("water_quality_custom_params");
   } catch (e) {
     console.error("Failed to clear custom water quality parameter limits:", e);
   }
 
-  // Restore defaults
-  Object.keys(DEFAULT_PARAM_CONFIG).forEach((key) => {
-    if (PARAM_CONFIG[key]) {
+  // Restore defaults and delete custom keys
+  Object.keys(PARAM_CONFIG).forEach((key) => {
+    if (!DEFAULT_PARAM_CONFIG[key]) {
+      delete PARAM_CONFIG[key];
+    } else {
       PARAM_CONFIG[key].b1 = DEFAULT_PARAM_CONFIG[key].b1;
       PARAM_CONFIG[key].b2 = DEFAULT_PARAM_CONFIG[key].b2;
     }

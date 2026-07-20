@@ -2,12 +2,12 @@ import React, { useState, useEffect, useRef } from "react";
 import Highcharts from "highcharts";
 // @ts-ignore
 import HighchartsMore from "highcharts/highcharts-more";
-import { DataHeaders, GroupedStatRow } from "../types";
+import { DataHeaders, GroupedStatRow, ShapefileLayer } from "../types";
 import { PARAM_CONFIG } from "../data/config";
 import { getStats } from "../utils/math";
 import { buildDonutChartOptions, generateOfflineChartBase64 } from "../utils/chartHelpers";
 import { Settings2, Image, ChevronDown, Check, Circle, Maximize2, Send, X, BarChart3, SlidersHorizontal, Activity, Table, PieChart, TrendingUp } from "lucide-react";
-import GisChoroplethMap from "./GisChoroplethMap";
+
 
 const getCategoryColor = (name: string, index: number) => {
   const palette = [
@@ -89,6 +89,8 @@ interface DetailedViewProps {
   allRawData?: any[];
   selectedYear?: string;
   selectedSeason?: string;
+  layers?: ShapefileLayer[];
+  setLayers?: React.Dispatch<React.SetStateAction<ShapefileLayer[]>>;
 }
 
 export default function DetailedView({
@@ -113,6 +115,8 @@ export default function DetailedView({
   allRawData = [],
   selectedYear = "",
   selectedSeason = "",
+  layers,
+  setLayers,
 }: DetailedViewProps) {
   // Analytical filters
   const [groupScope, setGroupScope] = useState<"selected" | "national">("selected");
@@ -169,6 +173,13 @@ export default function DetailedView({
 
   // Chart Customization State
   const [chartTitle, setChartTitle] = useState("");
+  const [exceedanceChartTitle, setExceedanceChartTitle] = useState("");
+  const [exceedanceXAxisTitle, setExceedanceXAxisTitle] = useState("");
+  const [exceedanceYAxisTitle, setExceedanceYAxisTitle] = useState("");
+  const [seasonalChartTitle, setSeasonalChartTitle] = useState("");
+  const [seasonalXAxisTitle, setSeasonalXAxisTitle] = useState("");
+  const [seasonalYAxisTitle, setSeasonalYAxisTitle] = useState("");
+
   const [chartTheme, setChartTheme] = useState("theme-white");
   const [fontFamily, setFontFamily] = useState("'Plus Jakarta Sans'");
   const [fontSize, setFontSize] = useState(12);
@@ -359,11 +370,15 @@ export default function DetailedView({
       if (!validGroups.includes(gName)) return;
 
       let sName = "All Data";
-      if (headers.season) {
-        const rawS = String(row[headers.season] || "").trim();
-        if (rawS && rawS !== "Unknown") {
-          sName = rawS;
-        }
+      const rawS = headers.season ? String(row[headers.season] || "").trim() : "";
+      const rawY = headers.year ? String(row[headers.year] || "").trim() : "";
+      
+      if (rawS && rawS !== "Unknown" && rawY && rawY !== "Unknown") {
+        sName = `${rawS} ${rawY}`;
+      } else if (rawS && rawS !== "Unknown") {
+        sName = rawS;
+      } else if (rawY && rawY !== "Unknown") {
+        sName = rawY;
       }
 
       let val = NaN;
@@ -740,16 +755,16 @@ export default function DetailedView({
         backgroundColor: "transparent"
       },
       title: {
-        text: `${activeParam} Box Plot - ${season}`,
+        text: seasonalChartTitle ? `${seasonalChartTitle} - ${season}` : `${activeParam} Box Plot - ${season}`,
         style: { fontWeight: "bold", color: "#1e293b", fontSize: "14px", fontFamily: fontFamily }
       },
       xAxis: {
         categories: categories,
-        title: { text: reportingLevel === "State" ? "State" : reportingLevel === "District" ? "District" : "Block" },
+        title: { text: seasonalXAxisTitle || (reportingLevel === "State" ? "State" : reportingLevel === "District" ? "District" : "Block") },
         labels: { style: { fontWeight: "600", fontSize: "10px" } }
       },
       yAxis: {
-        title: { text: `${activeParam} (${activeConfig.unit || ""})` }
+        title: { text: seasonalYAxisTitle || `${activeParam} (${activeConfig.unit || ""})` }
       },
       series: [
         {
@@ -799,16 +814,16 @@ export default function DetailedView({
         backgroundColor: "transparent"
       },
       title: {
-        text: `${activeParam} Average Values - ${season}`,
+        text: seasonalChartTitle ? `${seasonalChartTitle} - ${season}` : `${activeParam} Average Values - ${season}`,
         style: { fontWeight: "bold", color: "#1e293b", fontSize: "14px", fontFamily: fontFamily }
       },
       xAxis: {
         categories: categories,
-        title: { text: reportingLevel === "State" ? "State" : reportingLevel === "District" ? "District" : "Block" },
+        title: { text: seasonalXAxisTitle || (reportingLevel === "State" ? "State" : reportingLevel === "District" ? "District" : "Block") },
         labels: { style: { fontWeight: "600", fontSize: "10px" } }
       },
       yAxis: {
-        title: { text: `Average ${activeParam} (${activeConfig.unit || ""})` }
+        title: { text: seasonalYAxisTitle || `Average ${activeParam} (${activeConfig.unit || ""})` }
       },
       plotOptions: {
         column: {
@@ -848,18 +863,18 @@ export default function DetailedView({
         backgroundColor: "transparent"
       },
       title: {
-        text: `${activeParam} Violin Plots (Distribution) - ${season}`,
+        text: seasonalChartTitle ? `${seasonalChartTitle} - ${season}` : `${activeParam} Violin Plots (Distribution) - ${season}`,
         style: { fontWeight: "bold", color: "#1e293b", fontSize: "14px", fontFamily: fontFamily }
       },
       xAxis: {
         categories: categories,
-        title: { text: reportingLevel === "State" ? "State" : reportingLevel === "District" ? "District" : "Block" },
+        title: { text: seasonalXAxisTitle || (reportingLevel === "State" ? "State" : reportingLevel === "District" ? "District" : "Block") },
         labels: { style: { fontWeight: "600", fontSize: "10px" } },
         min: -0.5,
         max: categories.length - 0.5
       },
       yAxis: {
-        title: { text: `${activeParam} (${activeConfig.unit || ""})` }
+        title: { text: seasonalYAxisTitle || `${activeParam} (${activeConfig.unit || ""})` }
       },
       series: violinSeries as any,
       credits: { enabled: false }
@@ -944,7 +959,7 @@ export default function DetailedView({
       ].filter((point) => point.y > 0);
     }
 
-    const titleText = `${activeParam} Compliance Donut - ${season}`;
+    const titleText = seasonalChartTitle ? `${seasonalChartTitle} - ${season}` : `${activeParam} Compliance Donut - ${season}`;
 
     const isRscOrSar = activeParam === "SAR" || activeParam === "RSC";
     const chartFontFamily = isRscOrSar ? "'Times New Roman', Times, serif" : fontFamily;
@@ -1049,6 +1064,7 @@ export default function DetailedView({
     };
 
     const p50 = getPercentile(allVals, 50);
+    const p75 = getPercentile(allVals, 75);
     const p90 = getPercentile(allVals, 90);
     const p95 = getPercentile(allVals, 95);
 
@@ -1080,7 +1096,7 @@ export default function DetailedView({
       }
     }
 
-    const titleText = `${activeParam} Cumulative Frequency (Ogive) Curve - ${season}`;
+    const titleText = seasonalChartTitle ? `${seasonalChartTitle} - ${season}` : `${activeParam} Cumulative Frequency (Ogive) Curve - ${season}`;
     const isRscOrSar = activeParam === "SAR" || activeParam === "RSC";
     const chartFontFamily = isRscOrSar ? "'Times New Roman', Times, serif" : fontFamily;
 
@@ -1106,7 +1122,7 @@ export default function DetailedView({
       },
       xAxis: {
         title: {
-          text: `${activeParam}${activeConfig.unit ? ` (${activeConfig.unit})` : ""}`,
+          text: seasonalXAxisTitle || `${activeParam}${activeConfig.unit ? ` (${activeConfig.unit})` : ""}`,
           style: fontStyle,
         },
         labels: { style: fontStyle },
@@ -1124,10 +1140,26 @@ export default function DetailedView({
               text: `Median (P50) = ${p50.toFixed(1)}`,
               verticalAlign: "top",
               align: "left",
-              rotation: 270,
-              y: 8,
-              x: 10,
-              style: { color: "#2563eb", fontWeight: "bold", fontSize: "9px", fontFamily: chartFontFamily }
+              rotation: 0,
+              y: 15,
+              x: 5,
+              style: { color: "#2563eb", fontWeight: "bold", fontSize: "10px", fontFamily: chartFontFamily, backgroundColor: "rgba(255,255,255,0.7)" }
+            }
+          },
+          {
+            color: "#8b5cf6",
+            dashStyle: "Dash",
+            width: 1.5,
+            value: p75,
+            zIndex: 4,
+            label: {
+              text: `P75 = ${p75.toFixed(1)}`,
+              verticalAlign: "top",
+              align: "left",
+              rotation: 0,
+              y: 30,
+              x: 5,
+              style: { color: "#8b5cf6", fontWeight: "bold", fontSize: "10px", fontFamily: chartFontFamily, backgroundColor: "rgba(255,255,255,0.7)" }
             }
           },
           {
@@ -1140,10 +1172,10 @@ export default function DetailedView({
               text: `P90 = ${p90.toFixed(1)}`,
               verticalAlign: "top",
               align: "left",
-              rotation: 270,
-              y: 8,
-              x: 10,
-              style: { color: "#f97316", fontWeight: "bold", fontSize: "9px", fontFamily: chartFontFamily }
+              rotation: 0,
+              y: 45,
+              x: 5,
+              style: { color: "#f97316", fontWeight: "bold", fontSize: "10px", fontFamily: chartFontFamily, backgroundColor: "rgba(255,255,255,0.7)" }
             }
           },
           {
@@ -1156,17 +1188,17 @@ export default function DetailedView({
               text: `P95 = ${p95.toFixed(1)}`,
               verticalAlign: "top",
               align: "left",
-              rotation: 270,
-              y: 8,
-              x: 10,
-              style: { color: "#dc2626", fontWeight: "bold", fontSize: "9px", fontFamily: chartFontFamily }
+              rotation: 0,
+              y: 60,
+              x: 5,
+              style: { color: "#dc2626", fontWeight: "bold", fontSize: "10px", fontFamily: chartFontFamily, backgroundColor: "rgba(255,255,255,0.7)" }
             }
           }
         ]
       },
       yAxis: {
         title: {
-          text: "Cumulative Percentage (%)",
+          text: seasonalYAxisTitle || "Cumulative Percentage (%)",
           style: fontStyle,
         },
         labels: {
@@ -1252,7 +1284,7 @@ export default function DetailedView({
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [statTab, seasonalGroupedData, activeParam, fontFamily, reportingLevel, colorAcc, colorPerm, colorFail]);
+  }, [statTab, seasonalGroupedData, activeParam, fontFamily, reportingLevel, colorAcc, colorPerm, colorFail, seasonalChartTitle, seasonalXAxisTitle, seasonalYAxisTitle]);
 
   const drawExceedancePlot = (containerId: string) => {
     const { categories, series } = exceedanceChartData;
@@ -1270,7 +1302,7 @@ export default function DetailedView({
         backgroundColor: "transparent"
       },
       title: {
-        text: `Percentage of Samples Above Permissible Limit - ${activeParam}`,
+        text: exceedanceChartTitle || `Percentage of Samples Above Permissible Limit - ${activeParam}`,
         style: { fontWeight: "black", color: "#1e293b", fontSize: "14px", fontFamily: fontFamily }
       },
       subtitle: {
@@ -1279,11 +1311,11 @@ export default function DetailedView({
       },
       xAxis: {
         categories: categories,
-        title: { text: groupScope === "national" ? "State Name" : reportingLevel === "State" ? "State" : reportingLevel === "District" ? "District" : "Block" },
+        title: { text: exceedanceXAxisTitle || (groupScope === "national" ? "State Name" : reportingLevel === "State" ? "State" : reportingLevel === "District" ? "District" : "Block") },
         labels: { style: { fontWeight: "600", fontSize: "10px" } }
       },
       yAxis: {
-        title: { text: "Percentage Exceeding Limit (%)" },
+        title: { text: exceedanceYAxisTitle || "Percentage Exceeding Limit (%)" },
         max: 100,
         labels: { format: "{value}%" }
       },
@@ -1315,7 +1347,7 @@ export default function DetailedView({
       drawExceedancePlot("exceedance-rate-chart");
     }, 100);
     return () => clearTimeout(timer);
-  }, [exceedanceChartData, fontFamily, groupScope, exceedanceFilter]);
+  }, [exceedanceChartData, fontFamily, groupScope, exceedanceFilter, exceedanceChartTitle, exceedanceXAxisTitle, exceedanceYAxisTitle]);
 
   // Process data whenever inputs change
   useEffect(() => {
@@ -2318,18 +2350,106 @@ export default function DetailedView({
           </h3>
 
           <div className="space-y-5">
-            {/* Custom chart title */}
-            <div>
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
-                Custom Chart Title
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. EC compliance..."
-                value={chartTitle}
-                onChange={(e) => setChartTitle(e.target.value)}
-                className="w-full glossy-input rounded-xl p-2.5 text-sm font-bold text-slate-700 placeholder:text-slate-400"
-              />
+            {/* Custom chart titles */}
+            <div className="bg-slate-50/50 p-4 rounded-2xl border border-slate-100/80 space-y-3.5 shadow-inner">
+              <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest block drop-shadow-sm">
+                Advanced Titles & Axis Labels
+              </span>
+
+              {/* Compliance Donut Title */}
+              <div>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
+                  Main Compliance Donut Title
+                </label>
+                <input
+                  type="text"
+                  placeholder="Compliance Donut title..."
+                  value={chartTitle}
+                  onChange={(e) => setChartTitle(e.target.value)}
+                  className="w-full glossy-input rounded-xl p-2.5 text-xs font-bold text-slate-700 bg-white placeholder:text-slate-400"
+                />
+              </div>
+
+              {/* Exceedance Chart Titles */}
+              <div className="space-y-2 p-3 bg-white rounded-xl border border-slate-100">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">
+                  Exceedance Chart
+                </span>
+                <div>
+                  <label className="text-[9px] font-medium text-slate-500 block mb-0.5">Custom Title</label>
+                  <input
+                    type="text"
+                    placeholder="Exceedance rate chart..."
+                    value={exceedanceChartTitle}
+                    onChange={(e) => setExceedanceChartTitle(e.target.value)}
+                    className="w-full text-xs p-2 rounded-lg bg-white border border-slate-200 font-bold"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[9px] font-medium text-slate-500 block mb-0.5">X-Axis Title</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. State Name"
+                      value={exceedanceXAxisTitle}
+                      onChange={(e) => setExceedanceXAxisTitle(e.target.value)}
+                      className="w-full text-xs p-2 rounded-lg bg-white border border-slate-200 font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-medium text-slate-500 block mb-0.5">Y-Axis Title</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Percentage (%)"
+                      value={exceedanceYAxisTitle}
+                      onChange={(e) => setExceedanceYAxisTitle(e.target.value)}
+                      className="w-full text-xs p-2 rounded-lg bg-white border border-slate-200 font-bold"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Seasonal Chart Titles */}
+              <div className="space-y-2 p-3 bg-white rounded-xl border border-slate-100">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">
+                  Seasonal Distributions
+                </span>
+                <div>
+                  <label className="text-[9px] font-medium text-slate-500 block mb-0.5">Custom Title Prefix</label>
+                  <input
+                    type="text"
+                    placeholder="Seasonal chart prefix..."
+                    value={seasonalChartTitle}
+                    onChange={(e) => setSeasonalChartTitle(e.target.value)}
+                    className="w-full text-xs p-2 rounded-lg bg-white border border-slate-200 font-bold"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[9px] font-medium text-slate-500 block mb-0.5">X-Axis Title</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Regions"
+                      value={seasonalXAxisTitle}
+                      onChange={(e) => setSeasonalXAxisTitle(e.target.value)}
+                      className="w-full text-xs p-2 rounded-lg bg-white border border-slate-200 font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-medium text-slate-500 block mb-0.5">Y-Axis Title</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Values"
+                      value={seasonalYAxisTitle}
+                      onChange={(e) => setSeasonalYAxisTitle(e.target.value)}
+                      className="w-full text-xs p-2 rounded-lg bg-white border border-slate-200 font-bold"
+                    />
+                  </div>
+                </div>
+              </div>
+
+
+
             </div>
 
             {/* Theme */}
@@ -2742,7 +2862,7 @@ export default function DetailedView({
                     {groupScope === "national"
                       ? "all of India"
                       : multiSelectMode
-                      ? `${(reportingLevel === "State" ? selectedStatesList : selectedDistrictsList).slice(0, 3).join(", ") || "Selected Locations"}`
+                      ? `${(reportingLevel === "State" ? selectedStatesList : selectedDistrictsList).slice(0, 15).join(", ") || "Selected Locations"}`
                       : selectedState || "Selected State"}
                   </span>{" "}
                   grouped by <span className="text-indigo-600">{reportingLevel}</span>
@@ -2762,7 +2882,7 @@ export default function DetailedView({
                       Comparative Multi-Selection Filter Mode
                     </h4>
                     <p className="text-[10px] text-slate-500 font-bold">
-                      Compare up to three states/districts side-by-side in all seasonal distributions.
+                      Compare up to 15 states/districts side-by-side in all seasonal distributions.
                     </p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
@@ -2794,7 +2914,7 @@ export default function DetailedView({
                     {/* State Selector */}
                     <div className="space-y-2">
                       <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest block">
-                        Select States (Max 3)
+                        Select States (Max 15)
                       </span>
                       <div className="relative">
                         <input
@@ -2815,7 +2935,7 @@ export default function DetailedView({
                                   if (isSel) {
                                     setSelectedStatesList(prev => prev.filter(item => item !== s));
                                   } else {
-                                    if (selectedStatesList.length < 3) {
+                                    if (selectedStatesList.length < 15) {
                                       setSelectedStatesList(prev => [...prev, s]);
                                     }
                                   }
@@ -2839,7 +2959,7 @@ export default function DetailedView({
                     {reportingLevel !== "State" && (
                       <div className="space-y-2">
                         <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest block">
-                          Select Districts (Max 3)
+                          Select Districts (Max 15)
                         </span>
                         <div className="relative">
                           <input
@@ -2860,7 +2980,7 @@ export default function DetailedView({
                                     if (isSel) {
                                       setSelectedDistrictsList(prev => prev.filter(item => item !== d));
                                     } else {
-                                      if (selectedDistrictsList.length < 3) {
+                                      if (selectedDistrictsList.length < 15) {
                                         setSelectedDistrictsList(prev => [...prev, d]);
                                       }
                                     }
@@ -2935,20 +3055,7 @@ export default function DetailedView({
         </div>
       )}
 
-      {/* Percentage Above Permissible Limit Section - Replaced by GIS Choropleth Map */}
-      {rawData.length > 0 && (
-        <GisChoroplethMap
-          rawData={rawData}
-          headers={headers}
-          headerMap={headerMap}
-          activeParam={activeParam}
-          activeConfig={activeConfig}
-          reportingLevel={reportingLevel}
-          selectedState={selectedState}
-          selectedDistrict={selectedDistrict}
-          sendToBulletin={setSharedBulletinMaps ? sendMapToBulletin : undefined}
-        />
-      )}
+
 
       {/* Table Section Header */}
       {rawData.length > 0 && (
@@ -2980,7 +3087,7 @@ export default function DetailedView({
 
       {/* Primary detail table mapping columns */}
       <div className="glossy-panel rounded-3xl overflow-hidden shadow-md">
-        <div className="overflow-x-auto custom-scrollbar">
+        <div className="overflow-x-auto overflow-y-auto max-h-[550px] custom-scrollbar">
           <table className="w-full text-left text-xs border-collapse">
             {uniquePeriods.length > 1 ? (
               <>
