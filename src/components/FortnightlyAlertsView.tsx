@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import shp from "shpjs";
 import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
+import { downloadExcelJSWorkbook } from "../utils/excelFormatter";
 import { DataHeaders } from "../types";
 import {
   FileText,
@@ -556,8 +558,15 @@ const MapContainer: React.FC<{ data: any[]; limits: any; geoJsonData: any }> = (
     const L = (window as any).L;
     if (!L) return;
 
+    const container = document.getElementById('fortnightly-leaflet-map');
+    if (!container) return;
+
     if (!mapRef.current) {
-      mapRef.current = L.map('fortnightly-leaflet-map', { preferCanvas: true }).setView([20.5937, 78.9629], 5);
+      if ((container as any)._leaflet_id) {
+        delete (container as any)._leaflet_id;
+      }
+      container.innerHTML = "";
+      mapRef.current = L.map(container, { preferCanvas: true }).setView([20.5937, 78.9629], 5);
       
       const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors'
@@ -1051,14 +1060,14 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
     e.target.value = "";
   };
 
-  const downloadTemplate = () => {
-    const ws = XLSX.utils.aoa_to_sheet([COLUMNS]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Water Quality Data");
-    XLSX.writeFile(wb, "Water_Quality_Template.xlsx");
+  const downloadTemplate = async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Water Quality Data");
+    ws.addRow(COLUMNS);
+    await downloadExcelJSWorkbook(wb, "Water_Quality_Template.xlsx");
   };
 
-  const exportSummary = () => {
+  const exportSummary = async () => {
     if (activeSubTab === 'state') {
       if (!summaryData || summaryData.length === 0) return;
       const exportData = summaryData.map(row => ({
@@ -1071,10 +1080,14 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
         "Marginal Parameters": row.marginalList.join(', '),
         "Heavy Metals Detected": row.hasHeavyMetals ? "Yes" : "No"
       }));
-      const ws = XLSX.utils.json_to_sheet(exportData);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "State Summary");
-      XLSX.writeFile(wb, "State_Quality_Summary.xlsx");
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet("State Summary");
+      if (exportData.length > 0) {
+        const headers = Object.keys(exportData[0]);
+        ws.addRow(headers);
+        exportData.forEach(row => ws.addRow(headers.map(h => row[h])));
+      }
+      await downloadExcelJSWorkbook(wb, "State_Quality_Summary.xlsx");
     } else if (activeSubTab === 'district') {
       if (!districtSummaryData || districtSummaryData.length === 0) return;
       const exportData = districtSummaryData.map(row => ({
@@ -1088,10 +1101,14 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
         "Marginal Parameters": row.marginalList.join(', '),
         "Heavy Metals Detected": row.hasHeavyMetals ? "Yes" : "No"
       }));
-      const ws = XLSX.utils.json_to_sheet(exportData);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "District Summary");
-      XLSX.writeFile(wb, "District_Quality_Summary.xlsx");
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet("District Summary");
+      if (exportData.length > 0) {
+        const headers = Object.keys(exportData[0]);
+        ws.addRow(headers);
+        exportData.forEach(row => ws.addRow(headers.map(h => row[h])));
+      }
+      await downloadExcelJSWorkbook(wb, "District_Quality_Summary.xlsx");
     }
   };
 

@@ -11,6 +11,7 @@ import {
   ProcessedSample
 } from "../utils/usslMath";
 import { PARAM_CONFIG } from "../data/config";
+import { downloadExcelJSWorkbook } from "../utils/excelFormatter";
 import { PiperDiagram } from "./PiperDiagram";
 import { UsslDiagram } from "./UsslDiagram";
 import { GibbsPlot } from "./GibbsDiagrams";
@@ -814,14 +815,13 @@ export default function UsslPiperAnalysisView({
     const initZoom = pointsToRender.length > 0 ? 8 : 5;
 
     // Create the Leaflet map instance cleanly
-    if (mapRef.current) {
-      if ((mapRef.current as any)._leaflet_id) {
-        delete (mapRef.current as any)._leaflet_id;
-      }
-      mapRef.current.innerHTML = "";
+    if (!mapRef.current) return;
+    if ((mapRef.current as any)._leaflet_id) {
+      delete (mapRef.current as any)._leaflet_id;
     }
+    mapRef.current.innerHTML = "";
 
-    const map = L.map(mapRef.current!, {
+    const map = L.map(mapRef.current, {
       zoomControl: true,
       attributionControl: true
     }).setView([avgLat, avgLng], initZoom);
@@ -1577,14 +1577,13 @@ export default function UsslPiperAnalysisView({
     }
 
     // Create the Leaflet map instance cleanly
-    if (mapRef.current) {
-      if ((mapRef.current as any)._leaflet_id) {
-        delete (mapRef.current as any)._leaflet_id;
-      }
-      mapRef.current.innerHTML = "";
+    if (!mapRef.current) return;
+    if ((mapRef.current as any)._leaflet_id) {
+      delete (mapRef.current as any)._leaflet_id;
     }
+    mapRef.current.innerHTML = "";
 
-    const map = L.map(mapRef.current!, {
+    const map = L.map(mapRef.current, {
       zoomControl: true,
       attributionControl: true
     }).setView(initCenter, initZoom);
@@ -2752,52 +2751,7 @@ export default function UsslPiperAnalysisView({
       distFaciesWs.addRow(generateTotalRow(sortedDistrict, stats.facies, "district"));
     }
 
-    workbook.worksheets.forEach((sheet) => {
-      sheet.columns.forEach((column) => {
-        let maxLength = 0;
-        column.eachCell!({ includeEmpty: true }, (cell) => {
-          const columnLength = cell.value ? cell.value.toString().length : 10;
-          if (columnLength > maxLength) {
-            maxLength = columnLength;
-          }
-        });
-        column.width = Math.min(maxLength + 3, 60);
-      });
-
-      sheet.eachRow((row, rowNumber) => {
-        const firstCellVal = row.getCell(1).value;
-        const isTotalRow = firstCellVal === "GRAND TOTAL";
-
-        row.eachCell((cell) => {
-          if (rowNumber === 1) {
-            cell.font = { name: "Times New Roman", size: 12, bold: true, color: { argb: "FFFFFFFF" } };
-            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF3b82f6" } }; // Standard compliance blue
-            cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
-          } else if (isTotalRow) {
-            cell.font = { name: "Times New Roman", size: 12, bold: true };
-            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
-            cell.alignment = { vertical: "middle", wrapText: true };
-          } else {
-            cell.font = { name: "Times New Roman", size: 12 };
-            cell.alignment = { vertical: "middle", wrapText: true };
-          }
-
-          cell.border = {
-            top: { style: "thin" },
-            left: { style: "thin" },
-            bottom: { style: "thin" },
-            right: { style: "thin" }
-          };
-        });
-      });
-    });
-
-    const buf = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `WQ_USSL_Piper_Report.xlsx`;
-    link.click();
+    await downloadExcelJSWorkbook(workbook, `WQ_USSL_Piper_Report.xlsx`);
     showToast("Styled Excel Report written successfully!", "success");
   };
 

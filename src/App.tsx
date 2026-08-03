@@ -23,6 +23,7 @@ import AdvancedAnalysisView from "./components/AdvancedAnalysisView";
 import CalculatoriusView from "./components/CalculatoriusView";
 import GisChoroplethMap from "./components/GisChoroplethMap";
 import { generateOfflineChartBase64 } from "./utils/chartHelpers";
+import { isStateAll, isDistrictAll, norm } from "./utils/shapefileFilter";
 
 import {
   Database,
@@ -258,6 +259,7 @@ export default function App() {
 
   // Mapping Modal state overlay
   const [mappingModalOpen, setMappingModalOpen] = useState(false);
+  const [tempRawData, setTempRawData] = useState<any[]>([]);
   const [tempHeaders, setTempHeaders] = useState<DataHeaders>({ params: [] });
   const [tempHeaderMap, setTempHeaderMap] = useState<Record<string, string>>({});
 
@@ -279,15 +281,21 @@ export default function App() {
   // Memoized filtered data to use consistently across exports and pre-generation
   const filteredData = useMemo(() => {
     let filtered = rawData;
-    if (selectedState) {
-      filtered = filtered.filter(
-        (d) => String(d[headers.state || ""] || "").trim() === selectedState
-      );
+    if (selectedState && !isStateAll(selectedState)) {
+      const selStateNorm = norm(selectedState);
+      filtered = filtered.filter((d) => {
+        const val = String(d[headers.state || ""] || d["State"] || d["state"] || "").trim();
+        const vNorm = norm(val);
+        return vNorm && (vNorm === selStateNorm || vNorm.includes(selStateNorm) || selStateNorm.includes(vNorm));
+      });
     }
-    if (selectedDistrict) {
-      filtered = filtered.filter(
-        (d) => String(d[headers.district || ""] || "").trim() === selectedDistrict
-      );
+    if (selectedDistrict && !isDistrictAll(selectedDistrict)) {
+      const selDistNorm = norm(selectedDistrict);
+      filtered = filtered.filter((d) => {
+        const val = String(d[headers.district || ""] || d["District"] || d["district"] || "").trim();
+        const vNorm = norm(val);
+        return vNorm && (vNorm === selDistNorm || vNorm.includes(selDistNorm) || selDistNorm.includes(vNorm));
+      });
     }
     return [...filtered];
   }, [rawData, selectedState, selectedDistrict, headers.state, headers.district, limitsVersion]);
@@ -295,31 +303,45 @@ export default function App() {
   // Filtered by State, District, and selected Year (without Season, for comparisons / monsoon impact)
   const yearFilteredData = useMemo(() => {
     let filtered = rawData;
-    if (selectedState) {
-      filtered = filtered.filter(
-        (d) => String(d[headers.state || ""] || "").trim() === selectedState
-      );
+    if (selectedState && !isStateAll(selectedState)) {
+      const selStateNorm = norm(selectedState);
+      filtered = filtered.filter((d) => {
+        const val = String(d[headers.state || ""] || d["State"] || d["state"] || "").trim();
+        const vNorm = norm(val);
+        return vNorm && (vNorm === selStateNorm || vNorm.includes(selStateNorm) || selStateNorm.includes(vNorm));
+      });
     }
-    if (selectedDistrict) {
-      filtered = filtered.filter(
-        (d) => String(d[headers.district || ""] || "").trim() === selectedDistrict
-      );
+    if (selectedDistrict && !isDistrictAll(selectedDistrict)) {
+      const selDistNorm = norm(selectedDistrict);
+      filtered = filtered.filter((d) => {
+        const val = String(d[headers.district || ""] || d["District"] || d["district"] || "").trim();
+        const vNorm = norm(val);
+        return vNorm && (vNorm === selDistNorm || vNorm.includes(selDistNorm) || selDistNorm.includes(vNorm));
+      });
     }
-    if (selectedYear) {
-      filtered = filtered.filter(
-        (d) => String(d[headers.year || ""] || "").trim() === selectedYear
-      );
+    if (selectedYear && selectedYear.toLowerCase() !== "all" && selectedYear.toLowerCase() !== "select year") {
+      filtered = filtered.filter((d) => {
+        const yr = String(d[headers.year || ""] || d["Year"] || d["year"] || "").trim();
+        return yr && yr.includes(selectedYear);
+      });
     }
-    return [...filtered];
+    return filtered.length > 0 ? [...filtered] : [...rawData];
   }, [rawData, selectedState, selectedDistrict, selectedYear, headers.state, headers.district, headers.year, limitsVersion]);
 
   // Filtered by State, District, selected Year, AND selected Season
   const yearSeasonFilteredData = useMemo(() => {
     let filtered = yearFilteredData;
-    if (selectedSeason) {
-      filtered = filtered.filter(
-        (d) => String(d[headers.season || ""] || "").trim() === selectedSeason
-      );
+    if (selectedSeason && selectedSeason.toLowerCase() !== "all" && selectedSeason.toLowerCase() !== "select season") {
+      const seasonLow = selectedSeason.toLowerCase();
+      const seasonFiltered = filtered.filter((d) => {
+        const rowSeason = String(d[headers.season || ""] || d["Season"] || d["season"] || "").toLowerCase();
+        if (seasonLow.includes("pre")) return rowSeason.includes("pre") || rowSeason.includes("before") || rowSeason.includes("may");
+        if (seasonLow.includes("post")) return rowSeason.includes("post") || rowSeason.includes("after") || rowSeason.includes("nov");
+        return rowSeason.trim() === seasonLow.trim();
+      });
+      if (seasonFiltered.length > 0) {
+        filtered = seasonFiltered;
+      }
     }
     return [...filtered];
   }, [yearFilteredData, selectedSeason, headers.season, limitsVersion]);
@@ -351,6 +373,8 @@ export default function App() {
     const knownKeys = Object.values(guessed).filter((h) => typeof h === "string") as string[];
     const map: Record<string, string> = {};
 
+    const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
     rawHeaders.forEach((header) => {
       if (!header || typeof header !== "string") return;
       if (knownKeys.includes(header)) return;
@@ -359,18 +383,21 @@ export default function App() {
       if (staticKeywords.some((sw) => hLower.includes(sw))) return;
 
       const matchedKey = Object.keys(PARAM_CONFIG).find((key) => {
-        const config = PARAM_CONFIG[key]!;
+        const config = PARAM_CONFIG[key];
+        if (!config) return false;
         if (hLower === key.toLowerCase()) return true;
         if (
           config.keywords &&
           config.keywords.some((kw) => {
-            if (hLower === kw) return true;
-            if (hLower.includes(`(${kw})`)) return true;
+            if (!kw) return false;
+            const kwLower = kw.toLowerCase().trim();
+            if (hLower === kwLower) return true;
+            if (hLower.includes(`(${kwLower})`)) return true;
             try {
-              const regex = new RegExp(`\\b${kw}\\b`, "i");
+              const regex = new RegExp(`\\b${escapeRegExp(kwLower)}\\b`, "i");
               return regex.test(hLower);
             } catch {
-              return hLower.includes(kw);
+              return hLower.includes(kwLower);
             }
           })
         ) {
@@ -464,7 +491,7 @@ export default function App() {
           return;
         }
 
-        setRawData(parsedData);
+        setTempRawData(parsedData);
         setUploadedHeaders(uniqueHeaders);
 
         const { guessed, map } = guessHeaders(uniqueHeaders);
@@ -482,9 +509,19 @@ export default function App() {
   };
 
   const handleSaveMapping = (finalHeaders: DataHeaders, finalHeaderMap: Record<string, string>) => {
+    if (tempRawData && tempRawData.length > 0) {
+      setRawData(tempRawData);
+      setTempRawData([]);
+    }
     setHeaders(finalHeaders);
     setHeaderMap(finalHeaderMap);
     setMappingModalOpen(false);
+
+    // Reset filters to ensure new dataset is displayed without stale filter conflicts
+    setSelectedState("");
+    setSelectedDistrict("");
+    setSelectedYear("");
+    setSelectedSeason("");
 
     // Initial dropdown values
     if (finalHeaders.params.length > 0) {
@@ -498,6 +535,7 @@ export default function App() {
   };
 
   const handleCancelMapping = () => {
+    setTempRawData([]);
     setMappingModalOpen(false);
     showToast("Mapping canceled. Data was not imported.", "error");
   };
@@ -717,11 +755,11 @@ export default function App() {
         cell.s = {
           font: {
             name: "Times New Roman",
-            sz: 11,
+            sz: 12,
             bold: isHeader,
             color: { rgb: isHeader ? "FFFFFF" : "000000" },
           },
-          fill: isHeader ? { fgColor: { rgb: "3b82f6" } } : undefined, // Cool primary blue headers
+          fill: isHeader ? { fgColor: { rgb: "333333" } } : undefined, // Light black header row
           border: {
             top: { style: "thin", color: { rgb: "cbd5e1" } },
             bottom: { style: "thin", color: { rgb: "cbd5e1" } },
@@ -786,29 +824,48 @@ export default function App() {
 
     if (!groupKey) return null;
 
-    const groupMap: Record<string, { state: string; district: string; samples: any[] }> = {};
+    const groupMap: Record<string, { state: string; district: string; block: string; name: string; samples: any[] }> = {};
     let globalAcc = 0, globalPerm = 0, globalFail = 0;
     const globalVals: number[] = [];
 
     filteredDataset.forEach((row) => {
+      const rowSt = String(row[headers.state || ""] || "").trim();
+      const rowDt = String(row[headers.district || ""] || "").trim();
+      const rowBlk = String(row[headers.block || ""] || "").trim();
       const loc = String(row[groupKey] || "Unknown").trim();
-      if (!groupMap[loc]) {
-        groupMap[loc] = {
-          state: String(row[headers.state || ""] || ""),
-          district: String(row[headers.district || ""] || ""),
+
+      let compositeKey = loc;
+      if (level === "District") {
+        compositeKey = rowSt ? `${rowSt}___${loc}` : loc;
+      } else if (level === "Block") {
+        compositeKey = `${rowSt}___${rowDt}___${loc}`;
+      }
+
+      if (!groupMap[compositeKey]) {
+        groupMap[compositeKey] = {
+          state: rowSt,
+          district: rowDt,
+          block: rowBlk,
+          name: loc,
           samples: [],
         };
       }
-      groupMap[loc].samples.push(row);
+      groupMap[compositeKey].samples.push(row);
 
       const val = parseFloat(row[paramName]);
       if (!isNaN(val)) globalVals.push(val);
     });
 
     const bodyRows: any[][] = [];
-    const sortedEntries = Object.entries(groupMap).sort((a, b) => a[0].localeCompare(b[0]));
+    const sortedEntries = Object.entries(groupMap).sort((a, b) => {
+      const stComp = (a[1].state || "").localeCompare(b[1].state || "");
+      if (stComp !== 0) return stComp;
+      const dtComp = (a[1].district || "").localeCompare(b[1].district || "");
+      if (dtComp !== 0) return dtComp;
+      return a[1].name.localeCompare(b[1].name);
+    });
 
-    sortedEntries.forEach(([name, data], idx) => {
+    sortedEntries.forEach(([keyKey, data], idx) => {
       const vals = data.samples.map((s) => parseFloat(s[paramName])).filter((v) => !isNaN(v));
       const total = vals.length;
       if (total === 0) return;
@@ -848,9 +905,9 @@ export default function App() {
       const mathStats = getStats(vals);
       const rowItem: any[] = [idx + 1];
 
-      if (level === "State") rowItem.push(data.state);
-      else if (level === "District") rowItem.push(data.state, data.district);
-      else rowItem.push(data.state, data.district, name);
+      if (level === "State") rowItem.push(data.state || data.name);
+      else if (level === "District") rowItem.push(data.state || "-", data.district || data.name);
+      else rowItem.push(data.state || "-", data.district || "-", data.block || data.name);
 
       rowItem.push(total);
       rowItem.push(nAcc, { v: (nAcc / total) * 100, t: "n", z: "0.00" });
@@ -982,8 +1039,9 @@ export default function App() {
 
           if (!isExpInd && !isExpComb) return;
 
-          const key = headerMap[headerCol]!;
-          const config = PARAM_CONFIG[key]!;
+          const key = headerMap[headerCol];
+          if (!key || !PARAM_CONFIG[key]) return;
+          const config = PARAM_CONFIG[key];
           const val = parseFloat(row[headerCol]);
 
           if (isNaN(val)) return;
@@ -1373,77 +1431,89 @@ export default function App() {
         </div>
 
         {/* Desktop Tab Controls Bar */}
-        <div className="hidden md:flex flex-wrap gap-x-4 gap-y-4 mb-8 select-none p-4 bg-slate-50/75 rounded-3xl border border-slate-200 shadow-inner">
+        <div className="hidden md:flex flex-wrap gap-x-3.5 gap-y-3 mb-8 select-none p-4 bg-white rounded-3xl border border-slate-200 shadow-sm">
           {[
             { id: "single", label: "Detailed Analysis", icon: LayoutDashboard, baseColor: "blue" },
             { id: "advancedAnalysis", label: "Advanced Data Analysis", icon: Activity, baseColor: "indigo" },
             { id: "ranking", label: "Ranking Stats", icon: TrendingUp, baseColor: "violet" },
-            { id: "ussl", label: "USSL & Piper Analysis", icon: Compass, baseColor: "indigo" },
-            { id: "combination", label: "Combination Analysis", icon: Layers, baseColor: "indigo" },
-            { id: "pca", label: "PCA Analysis", icon: Cpu, baseColor: "violet" },
+            { id: "ussl", label: "USSL & Piper Analysis", icon: Compass, baseColor: "cyan" },
+            { id: "combination", label: "Combination Analysis", icon: Layers, baseColor: "teal" },
+            { id: "pca", label: "PCA Analysis", icon: Cpu, baseColor: "purple" },
             { id: "hydrochemistry", label: "Hydrochemistry Sheet", icon: TableProperties, baseColor: "emerald" },
-            { id: "calculatorius", label: "Calculatorius", icon: Calculator, baseColor: "indigo" },
+            { id: "calculatorius", label: "Calculatorius", icon: Calculator, baseColor: "blue" },
             { id: "gis", label: "Geospatial Map Module", icon: Globe, baseColor: "teal" },
             { id: "choropleth", label: "GIS Choropleth Map", icon: Map, baseColor: "indigo" },
             { id: "master", label: "Master Summary", icon: Table2, baseColor: "amber" },
             { id: "monsoon", label: "Dynamic Monsoon Impact", icon: Database, baseColor: "emerald" },
             { id: "bar", label: "Comparative Exceedance (Bar)", icon: BarChart3, baseColor: "orange" },
             { id: "aisummary", label: "District Pamphlet", icon: LayoutTemplate, baseColor: "fuchsia" },
-            { id: "bulletin", label: "Annual Ground Water Quality Report", icon: FileText, baseColor: "red" },
-            { id: "fortnightly", label: "Fortnightly Quality Alerts", icon: AlertTriangle, baseColor: "rose" },
-            { id: "limits", label: "Limits Manager", icon: Settings, baseColor: "blue" },
+            { id: "bulletin", label: "Annual Ground Water Quality Report", icon: FileText, baseColor: "rose" },
+            { id: "fortnightly", label: "Fortnightly Quality Alerts", icon: AlertTriangle, baseColor: "red" },
+            { id: "limits", label: "Limits Manager", icon: Settings, baseColor: "indigo" },
           ].map((tabItem) => {
             const IconComponent = tabItem.icon;
             const isActive = activeTab === tabItem.id;
             
-            const colorMap: Record<string, { activeBg: string; ring: string }> = {
+            const colorMap: Record<string, { activeBg: string; ring: string; iconColor: string }> = {
               blue: {
-                activeBg: "bg-slate-700 border-slate-700 shadow-slate-800/10",
-                ring: "ring-slate-400",
-              },
-              violet: {
-                activeBg: "bg-slate-750 border-slate-750 shadow-slate-800/10",
-                ring: "ring-slate-400",
-              },
-              teal: {
-                activeBg: "bg-teal-800 border-teal-800 shadow-teal-900/10",
-                ring: "ring-teal-400",
+                activeBg: "bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-blue-500/30 border-blue-700",
+                ring: "ring-blue-400",
+                iconColor: "text-blue-600",
               },
               indigo: {
-                activeBg: "bg-indigo-900 border-indigo-900 shadow-indigo-950/10",
+                activeBg: "bg-gradient-to-r from-indigo-600 to-indigo-700 text-white shadow-indigo-500/30 border-indigo-700",
                 ring: "ring-indigo-400",
+                iconColor: "text-indigo-600",
               },
-              amber: {
-                activeBg: "bg-amber-800 border-amber-800 shadow-amber-900/10",
-                ring: "ring-amber-400",
+              violet: {
+                activeBg: "bg-gradient-to-r from-violet-600 to-violet-700 text-white shadow-violet-500/30 border-violet-700",
+                ring: "ring-violet-400",
+                iconColor: "text-violet-600",
+              },
+              purple: {
+                activeBg: "bg-gradient-to-r from-purple-600 to-purple-700 text-white shadow-purple-500/30 border-purple-700",
+                ring: "ring-purple-400",
+                iconColor: "text-purple-600",
+              },
+              teal: {
+                activeBg: "bg-gradient-to-r from-teal-600 to-teal-700 text-white shadow-teal-500/30 border-teal-700",
+                ring: "ring-teal-400",
+                iconColor: "text-teal-600",
+              },
+              cyan: {
+                activeBg: "bg-gradient-to-r from-cyan-600 to-cyan-700 text-white shadow-cyan-500/30 border-cyan-700",
+                ring: "ring-cyan-400",
+                iconColor: "text-cyan-600",
               },
               emerald: {
-                activeBg: "bg-emerald-800 border-emerald-800 shadow-emerald-900/10",
+                activeBg: "bg-gradient-to-r from-emerald-600 to-emerald-700 text-white shadow-emerald-500/30 border-emerald-700",
                 ring: "ring-emerald-400",
+                iconColor: "text-emerald-600",
               },
-              pink: {
-                activeBg: "bg-stone-800 border-stone-800 shadow-stone-900/10",
-                ring: "ring-stone-400",
+              amber: {
+                activeBg: "bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-amber-500/30 border-amber-600",
+                ring: "ring-amber-400",
+                iconColor: "text-amber-600",
               },
               orange: {
-                activeBg: "bg-amber-900 border-amber-900 shadow-amber-950/10",
-                ring: "ring-amber-400",
+                activeBg: "bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-orange-500/30 border-orange-600",
+                ring: "ring-orange-400",
+                iconColor: "text-orange-600",
               },
               fuchsia: {
-                activeBg: "bg-slate-800 border-slate-800 shadow-slate-900/10",
-                ring: "ring-slate-400",
-              },
-              red: {
-                activeBg: "bg-rose-950 border-rose-950 shadow-rose-950/10",
-                ring: "ring-rose-400",
-              },
-              slate: {
-                activeBg: "bg-slate-800 border-slate-800 shadow-slate-900/10",
-                ring: "ring-slate-400",
+                activeBg: "bg-gradient-to-r from-fuchsia-600 to-fuchsia-700 text-white shadow-fuchsia-500/30 border-fuchsia-700",
+                ring: "ring-fuchsia-400",
+                iconColor: "text-fuchsia-600",
               },
               rose: {
-                activeBg: "bg-stone-800 border-stone-800 shadow-stone-900/10",
-                ring: "ring-stone-400",
+                activeBg: "bg-gradient-to-r from-rose-600 to-rose-700 text-white shadow-rose-500/30 border-rose-700",
+                ring: "ring-rose-400",
+                iconColor: "text-rose-600",
+              },
+              red: {
+                activeBg: "bg-gradient-to-r from-red-600 to-red-700 text-white shadow-red-500/30 border-red-700",
+                ring: "ring-red-400",
+                iconColor: "text-red-600",
               },
             };
 
@@ -1456,12 +1526,12 @@ export default function App() {
                 className={`
                   whitespace-nowrap px-4 py-2.5 rounded-2xl font-extrabold text-xs flex items-center gap-2 select-none transition-all duration-150 cursor-pointer border
                   ${isActive 
-                    ? `${style.activeBg} text-white shadow-md translate-y-[1px] ring-2 ${style.ring} ring-offset-2` 
-                    : `bg-slate-50 hover:bg-slate-100/95 text-slate-600 hover:text-slate-850 border-slate-200/80 shadow-xs hover:translate-y-[-1px] active:translate-y-[1px]`
+                    ? `${style.activeBg} shadow-md translate-y-[1px] ring-2 ${style.ring} ring-offset-2` 
+                    : `bg-white hover:bg-slate-50 text-slate-700 border-slate-200/90 shadow-xs hover:border-slate-300 hover:translate-y-[-1px] active:translate-y-[1px]`
                   }
                 `}
               >
-                <IconComponent className={`w-4 h-4 ${isActive ? "scale-110 opacity-100" : "opacity-75"}`} />
+                <IconComponent className={`w-4 h-4 transition-transform ${isActive ? "scale-110 opacity-100 text-white" : `${style.iconColor} opacity-90`}`} />
                 {tabItem.label}
               </button>
             );
@@ -1592,6 +1662,7 @@ export default function App() {
               headerMap={headerMap}
               selectedState={selectedState}
               selectedDistrict={selectedDistrict}
+              sharedLayers={sharedLayers}
             />
           )}
 
@@ -1802,6 +1873,7 @@ export default function App() {
                         }));
                       }}
                       layers={sharedLayers}
+                      setLayers={setSharedLayers}
                       choroplethClasses={choroplethClasses}
                       setChoroplethClasses={setChoroplethClasses}
                       isVisible={activeTab === "choropleth"}

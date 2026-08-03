@@ -1454,14 +1454,25 @@ export default function DetailedView({
 
     if (!groupKey) return { statsList: [], groupKeyName: reportingLevel };
 
-    const groupMap: Record<string, number[]> = {};
+    const groupMap: Record<string, { displayName: string; vals: number[] }> = {};
     filtered.forEach((row) => {
-      const gName = String(row[groupKey] || "Unknown").trim();
-      if (!gName || gName === "Unknown") return;
+      const rowSt = String(row[headers.state || ""] || "").trim();
+      const rowDt = String(row[headers.district || ""] || "").trim();
+      const locName = String(row[groupKey] || "Unknown").trim();
+      if (!locName || locName === "Unknown") return;
+
+      let key = locName;
+      let displayName = locName;
+      if (reportingLevel === "District") {
+        key = rowSt ? `${rowSt}___${locName}` : locName;
+      } else if (reportingLevel === "Block") {
+        key = `${rowSt}___${rowDt}___${locName}`;
+      }
+
       const val = getParamVal(row, activeParam);
       if (!isNaN(val)) {
-        if (!groupMap[gName]) groupMap[gName] = [];
-        groupMap[gName].push(val);
+        if (!groupMap[key]) groupMap[key] = { displayName, vals: [] };
+        groupMap[key].vals.push(val);
       }
     });
 
@@ -1473,7 +1484,7 @@ export default function DetailedView({
       accCount: number;
     }> = [];
 
-    Object.entries(groupMap).forEach(([gName, vals]) => {
+    Object.entries(groupMap).forEach(([key, { displayName, vals }]) => {
       const total = vals.length;
       let failCount = 0;
       vals.forEach((v) => {
@@ -1492,7 +1503,7 @@ export default function DetailedView({
       const accCount = total - failCount;
 
       statsList.push({
-        name: gName,
+        name: displayName,
         total,
         failCount,
         pctFail,
@@ -1821,16 +1832,27 @@ export default function DetailedView({
     let globalSarS4 = 0;
 
     filtered.forEach((row) => {
-      const gName = String(row[groupKey] || "Unknown").trim();
-      if (!groups[gName]) {
-        groups[gName] = {
-          state: String(row[headers.state || ""] || ""),
-          district: String(row[headers.district || ""] || ""),
-          block: String(row[headers.block || ""] || ""),
+      const rowSt = String(row[headers.state || ""] || "").trim();
+      const rowDt = String(row[headers.district || ""] || "").trim();
+      const rowBlk = String(row[headers.block || ""] || "").trim();
+      const locName = String(row[groupKey] || "Unknown").trim();
+
+      let gKey = locName;
+      if (reportingLevel === "District") {
+        gKey = rowSt ? `${rowSt}___${locName}` : locName;
+      } else if (reportingLevel === "Block") {
+        gKey = `${rowSt}___${rowDt}___${locName}`;
+      }
+
+      if (!groups[gKey]) {
+        groups[gKey] = {
+          state: rowSt,
+          district: rowDt,
+          block: rowBlk,
           samples: [],
         };
       }
-      groups[gName].samples.push(row);
+      groups[gKey].samples.push(row);
 
       let val = getParamVal(row, activeParam);
 
@@ -2432,7 +2454,7 @@ export default function DetailedView({
     const headerLabels = getTableHeaderLabels(activeConfigKey, activeConfig);
 
     let html = `
-      <table border="1" cellpadding="6" cellspacing="0" style="width: 100%; border-collapse: collapse; font-family: 'Times New Roman', Times, serif; font-size: 9.5pt; text-align: left; margin-bottom: 25px; border: 1.5pt solid #4f46e5;">
+      <table border="1" cellpadding="3" cellspacing="0" style="width: 100%; border-collapse: collapse; font-family: 'Times New Roman', Times, serif; font-size: 10pt; text-align: left; margin-bottom: 25px; border: 1.5pt solid #4f46e5;">
         <thead>
           <tr style="background-color: #4f46e5; color: white; text-align: center;">
             <th rowspan="2" style="border: 1px solid #c7d2fe; padding: 6px; font-weight: bold; background-color: #4f46e5; color: white;">Sl. No.</th>

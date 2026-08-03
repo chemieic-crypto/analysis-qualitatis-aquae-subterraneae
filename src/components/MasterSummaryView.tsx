@@ -3,6 +3,8 @@ import { DataHeaders } from "../types";
 import { PARAM_CONFIG } from "../data/config";
 import { TableProperties, FileSpreadsheet, Download, Maximize2, Minimize2 } from "lucide-react";
 import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
+import { downloadExcelJSWorkbook } from "../utils/excelFormatter";
 
 interface MasterSummaryViewProps {
   rawData: any[];
@@ -307,7 +309,7 @@ export default function MasterSummaryView({
   }, [rawData, headers, headerMap, selectedState, selectedDistrict, masterGeoLevel, activeParams]);
 
   // Handler to export the complete unified Master Summary Matrix table as a styled Excel Sheet
-  const handleExportMatrixExcel = () => {
+  const handleExportMatrixExcel = async () => {
     if (!rawData.length || !activeParams || activeParams.length === 0) {
       alert("No data available to export.");
       return;
@@ -455,37 +457,29 @@ export default function MasterSummaryView({
     });
     sheetData.push(grandRow);
 
-    // Create Worksheet
-    const ws = XLSX.utils.aoa_to_sheet(sheetData);
+    // Create workbook and write file using ExcelJS for standardized formatting
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Master Summary Matrix");
 
-    // Add Merges for Row 3 and Row 4
-    const merges: any[] = [];
-    
-    // Merge Title row
-    const lastColIndex = (isDistrict ? 2 : 1) + (activeParams.length * 5) - 1;
-    merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: lastColIndex } });
+    sheetData.forEach((row) => ws.addRow(row));
 
-    // Merge S.No, State, District between Row 3 & 4
-    merges.push({ s: { r: 2, c: 0 }, e: { r: 3, c: 0 } });
-    merges.push({ s: { r: 2, c: 1 }, e: { r: 3, c: 1 } });
+    // Merges
+    const lastColIndex = (isDistrict ? 3 : 2) + (activeParams.length * 5);
+    ws.mergeCells(1, 1, 1, lastColIndex);
+    ws.mergeCells(3, 1, 4, 1); // S.No
+    ws.mergeCells(3, 2, 4, 2); // State / UT
     if (isDistrict) {
-      merges.push({ s: { r: 2, c: 2 }, e: { r: 3, c: 2 } });
+      ws.mergeCells(3, 3, 4, 3); // District
     }
 
-    // Merge parameter name headers across 5 columns in Row 3
-    const startOffset = isDistrict ? 3 : 2;
+    const startOffset = isDistrict ? 4 : 3;
     activeParams.forEach((_, idx) => {
       const cStart = startOffset + idx * 5;
       const cEnd = cStart + 4;
-      merges.push({ s: { r: 2, c: cStart }, e: { r: 2, c: cEnd } });
+      ws.mergeCells(3, cStart, 3, cEnd);
     });
 
-    ws["!merges"] = merges;
-
-    // Create workbook and write file
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Master Summary Matrix");
-    XLSX.writeFile(wb, `WQ_Master_Summary_Matrix_${isDistrict ? "District" : "States_and_UTs"}_${Date.now()}.xlsx`);
+    await downloadExcelJSWorkbook(wb, `WQ_Master_Summary_Matrix_${isDistrict ? "District" : "States_and_UTs"}_${Date.now()}.xlsx`);
   };
 
   // Private helpers to truncate long names overflow cleanly

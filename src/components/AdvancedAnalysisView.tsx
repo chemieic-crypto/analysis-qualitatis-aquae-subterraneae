@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import Highcharts from "highcharts";
 import Highcharts3D from "highcharts/highcharts-3d";
 import ExcelJS from "exceljs";
+import { downloadExcelJSWorkbook } from "../utils/excelFormatter";
 import GraphSettingsPanel, { GraphSettings, DEFAULT_GRAPH_SETTINGS } from "./GraphSettingsPanel";
 
 // Initialize the 3D module
@@ -33,7 +34,8 @@ import {
   Calendar,
   TrendingUp,
   RefreshCw,
-  FileCode
+  FileCode,
+  CircleDot
 } from "lucide-react";
 import { DataHeaders } from "../types";
 import { PARAM_CONFIG } from "../data/config";
@@ -919,7 +921,7 @@ export default function AdvancedAnalysisView({
     }
   };
 
-  const handleExportComparisonExcel = () => {
+  const handleExportComparisonExcel = async () => {
     if (processedComparisonList.length === 0) {
       showToast("No comparison data available to export", "error");
       return;
@@ -1071,15 +1073,10 @@ export default function AdvancedAnalysisView({
         }
       }
 
-      workbook.xlsx.writeBuffer().then((buffer: any) => {
-        const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(blob);
-        const prefix = comparisonMode === "seasonal" ? "Seasonal_Comparison" : "Multi_Year_Comparison";
-        link.download = `${prefix}_${selectedParam}_${new Date().toISOString().split('T')[0]}.xlsx`;
-        link.click();
-        showToast("Comparative analytics report downloaded!", "success");
-      });
+      const prefix = comparisonMode === "seasonal" ? "Seasonal_Comparison" : "Multi_Year_Comparison";
+      const fileName = `${prefix}_${selectedParam}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      await downloadExcelJSWorkbook(workbook, fileName);
+      showToast("Comparative analytics report downloaded!", "success");
 
     } catch (err) {
       console.error(err);
@@ -3158,6 +3155,11 @@ export default function AdvancedAnalysisView({
           pointMarker.lineWidth = biplotSettings.markerBorderWidth;
         }
 
+        const bubbleVal = biplotSettings.use3DBubbles && biplotSettings.bubbleScaleParam && p.numericParams?.[biplotSettings.bubbleScaleParam] !== undefined
+          ? p.numericParams[biplotSettings.bubbleScaleParam]
+          : null;
+        const bubbleValText = bubbleVal !== null ? `${bubbleVal.toFixed(2)}` : "N/A";
+
         return {
           x: p.x,
           y: p.y,
@@ -3172,6 +3174,7 @@ export default function AdvancedAnalysisView({
           rawYLabel: p.rawYLabel,
           rawXValText: p.rawXValText,
           rawYValText: p.rawYValText,
+          bubbleValText,
           numericParams: p.numericParams,
           row: p.row,
           marker: pointMarker
@@ -3212,6 +3215,10 @@ export default function AdvancedAnalysisView({
       yTitle = "Calcium + Magnesium (Ca²⁺ + Mg²⁺) [meq/L]";
       chartTitle = "(Ca²⁺ + Mg²⁺) vs. (HCO₃⁻ + SO₄²⁻) Milliequivalent Bi-Plot";
       chartSub = "Assesses carbonate/silicate weathering controls (1:1 line), ion exchange, and mineral dissolution.";
+    }
+
+    if (biplotSettings.use3DBubbles && biplotSettings.bubbleScaleParam) {
+      chartSub += ` • 🫧 3D Bubble Diameter = ${biplotSettings.bubbleScaleParam} (${biplotBubbleExtremes.min.toFixed(1)} to ${biplotBubbleExtremes.max.toFixed(1)})`;
     }
 
     // Series array
@@ -3407,8 +3414,9 @@ export default function AdvancedAnalysisView({
           <b>Aquifer:</b> {point.aquifer}<br/>
           <div style="border-top: 1px solid #e2e8f0; padding-top: 3px; margin-top: 3px">
             <b>{point.rawXLabel} (X-axis):</b> <span style="font-family: monospace; color:#2563eb; font-weight: bold">{point.rawXValText}</span><br/>
-            <b>{point.rawYLabel} (Y-axis):</b> <span style="font-family: monospace; color:#dc2626; font-weight: bold">{point.rawYValText}</span>
-          </div>
+            <b>{point.rawYLabel} (Y-axis):</b> <span style="font-family: monospace; color:#dc2626; font-weight: bold">{point.rawYValText}</span>` +
+            (biplotSettings.use3DBubbles && biplotSettings.bubbleScaleParam ? `<br/><b>🫧 ${biplotSettings.bubbleScaleParam} (Bubble Size):</b> <span style="font-family: monospace; color:#7c3aed; font-weight: bold">{point.bubbleValText}</span>` : "") +
+          `</div>
         </div>`,
         backgroundColor: "#ffffff",
         borderColor: "#cbd5e1",
@@ -3596,7 +3604,7 @@ export default function AdvancedAnalysisView({
     }
   };
 
-  const handleExportCorrelationExcel = () => {
+  const handleExportCorrelationExcel = async () => {
     if (filteredCorrelations.length === 0) {
       showToast("No correlation data available to export", "error");
       return;
@@ -3641,15 +3649,10 @@ export default function AdvancedAnalysisView({
         });
       });
       
-      workbook.xlsx.writeBuffer().then((buffer: any) => {
-        const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(blob);
-        const target = corrTargetParam || selectedParam;
-        link.download = `Correlation_Analysis_${target}_${new Date().toISOString().split('T')[0]}.xlsx`;
-        link.click();
-        showToast("Correlation report downloaded successfully!", "success");
-      });
+      const target = corrTargetParam || selectedParam;
+      const fileName = `Correlation_Analysis_${target}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      await downloadExcelJSWorkbook(workbook, fileName);
+      showToast("Correlation report downloaded successfully!", "success");
     } catch (err) {
       console.error(err);
       showToast("Correlation Excel export failed", "error");
@@ -3845,7 +3848,7 @@ export default function AdvancedAnalysisView({
     }
   }, [isVisible, activeSubTab, corrChartMode, regressionDetails, filteredCorrelations, corrTargetParam, corrSelectedParam, selectedParam, headerMap]);
 
-  const handleExportBiplotExcel = () => {
+  const handleExportBiplotExcel = async () => {
     if (filteredBiplotScatterPoints.length === 0) {
       showToast("No biplot data available to export", "error");
       return;
@@ -3901,31 +3904,9 @@ export default function AdvancedAnalysisView({
         });
       });
 
-      // Style header row
-      const headerRow = ws.getRow(1);
-      headerRow.font = { name: "Arial", size: 11, bold: true, color: { argb: "FFFFFF" } };
-      headerRow.eachCell(cell => {
-        cell.fill = {
-          type: "pattern",
-          pattern: "solid",
-          fgColor: { argb: "1e1b4b" } // Deep Indigo
-        };
-        cell.alignment = { vertical: "middle", horizontal: "center" };
-      });
-
-      workbook.xlsx.writeBuffer().then(buffer => {
-        const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        const fn = `Water_Chemistry_BiPlot_${biplotType.toUpperCase()}_${new Date().toISOString().slice(0,10)}.xlsx`;
-        a.download = fn;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-        showToast("Bi-Plot Excel workbook exported successfully", "success");
-      });
+      const fn = `Water_Chemistry_BiPlot_${biplotType.toUpperCase()}_${new Date().toISOString().slice(0,10)}.xlsx`;
+      await downloadExcelJSWorkbook(workbook, fn);
+      showToast("Bi-Plot Excel workbook exported successfully", "success");
     } catch (e) {
       console.error("Excel export failed:", e);
       showToast("Excel export failed", "error");
@@ -3936,7 +3917,7 @@ export default function AdvancedAnalysisView({
   // ==========================================
   // EXCEL EXPORT HANDLER
   // ==========================================
-  const handleExportAdvancedStats = () => {
+  const handleExportAdvancedStats = async () => {
     if (aquiferStatsData.length === 0) {
       showToast("No data available to export", "error");
       return;
@@ -4167,14 +4148,9 @@ export default function AdvancedAnalysisView({
       });
 
       // Export Action
-      workbook.xlsx.writeBuffer().then((buffer: any) => {
-        const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(blob);
-        link.download = `Advanced_Analysis_${selectedParam}_${new Date().toISOString().split('T')[0]}.xlsx`;
-        link.click();
-        showToast("Advanced Quality Report downloaded successfully!", "success");
-      });
+      const fileName = `Advanced_Analysis_${selectedParam}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      await downloadExcelJSWorkbook(workbook, fileName);
+      showToast("Advanced Quality Report downloaded successfully!", "success");
 
     } catch (err) {
       console.error(err);
@@ -6709,6 +6685,138 @@ export default function AdvancedAnalysisView({
                         </p>
                       )}
                     </div>
+                  </div>
+
+                  {/* 3D BUBBLE PLOT MODE CONTROL CARD */}
+                  <div className="glossy-panel rounded-3xl p-5 bg-white border border-slate-250 shadow-md space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                          <CircleDot className="w-4 h-4 text-purple-600 animate-pulse" /> 3D Bubble Plot Mode (3rd Variable)
+                        </h3>
+                        <p className="text-[9px] font-bold text-slate-400 uppercase mt-0.5">
+                          Scale point bubble size by a 3rd parameter
+                        </p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={biplotSettings.use3DBubbles}
+                          onChange={(e) => setBiplotSettings(prev => ({ ...prev, use3DBubbles: e.target.checked }))}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                      </label>
+                    </div>
+
+                    {biplotSettings.use3DBubbles ? (
+                      <div className="space-y-4 pt-1">
+                        {/* 3RD PARAMETER SELECTOR */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center justify-between">
+                            <span>Select 3rd Variable for Bubble Diameter:</span>
+                          </label>
+                          <select
+                            value={biplotSettings.bubbleScaleParam || ""}
+                            onChange={(e) => setBiplotSettings(prev => ({ ...prev, bubbleScaleParam: e.target.value }))}
+                            className="w-full text-xs p-2.5 rounded-xl bg-purple-50/50 border border-purple-200 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500 cursor-pointer shadow-sm"
+                          >
+                            <option value="">-- Select Chemistry Column --</option>
+                            {bpAvailableBubbleParams.map(param => (
+                              <option key={param} value={param}>🧪 {param}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* QUICK PRESETS */}
+                        {bpAvailableBubbleParams.length > 0 && (
+                          <div className="space-y-1">
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Quick Presets:</span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {bpAvailableBubbleParams.slice(0, 6).map(param => {
+                                const isSel = biplotSettings.bubbleScaleParam === param;
+                                return (
+                                  <button
+                                    key={param}
+                                    onClick={() => setBiplotSettings(prev => ({ ...prev, bubbleScaleParam: param }))}
+                                    className={`text-[9.5px] font-black px-2.5 py-1 rounded-lg transition-all cursor-pointer border ${
+                                      isSel
+                                        ? "bg-purple-600 text-white border-purple-600 shadow-sm"
+                                        : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                                    }`}
+                                  >
+                                    🫧 {param}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* BUBBLE DIAMETER MIN/MAX SLIDERS */}
+                        <div className="grid grid-cols-2 gap-3 bg-slate-50/80 p-3 rounded-2xl border border-slate-150">
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[9px] font-black text-slate-500 uppercase">
+                              <span>Min Bubble</span>
+                              <span className="font-mono text-purple-700 font-bold">{biplotSettings.bubbleMinSize}px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="4"
+                              max="16"
+                              step="1"
+                              value={biplotSettings.bubbleMinSize}
+                              onChange={(e) => setBiplotSettings(prev => ({ ...prev, bubbleMinSize: parseInt(e.target.value) }))}
+                              className="w-full accent-purple-600 h-1.5 rounded-full cursor-pointer bg-slate-200"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[9px] font-black text-slate-500 uppercase">
+                              <span>Max Bubble</span>
+                              <span className="font-mono text-purple-700 font-bold">{biplotSettings.bubbleMaxSize}px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="14"
+                              max="36"
+                              step="1"
+                              value={biplotSettings.bubbleMaxSize}
+                              onChange={(e) => setBiplotSettings(prev => ({ ...prev, bubbleMaxSize: parseInt(e.target.value) }))}
+                              className="w-full accent-purple-600 h-1.5 rounded-full cursor-pointer bg-slate-200"
+                            />
+                          </div>
+                        </div>
+
+                        {/* LIVE BUBBLE SCALE LEGEND CARD */}
+                        {biplotSettings.bubbleScaleParam && (
+                          <div className="bg-gradient-to-r from-purple-50 via-slate-50 to-indigo-50 border border-purple-150 p-3 rounded-2xl space-y-2">
+                            <div className="flex items-center justify-between text-[9px] font-black text-purple-900 uppercase">
+                              <span>Bubble Diameter Legend</span>
+                              <span className="font-mono text-purple-700 font-bold">{biplotSettings.bubbleScaleParam}</span>
+                            </div>
+                            <div className="flex items-center justify-around py-2 bg-white/70 rounded-xl border border-purple-100">
+                              <div className="flex flex-col items-center space-y-1">
+                                <div className="w-3 h-3 rounded-full bg-purple-500/80 border border-purple-300 shadow-sm"></div>
+                                <span className="text-[8px] font-bold text-slate-500">Min ({biplotBubbleExtremes.min.toFixed(1)})</span>
+                              </div>
+                              <div className="flex flex-col items-center space-y-1">
+                                <div className="w-4 h-4 rounded-full bg-purple-600/80 border border-purple-300 shadow-sm"></div>
+                                <span className="text-[8px] font-bold text-slate-500">Mid</span>
+                              </div>
+                              <div className="flex flex-col items-center space-y-1">
+                                <div className="w-6 h-6 rounded-full bg-purple-700 border border-purple-300 shadow-md"></div>
+                                <span className="text-[8px] font-bold text-slate-500">Max ({biplotBubbleExtremes.max.toFixed(1)})</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="bg-slate-50 p-3 rounded-2xl border border-slate-150 text-[9.5px] text-slate-500 font-medium leading-relaxed">
+                        Toggle on to transform standard 2D scatter points into a <strong>3-variable 3D bubble plot</strong>. Each bubble diameter will scale with your chosen 3rd parameter (e.g. EC, TDS, Depth, etc.).
+                      </div>
+                    )}
                   </div>
 
                   {/* COLLAPSIBLE COLUMN OVERRIDES */}

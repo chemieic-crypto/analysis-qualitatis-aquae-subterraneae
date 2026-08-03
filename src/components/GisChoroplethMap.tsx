@@ -1,9 +1,17 @@
-import React, { useState, useMemo, useEffect, useRef } from "react";
+import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import shp from "shpjs";
 import { INDIA_BOUNDARY } from "../data/india_boundary";
-import { Plus, Minus, RotateCcw, Info, Globe, Calendar, Send, Table, Edit2, Edit3, Search, Move, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, CornerDownLeft } from "lucide-react";
+import { Plus, Minus, RotateCcw, Info, Globe, Calendar, Send, Table, Edit2, Edit3, Search, Move, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, CornerDownLeft, Palette, MapPin, Layers, AlertTriangle, Activity, Upload, Trash2, Eye, EyeOff, Settings2, FileText, Check } from "lucide-react";
 import { ShapefileLayer } from "../types";
 import { getShortName } from "../utils/stateAbbreviations";
 import { PARAM_CONFIG } from "../data/config";
+import { 
+  featureMatchesSelection, 
+  buildDistrictStateMap, 
+  isStateAll, 
+  isDistrictAll,
+  norm
+} from "../utils/shapefileFilter";
 
 interface GisChoroplethMapProps {
   rawData: any[];
@@ -18,6 +26,7 @@ interface GisChoroplethMapProps {
   sendToBulletin?: (title: string, svgOrImageBase64: string) => void;
   customMapTitle?: string;
   layers?: ShapefileLayer[];
+  setLayers?: React.Dispatch<React.SetStateAction<ShapefileLayer[]>>;
   choroplethClasses?: { limit: number; color: string; label: string }[];
   setChoroplethClasses?: React.Dispatch<React.SetStateAction<{ limit: number; color: string; label: string }[]>>;
   isVisible?: boolean;
@@ -96,6 +105,9 @@ const isPointInFeature = (lon: number, lat: number, f: any): boolean => {
 
 interface GroupData {
   name: string;
+  state?: string;
+  district?: string;
+  block?: string;
   centroidLon: number;
   centroidLat: number;
   totalSamples: number;
@@ -103,6 +115,137 @@ interface GroupData {
   pctExceedance: number;
   avgValue: number;
 }
+
+export interface ChoroplethPalette {
+  id: string;
+  name: string;
+  type: "single" | "multi";
+  badge: string;
+  shades: Record<2 | 3 | 4 | 5, string[]>;
+}
+
+export const CHOROPLETH_PALETTES: ChoroplethPalette[] = [
+  {
+    id: "red-single",
+    name: "Red Shades (Monochromatic Single Color)",
+    type: "single",
+    badge: "Red Single Hue",
+    shades: {
+      2: ["#fca5a5", "#991b1b"],
+      3: ["#fca5a5", "#ef4444", "#881337"],
+      4: ["#fecaca", "#f87171", "#dc2626", "#7f1d1d"],
+      5: ["#fee2e2", "#fca5a5", "#f87171", "#dc2626", "#881337"]
+    }
+  },
+  {
+    id: "blue-single",
+    name: "Blue Shades (Monochromatic Single Color)",
+    type: "single",
+    badge: "Blue Single Hue",
+    shades: {
+      2: ["#93c5fd", "#1e3a8a"],
+      3: ["#93c5fd", "#3b82f6", "#172554"],
+      4: ["#bfdbfe", "#60a5fa", "#2563eb", "#1e3a8a"],
+      5: ["#dbeafe", "#93c5fd", "#3b82f6", "#1d4ed8", "#172554"]
+    }
+  },
+  {
+    id: "orange-single",
+    name: "Orange Shades (Monochromatic Single Color)",
+    type: "single",
+    badge: "Orange Single Hue",
+    shades: {
+      2: ["#fed7aa", "#c2410c"],
+      3: ["#fed7aa", "#f97316", "#7c2d12"],
+      4: ["#ffedd5", "#fb923c", "#ea580c", "#7c2d12"],
+      5: ["#fff7ed", "#fed7aa", "#f97316", "#c2410c", "#431407"]
+    }
+  },
+  {
+    id: "green-single",
+    name: "Green Shades (Monochromatic Single Color)",
+    type: "single",
+    badge: "Green Single Hue",
+    shades: {
+      2: ["#86efac", "#15803d"],
+      3: ["#86efac", "#22c55e", "#052e16"],
+      4: ["#bbf7d0", "#4ade80", "#16a34a", "#14532d"],
+      5: ["#dcfce7", "#86efac", "#22c55e", "#15803d", "#052e16"]
+    }
+  },
+  {
+    id: "purple-single",
+    name: "Purple Shades (Monochromatic Single Color)",
+    type: "single",
+    badge: "Purple Single Hue",
+    shades: {
+      2: ["#d8b4fe", "#581c87"],
+      3: ["#d8b4fe", "#a855f7", "#3b0764"],
+      4: ["#e9d5ff", "#c084fc", "#9333ea", "#4c1d95"],
+      5: ["#f3e8ff", "#d8b4fe", "#a855f7", "#7e22ce", "#3b0764"]
+    }
+  },
+  {
+    id: "teal-single",
+    name: "Teal Shades (Monochromatic Single Color)",
+    type: "single",
+    badge: "Teal Single Hue",
+    shades: {
+      2: ["#99f6e4", "#0f766e"],
+      3: ["#99f6e4", "#14b8a6", "#042f2e"],
+      4: ["#ccfbf1", "#5eead4", "#0d9488", "#115e59"],
+      5: ["#f0fdf4", "#99f6e4", "#14b8a6", "#0f766e", "#042f2e"]
+    }
+  },
+  {
+    id: "amber-single",
+    name: "Amber/Gold Shades (Monochromatic Single Color)",
+    type: "single",
+    badge: "Amber Single Hue",
+    shades: {
+      2: ["#fde047", "#854d0e"],
+      3: ["#fde047", "#eab308", "#713f12"],
+      4: ["#fef08a", "#facc15", "#ca8a04", "#713f12"],
+      5: ["#fef9c3", "#fde047", "#eab308", "#ca8a04", "#422006"]
+    }
+  },
+  {
+    id: "gray-single",
+    name: "Charcoal/Gray Shades (Monochromatic Single Color)",
+    type: "single",
+    badge: "Gray Single Hue",
+    shades: {
+      2: ["#d1d5db", "#111827"],
+      3: ["#d1d5db", "#6b7280", "#030712"],
+      4: ["#e5e7eb", "#9ca3af", "#4b5563", "#111827"],
+      5: ["#f3f4f6", "#d1d5db", "#6b7280", "#374151", "#030712"]
+    }
+  },
+  {
+    id: "traffic-multi",
+    name: "Traffic Light Spectrum (Multi-Color Green → Red)",
+    type: "multi",
+    badge: "Multi-Color Spectrum",
+    shades: {
+      2: ["#22c55e", "#ef4444"],
+      3: ["#22c55e", "#eab308", "#ef4444"],
+      4: ["#22c55e", "#84cc16", "#f97316", "#ef4444"],
+      5: ["#22c55e", "#84cc16", "#eab308", "#f97316", "#ef4444"]
+    }
+  },
+  {
+    id: "spectral-multi",
+    name: "Spectral Diverging (Multi-Color)",
+    type: "multi",
+    badge: "Multi-Color Diverging",
+    shades: {
+      2: ["#2b83ba", "#d53e4f"],
+      3: ["#2b83ba", "#ffffbf", "#d53e4f"],
+      4: ["#2b83ba", "#abdda4", "#fdae61", "#d53e4f"],
+      5: ["#2b83ba", "#abdda4", "#ffffbf", "#fdae61", "#d53e4f"]
+    }
+  }
+];
 
 export default function GisChoroplethMap({
   rawData,
@@ -117,10 +260,16 @@ export default function GisChoroplethMap({
   sendToBulletin,
   customMapTitle,
   layers,
+  setLayers,
   choroplethClasses,
   setChoroplethClasses,
   isVisible,
 }: GisChoroplethMapProps) {
+  // Local shapefile layers fallback state if parent doesn't provide setLayers
+  const [localLayers, setLocalLayers] = useState<ShapefileLayer[]>([]);
+  const effectiveLayers = layers !== undefined ? layers : localLayers;
+  const setEffectiveLayers = setLayers || setLocalLayers;
+
   // Local toast message state
   const [localToast, setLocalToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
 
@@ -131,6 +280,84 @@ export default function GisChoroplethMap({
       setLocalToast({ message: msg, type });
       setTimeout(() => setLocalToast(null), 3000);
     }
+  };
+
+  // Upload custom shapefile (.zip or .geojson/.json) directly in Choropleth view
+  const handleShapefileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const fileList = Array.from(files) as File[];
+
+    for (const file of fileList) {
+      try {
+        let geojson: any = null;
+        const fileNameLower = file.name.toLowerCase();
+
+        if (fileNameLower.endsWith(".zip")) {
+          const buffer = await file.arrayBuffer();
+          geojson = (await shp(buffer)) as any;
+        } else if (fileNameLower.endsWith(".json") || fileNameLower.endsWith(".geojson")) {
+          const text = await file.text();
+          geojson = JSON.parse(text);
+        } else {
+          triggerToast(`Unsupported file type: ${file.name}. Please upload .zip or .geojson`, "error");
+          continue;
+        }
+
+        if (!geojson) continue;
+
+        const targetGeo = Array.isArray(geojson) ? geojson[0] : geojson;
+        if (!targetGeo) continue;
+
+        // Auto-detect property label key
+        const keys = new Set<string>();
+        const features = targetGeo.features || (targetGeo.type === "Feature" ? [targetGeo] : []);
+        features.forEach((f: any) => {
+          if (f && f.properties) {
+            Object.keys(f.properties).forEach((k) => keys.add(k));
+          }
+        });
+        const propertyKeys = Array.from(keys);
+        const autoLabelKey =
+          propertyKeys.find((k) => {
+            const l = k.toLowerCase();
+            return (
+              l.includes("name") ||
+              l.includes("state") ||
+              l.includes("dist") ||
+              l.includes("st_nm") ||
+              l.includes("dt_nm") ||
+              l.includes("block")
+            );
+          }) ||
+          propertyKeys[0] ||
+          "";
+
+        const newLayer: ShapefileLayer = {
+          id: `shapefile_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          name: file.name.replace(/\.(zip|geojson|json)$/i, ""),
+          geoJson: targetGeo,
+          visible: true,
+          strokeColor: "#0f172a",
+          strokeWidth: 1.5,
+          fillColor: "#3b82f6",
+          fillOpacity: 20,
+          showLabels: true,
+          labelKey: autoLabelKey,
+          labelColor: "#0f172a",
+          labelSize: 10,
+          showInLegend: true,
+          showStroke: true,
+        };
+
+        setEffectiveLayers((prev) => [...prev, newLayer]);
+        triggerToast(`Uploaded ${file.name} shapefile layer successfully!`, "success");
+      } catch (err) {
+        console.error("Shapefile upload error:", err);
+        triggerToast(`Failed to parse ${file.name}. Ensure valid .zip shapefile or GeoJSON.`, "error");
+      }
+    }
+    e.target.value = "";
   };
 
   // Local season toggle state: "pre" | "post" | "both"
@@ -145,12 +372,18 @@ export default function GisChoroplethMap({
   const [showIndiaBoundary, setShowIndiaBoundary] = useState(false);
   const [layoutMode, setLayoutMode] = useState<"default" | "a4-portrait" | "a4-landscape">("default");
   const [showMapBorder, setShowMapBorder] = useState(true);
+  const [show3DBubbles, setShow3DBubbles] = useState(false);
   
   // Advanced Features
   
 
   const [useShortNames, setUseShortNames] = useState(false);
-  const pixelRatio = typeof window !== "undefined" ? Math.min(window.devicePixelRatio || 1, 3) : 2; // Exact screen crispness without over-multiplying
+  const [selectedBoundaryLayerId, setSelectedBoundaryLayerId] = useState<string>("auto");
+  const pixelRatio = typeof window !== "undefined"
+    ? ((window.innerWidth < 768 || (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0))
+        ? Math.min(window.devicePixelRatio || 1.5, 2.0)
+        : Math.min(window.devicePixelRatio || 2, 2.5))
+    : 2.0;
   const [mapTheme, setMapTheme] = useState<"light" | "dark" | "blueprint">("light");
 
   const handleExportImage = () => {
@@ -165,16 +398,77 @@ export default function GisChoroplethMap({
 
   // Local fallback state if parent doesn't provide them
   const [localChoroplethClasses, setLocalChoroplethClasses] = useState([
-    { limit: 10, color: "#22c55e", label: "Low" },
-    { limit: 25, color: "#eab308", label: "Moderate" },
-    { limit: 50, color: "#f97316", label: "High" },
-    { limit: 75, color: "#ef4444", label: "Very High" },
-    { limit: 100, color: "#a855f7", label: "Severe" }
+    { limit: 10, color: "#fca5a5", label: "Low" },
+    { limit: 25, color: "#f87171", label: "Moderate" },
+    { limit: 50, color: "#dc2626", label: "High" },
+    { limit: 75, color: "#991b1b", label: "Very High" },
+    { limit: 100, color: "#881337", label: "Severe" }
   ]);
+
+  const [selectedPalette, setSelectedPalette] = useState<string>("red-single");
 
   const activeClasses = useMemo(() => {
     return choroplethClasses || localChoroplethClasses;
   }, [choroplethClasses, localChoroplethClasses]);
+
+  const userLayers = useMemo(() => {
+    return (effectiveLayers || []).filter((l) => l.visible && l.geoJson);
+  }, [effectiveLayers]);
+
+  const defaultIndiaLayers: ShapefileLayer[] = useMemo(() => [
+    {
+      id: "india-default-layer",
+      name: "India Boundary",
+      visible: true,
+      strokeColor: "#0f172a",
+      strokeWidth: 1.8,
+      fillColor: "#e2e8f0",
+      fillOpacity: 0.1,
+      showLabels: true,
+      labelKey: "name",
+      labelColor: "#0f172a",
+      labelSize: 10,
+      geoJson: {
+        type: "FeatureCollection",
+        features: [INDIA_BOUNDARY]
+      }
+    }
+  ], []);
+
+  const activeLayers = useMemo(() => {
+    return userLayers.length > 0 ? userLayers : defaultIndiaLayers;
+  }, [userLayers, defaultIndiaLayers]);
+
+  // Determine Primary Choropleth Layer for region fills and raster clipping mask
+  const primaryLayer = useMemo(() => {
+    if (activeLayers.length === 0) return null;
+    if (selectedBoundaryLayerId && selectedBoundaryLayerId !== "auto") {
+      const found = activeLayers.find((l) => l.id === selectedBoundaryLayerId);
+      if (found) return found;
+    }
+    // Match based on reporting level first
+    if (reportingLevel === "State") {
+      const stateL = activeLayers.find((l) => l.name.toLowerCase().includes("state"));
+      if (stateL) return stateL;
+    } else if (reportingLevel === "District" || reportingLevel === "Block") {
+      const distL = activeLayers.find((l) => l.name.toLowerCase().includes("dist") || l.name.toLowerCase().includes("district"));
+      if (distL) return distL;
+    }
+
+    // Auto selection from custom uploaded layers
+    const customUserUploaded = activeLayers.find(
+      (l) => !l.id.includes("india-default")
+    );
+    if (customUserUploaded) return customUserUploaded;
+
+    return activeLayers[0];
+  }, [activeLayers, selectedBoundaryLayerId, reportingLevel]);
+
+  // Secondary layers are remaining visible layers rendered as crisp boundary outlines
+  const secondaryLayers = useMemo(() => {
+    if (!primaryLayer) return [];
+    return activeLayers.filter((l) => l.id !== primaryLayer.id);
+  }, [activeLayers, primaryLayer]);
 
   const updateClasses = (newClasses: typeof localChoroplethClasses) => {
     setLocalChoroplethClasses(newClasses);
@@ -183,40 +477,64 @@ export default function GisChoroplethMap({
     }
   };
 
+  const applyPalette = (paletteId: string, customClasses?: typeof localChoroplethClasses) => {
+    const pal = CHOROPLETH_PALETTES.find(p => p.id === paletteId) || CHOROPLETH_PALETTES[0];
+    const targetClasses = customClasses || activeClasses;
+    const count = (targetClasses.length >= 2 && targetClasses.length <= 5 ? targetClasses.length : 5) as 2 | 3 | 4 | 5;
+    const shadeList = pal.shades[count] || pal.shades[5];
+
+    const updated = targetClasses.map((cls, idx) => ({
+      ...cls,
+      color: shadeList[idx] || cls.color
+    }));
+
+    setSelectedPalette(paletteId);
+    updateClasses(updated);
+    triggerToast(`Applied ${pal.name} scheme!`, "success");
+  };
+
   const handleClassCountChange = (count: number) => {
     if (count === activeClasses.length) return;
     
     let newClasses = [];
-    const colors = ["#22c55e", "#84cc16", "#eab308", "#f97316", "#ef4444"];
     
     if (count === 2) {
       newClasses = [
-        { limit: 10, color: colors[0], label: "Safe (≤10%)" },
-        { limit: 100, color: colors[4], label: "Severe (>10%)" }
+        { limit: 10, color: "#fca5a5", label: "Safe (≤10%)" },
+        { limit: 100, color: "#881337", label: "Severe (>10%)" }
       ];
     } else if (count === 3) {
       newClasses = [
-        { limit: 5, color: colors[0], label: "Safe (≤5%)" },
-        { limit: 15, color: colors[2], label: "Moderate (>5-15%)" },
-        { limit: 100, color: colors[4], label: "Severe (>15%)" }
+        { limit: 5, color: "#fca5a5", label: "Safe (≤5%)" },
+        { limit: 15, color: "#dc2626", label: "Moderate (>5-15%)" },
+        { limit: 100, color: "#881337", label: "Severe (>15%)" }
       ];
     } else if (count === 4) {
       newClasses = [
-        { limit: 5, color: colors[0], label: "Safe (0-5%)" },
-        { limit: 10, color: colors[1], label: "Low (>5-10%)" },
-        { limit: 20, color: colors[3], label: "High (>10-20%)" },
-        { limit: 100, color: colors[4], label: "Severe (>20%)" }
+        { limit: 5, color: "#fecaca", label: "Safe (0-5%)" },
+        { limit: 10, color: "#f87171", label: "Low (>5-10%)" },
+        { limit: 20, color: "#dc2626", label: "High (>10-20%)" },
+        { limit: 100, color: "#7f1d1d", label: "Severe (>20%)" }
       ];
     } else { // 5 classes
       newClasses = [
-        { limit: 5, color: colors[0], label: "Safe (0-5%)" },
-        { limit: 10, color: colors[1], label: "Low (>5-10%)" },
-        { limit: 15, color: colors[2], label: "Moderate (>10-15%)" },
-        { limit: 20, color: colors[3], label: "High (>15-20%)" },
-        { limit: 100, color: colors[4], label: "Severe (>20%)" }
+        { limit: 5, color: "#fee2e2", label: "Safe (0-5%)" },
+        { limit: 10, color: "#fca5a5", label: "Low (>5-10%)" },
+        { limit: 15, color: "#f87171", label: "Moderate (>10-15%)" },
+        { limit: 20, color: "#dc2626", label: "High (>15-20%)" },
+        { limit: 100, color: "#881337", label: "Severe (>20%)" }
       ];
     }
-    updateClasses(newClasses);
+
+    const pal = CHOROPLETH_PALETTES.find(p => p.id === selectedPalette) || CHOROPLETH_PALETTES[0];
+    const cntKey = (count >= 2 && count <= 5 ? count : 5) as 2 | 3 | 4 | 5;
+    const shadeList = pal.shades[cntKey] || pal.shades[5];
+    const shadedClasses = newClasses.map((cls, idx) => ({
+      ...cls,
+      color: shadeList[idx] || cls.color
+    }));
+
+    updateClasses(shadedClasses);
     triggerToast(`Set map to ${count} classification levels.`, "success");
   };
 
@@ -224,30 +542,39 @@ export default function GisChoroplethMap({
     let newClasses;
     if (presetType === "0-5") {
       newClasses = [
-        { limit: 5, color: "#22c55e", label: "Safe (0-5%)" },
-        { limit: 10, color: "#84cc16", label: "Low (>5-10%)" },
-        { limit: 15, color: "#eab308", label: "Moderate (>10-15%)" },
-        { limit: 20, color: "#f97316", label: "High (>15-20%)" },
-        { limit: 100, color: "#ef4444", label: "Severe (>20%)" }
+        { limit: 5, color: "#fee2e2", label: "Safe (0-5%)" },
+        { limit: 10, color: "#fca5a5", label: "Low (>5-10%)" },
+        { limit: 15, color: "#f87171", label: "Moderate (>10-15%)" },
+        { limit: 20, color: "#dc2626", label: "High (>15-20%)" },
+        { limit: 100, color: "#881337", label: "Severe (>20%)" }
       ];
     } else if (presetType === "dense") {
       newClasses = [
-        { limit: 2, color: "#22c55e", label: "Safe (0-2%)" },
-        { limit: 4, color: "#84cc16", label: "Slight (>2-4%)" },
-        { limit: 6, color: "#eab308", label: "Moderate (>4-6%)" },
-        { limit: 8, color: "#f97316", label: "High (>6-8%)" },
-        { limit: 100, color: "#ef4444", label: "Critical (>8%)" }
+        { limit: 2, color: "#fee2e2", label: "Safe (0-2%)" },
+        { limit: 4, color: "#fca5a5", label: "Slight (>2-4%)" },
+        { limit: 6, color: "#f87171", label: "Moderate (>4-6%)" },
+        { limit: 8, color: "#dc2626", label: "High (>6-8%)" },
+        { limit: 100, color: "#881337", label: "Critical (>8%)" }
       ];
     } else {
       newClasses = [
-        { limit: 10, color: "#22c55e", label: "Low (0-10%)" },
-        { limit: 25, color: "#eab308", label: "Moderate (>10-25%)" },
-        { limit: 50, color: "#f97316", label: "High (>25-50%)" },
-        { limit: 75, color: "#ef4444", label: "Very High (>50-75%)" },
-        { limit: 100, color: "#a855f7", label: "Severe (>75%)" }
+        { limit: 10, color: "#fee2e2", label: "Low (0-10%)" },
+        { limit: 25, color: "#fca5a5", label: "Moderate (>10-25%)" },
+        { limit: 50, color: "#f87171", label: "High (>25-50%)" },
+        { limit: 75, color: "#dc2626", label: "Very High (>50-75%)" },
+        { limit: 100, color: "#881337", label: "Severe (>75%)" }
       ];
     }
-    updateClasses(newClasses);
+
+    const pal = CHOROPLETH_PALETTES.find(p => p.id === selectedPalette) || CHOROPLETH_PALETTES[0];
+    const cntKey = (newClasses.length >= 2 && newClasses.length <= 5 ? newClasses.length : 5) as 2 | 3 | 4 | 5;
+    const shadeList = pal.shades[cntKey] || pal.shades[5];
+    const shadedClasses = newClasses.map((cls, idx) => ({
+      ...cls,
+      color: shadeList[idx] || cls.color
+    }));
+
+    updateClasses(shadedClasses);
     triggerToast(`Applied ${presetType === "0-5" ? "0-5% Interval" : presetType === "dense" ? "High Granularity" : "Standard"} range preset!`, "success");
   };
 
@@ -386,8 +713,48 @@ export default function GisChoroplethMap({
   const [newNameInput, setNewNameInput] = useState("");
   const clickStartPos = useRef({ x: 0, y: 0 });
 
-  // Side-by-side seasonal state
-  const sideBySide = seasonFilter === "both";
+  // Smart detection of available seasons in the imported data
+  const detectedSeasons = useMemo(() => {
+    const rawList = rawData || [];
+    if (rawList.length === 0) return { hasPre: false, hasPost: false, count: 0 };
+
+    const safeHeaders = headers || {};
+    const seasonCol = safeHeaders.season || "Season";
+
+    let hasPre = false;
+    let hasPost = false;
+
+    rawList.forEach((row) => {
+      if (!row) return;
+      const val = String(row[seasonCol] || row["Season"] || row["season"] || row["Period"] || row["period"] || "").trim().toLowerCase();
+      if (!val) return;
+      if (val.includes("pre") || val.includes("before") || val.includes("may") || val.includes("prm") || val === "1") {
+        hasPre = true;
+      } else if (val.includes("post") || val.includes("after") || val.includes("nov") || val.includes("pom") || val === "2") {
+        hasPost = true;
+      }
+    });
+
+    return { hasPre, hasPost, count: (hasPre ? 1 : 0) + (hasPost ? 1 : 0) };
+  }, [rawData, headers]);
+
+  // Auto-switch season filter based on detected seasons in dataset
+  useEffect(() => {
+    if (detectedSeasons.hasPre && !detectedSeasons.hasPost) {
+      setSeasonFilter("pre");
+    } else if (detectedSeasons.hasPost && !detectedSeasons.hasPre) {
+      setSeasonFilter("post");
+    } else if (detectedSeasons.hasPre && detectedSeasons.hasPost) {
+      if (seasonFilter !== "pre" && seasonFilter !== "post" && seasonFilter !== "both") {
+        setSeasonFilter("both");
+      }
+    } else {
+      setSeasonFilter("pre");
+    }
+  }, [detectedSeasons]);
+
+  // Side-by-side seasonal state: ONLY active if user selected "both" AND dataset actually contains BOTH seasons!
+  const sideBySide = seasonFilter === "both" && detectedSeasons.hasPre && detectedSeasons.hasPost;
   const canvasPostRef = useRef<HTMLCanvasElement>(null);
 
   // Tooltip & Label Position Repositioning States
@@ -403,103 +770,229 @@ export default function GisChoroplethMap({
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // District to State mapping built from loaded raw dataset
+  const districtStateMap = useMemo(() => {
+    return buildDistrictStateMap(rawData, headerMap, headers);
+  }, [rawData, headerMap, headers]);
+
+  // Helper to extract matching features for a shapefile layer according to state and district selection
+  const getMatchingFeaturesForLayer = useCallback((layer: ShapefileLayer) => {
+    if (!layer || !layer.geoJson) return [];
+    const allFeatures = layer.geoJson.features || (layer.geoJson.type === "Feature" ? [layer.geoJson] : []);
+    if (allFeatures.length === 0) return [];
+
+    if (isStateAll(selectedState) && isDistrictAll(selectedDistrict)) {
+      return allFeatures;
+    }
+
+    const matched = allFeatures.filter((f: any) =>
+      f && f.geometry && featureMatchesSelection(f, selectedState, selectedDistrict, districtStateMap)
+    );
+
+    return matched;
+  }, [selectedState, selectedDistrict, districtStateMap]);
+
   // Cache for findGroupForFeature to prevent massive Levenshtein computations on every render
   const featureMatchCache = useRef(new WeakMap<any, any>());
 
   useEffect(() => {
     featureMatchCache.current = new WeakMap();
-  }, [rawData, layers, reportingLevel, activeParam]);
+  }, [rawData, effectiveLayers, reportingLevel, activeParam, selectedState, selectedDistrict, seasonFilter]);
 
   // Helper to parse coordinates safely
   const parseCoordinate = (val: any): number | null => {
     if (val === undefined || val === null) return null;
     const num = Number(val);
-    if (!isNaN(num) && num !== 0) return num;
+    if (!isNaN(num) && num !== 0 && Number.isFinite(num)) return num;
+    return null;
+  };
+
+  const parseParamValue = (val: any): number | null => {
+    if (val === undefined || val === null) return null;
+    if (typeof val === "number") {
+      return isNaN(val) || !Number.isFinite(val) ? null : val;
+    }
+    let str = String(val).trim();
+    if (!str) return null;
+    const low = str.toLowerCase();
+    if (low === "bdl" || low === "nd" || low === "nil" || low === "none" || low === "null") {
+      return 0;
+    }
+    str = str.replace(/^[<>=~\s]+/, "");
+    const match = str.match(/[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?/);
+    if (match) {
+      const parsed = parseFloat(match[0]);
+      return isNaN(parsed) || !Number.isFinite(parsed) ? null : parsed;
+    }
     return null;
   };
 
   // Pre-Monsoon Data Subset
   const preDataSubset = useMemo(() => {
     const rawList = rawData || [];
+    if (rawList.length === 0) return [];
     const safeHeaders = headers || {};
     const seasonCol = safeHeaders.season || "Season";
-    return rawList.filter((row) => {
-      const rowSeason = String((row && row[seasonCol]) || "").toLowerCase();
-      return rowSeason.includes("pre") || rowSeason.includes("before");
+    const res = rawList.filter((row) => {
+      const rowSeason = String((row && (row[seasonCol] || row["Season"] || row["season"] || row["Period"] || row["period"])) || "").toLowerCase();
+      return rowSeason.includes("pre") || rowSeason.includes("before") || rowSeason.includes("may") || rowSeason.includes("prm") || rowSeason === "1";
     });
-  }, [rawData, headers]);
+    if (res.length > 0) return res;
+    if (detectedSeasons.hasPre) return rawList;
+    return [];
+  }, [rawData, headers, detectedSeasons]);
 
   // Post-Monsoon Data Subset
   const postDataSubset = useMemo(() => {
     const rawList = rawData || [];
+    if (rawList.length === 0) return [];
     const safeHeaders = headers || {};
     const seasonCol = safeHeaders.season || "Season";
-    return rawList.filter((row) => {
-      const rowSeason = String((row && row[seasonCol]) || "").toLowerCase();
-      return rowSeason.includes("post") || rowSeason.includes("after");
+    const res = rawList.filter((row) => {
+      const rowSeason = String((row && (row[seasonCol] || row["Season"] || row["season"] || row["Period"] || row["period"])) || "").toLowerCase();
+      return rowSeason.includes("post") || rowSeason.includes("after") || rowSeason.includes("nov") || rowSeason.includes("pom") || rowSeason === "2";
     });
-  }, [rawData, headers]);
+    if (res.length > 0) return res;
+    if (detectedSeasons.hasPost) return rawList;
+    return [];
+  }, [rawData, headers, detectedSeasons]);
 
   // General seasonalFilteredData for the standard single view
   const seasonalFilteredData = useMemo(() => {
     const rawList = rawData || [];
+    if (rawList.length === 0 || !seasonFilter || seasonFilter === "all") return rawList;
     const safeHeaders = headers || {};
     const seasonCol = safeHeaders.season || "Season";
-    return rawList.filter((row) => {
-      const rowSeason = String((row && row[seasonCol]) || "").toLowerCase();
+    const res = rawList.filter((row) => {
+      const rowSeason = String((row && (row[seasonCol] || row["Season"] || row["season"] || row["Period"] || row["period"])) || "").toLowerCase();
       if (seasonFilter === "pre") {
-        return rowSeason.includes("pre") || rowSeason.includes("before");
+        return rowSeason.includes("pre") || rowSeason.includes("before") || rowSeason.includes("may") || rowSeason.includes("prm") || rowSeason === "1";
       }
       if (seasonFilter === "post") {
-        return rowSeason.includes("post") || rowSeason.includes("after");
+        return rowSeason.includes("post") || rowSeason.includes("after") || rowSeason.includes("nov") || rowSeason.includes("pom") || rowSeason === "2";
       }
       return true;
     });
+    return res.length > 0 ? res : rawList;
   }, [rawData, seasonFilter, headers]);
 
   // 2. Helper to compute group list from any raw data array
   const computeGroupList = (dataSubset: any[]) => {
     const safeHeaders = headers || {};
-    const groupKey =
-      reportingLevel === "State"
-        ? safeHeaders.state
-        : reportingLevel === "District"
-        ? safeHeaders.district
-        : safeHeaders.block;
 
-    if (!groupKey) return [];
+    const getRowVal = (row: any, primaryKey: string, fallbacks: string[]): string => {
+      if (!row) return "";
+      if (primaryKey && row[primaryKey] !== undefined && row[primaryKey] !== null) {
+        const val = String(row[primaryKey]).trim();
+        if (val) return val;
+      }
+      for (const fb of fallbacks) {
+        if (row[fb] !== undefined && row[fb] !== null) {
+          const val = String(row[fb]).trim();
+          if (val) return val;
+        }
+      }
+      const keys = Object.keys(row);
+      for (const fb of [primaryKey, ...fallbacks]) {
+        if (!fb) continue;
+        const fbNorm = norm(fb);
+        const matchedKey = keys.find((k) => norm(k) === fbNorm || norm(k).includes(fbNorm) || fbNorm.includes(norm(k)));
+        if (matchedKey && row[matchedKey] !== undefined && row[matchedKey] !== null) {
+          const val = String(row[matchedKey]).trim();
+          if (val) return val;
+        }
+      }
+      return "";
+    };
 
-    const groups: Record<string, { lats: number[]; lons: number[]; vals: number[] }> = {};
+    const getExtractParamVal = (row: any, paramKey: string): number => {
+      if (!row) return NaN;
+
+      // 1. Direct match or via headerMap
+      if (row[paramKey] !== undefined && row[paramKey] !== null) {
+        const p = parseParamValue(row[paramKey]);
+        if (p !== null && !isNaN(p)) return p;
+      }
+
+      const mappedKey1 = headerMap ? headerMap[paramKey] : undefined;
+      if (mappedKey1 && row[mappedKey1] !== undefined && row[mappedKey1] !== null) {
+        const p = parseParamValue(row[mappedKey1]);
+        if (p !== null && !isNaN(p)) return p;
+      }
+
+      const mappedKey2 = headerMap ? Object.keys(headerMap).find((k) => headerMap[k] === paramKey) : undefined;
+      if (mappedKey2 && row[mappedKey2] !== undefined && row[mappedKey2] !== null) {
+        const p = parseParamValue(row[mappedKey2]);
+        if (p !== null && !isNaN(p)) return p;
+      }
+
+      // 2. Fallback search through row keys matching param config keywords or symbol
+      const config = PARAM_CONFIG[paramKey];
+      const searchTerms = [paramKey.toLowerCase()];
+      if (config) {
+        if (config.name) searchTerms.push(config.name.toLowerCase());
+        if (config.keywords) config.keywords.forEach((kw) => searchTerms.push(kw.toLowerCase()));
+      }
+
+      const keys = Object.keys(row);
+      const foundKey = keys.find((k) => {
+        const kLow = k.toLowerCase().trim();
+        return searchTerms.some((term) => kLow === term || kLow.includes(term));
+      });
+
+      if (foundKey && row[foundKey] !== undefined && row[foundKey] !== null) {
+        const p = parseParamValue(row[foundKey]);
+        if (p !== null && !isNaN(p)) return p;
+      }
+
+      return NaN;
+    };
+
+    const groups: Record<string, { name: string; state: string; district: string; block: string; lats: number[]; lons: number[]; vals: number[] }> = {};
 
     const safeSubset = dataSubset || [];
     safeSubset.forEach((row) => {
       if (!row) return;
-      const gName = String(row[groupKey] || "Unknown").trim();
-      const lat = parseCoordinate(row[safeHeaders.latitude]);
-      const lon = parseCoordinate(row[safeHeaders.longitude]);
+
+      const rowSt = getRowVal(row, safeHeaders.state || "", ["State", "State_Name", "State Name", "STATE", "State/UT"]);
+      const rowDt = getRowVal(row, safeHeaders.district || "", ["District", "District_Name", "District Name", "DISTRICT", "Dist"]);
+      const rowBlk = getRowVal(row, safeHeaders.block || "", ["Block", "Block_Name", "Block Name", "BLOCK", "Tehsil", "Taluka"]);
+
+      if (!isStateAll(selectedState)) {
+        if (rowSt && norm(rowSt) !== norm(selectedState || "")) return;
+      }
+      if (!isDistrictAll(selectedDistrict)) {
+        if (rowDt && norm(rowDt) !== norm(selectedDistrict || "")) return;
+      }
+
+      let compositeKey = "";
+      let displayName = "";
+      if (reportingLevel === "State") {
+        displayName = (rowSt || rowDt || "Unknown State").trim();
+        compositeKey = displayName;
+      } else if (reportingLevel === "District") {
+        displayName = (rowDt || rowSt || "Unknown District").trim();
+        compositeKey = rowSt ? `${rowSt.trim()}___${displayName}` : displayName;
+      } else {
+        displayName = (rowBlk || rowDt || rowSt || "Unknown Block").trim();
+        compositeKey = `${rowSt.trim()}___${rowDt.trim()}___${displayName}`;
+      }
+
+      const lat = parseCoordinate(row[safeHeaders.latitude] ?? row["Latitude"] ?? row["latitude"] ?? row["Lat"] ?? row["lat"]);
+      const lon = parseCoordinate(row[safeHeaders.longitude] ?? row["Longitude"] ?? row["longitude"] ?? row["Lon"] ?? row["lng"]);
 
       let val = NaN;
       const isVirtual = ["SAR", "RSC", "SSP", "Na%", "PI", "KR", "MH", "TDS", "Alkalinity"].includes(activeParam);
       if (isVirtual) {
-        const caCol = Object.keys(headerMap).find((k) => headerMap[k] === "Ca") || "Ca";
-        const mgCol = Object.keys(headerMap).find((k) => headerMap[k] === "Mg") || "Mg";
-        const naCol = Object.keys(headerMap).find((k) => headerMap[k] === "Na") || "Na";
-        const kCol = Object.keys(headerMap).find((k) => headerMap[k] === "K") || "K";
-        const hco3Col = Object.keys(headerMap).find((k) => headerMap[k] === "HCO3") || "HCO3";
-        const co3Col = Object.keys(headerMap).find((k) => headerMap[k] === "CO3") || "CO3";
-        const ecCol = Object.keys(headerMap).find((k) => headerMap[k] === "EC") || "EC";
-        const tdsCol = Object.keys(headerMap).find((k) => headerMap[k] === "TDS") || "TDS";
-        const alkCol = Object.keys(headerMap).find((k) => headerMap[k] === "Alkalinity") || "Alkalinity";
-
-        const caVal = parseFloat(row[caCol]);
-        const mgVal = parseFloat(row[mgCol]);
-        const naVal = parseFloat(row[naCol]);
-        const kVal = parseFloat(row[kCol]) || 0;
-        const hco3Val = parseFloat(row[hco3Col]);
-        const co3Val = parseFloat(row[co3Col]) || 0;
-        const ecVal = parseFloat(row[ecCol]);
-        const tdsVal = parseFloat(row[tdsCol]);
-        const alkVal = parseFloat(row[alkCol]);
+        const caVal = getExtractParamVal(row, "Ca");
+        const mgVal = getExtractParamVal(row, "Mg");
+        const naVal = getExtractParamVal(row, "Na");
+        const kVal = getExtractParamVal(row, "K") || 0;
+        const hco3Val = getExtractParamVal(row, "HCO3");
+        const co3Val = getExtractParamVal(row, "CO3") || 0;
+        const ecVal = getExtractParamVal(row, "EC");
+        const tdsVal = getExtractParamVal(row, "TDS");
+        const alkVal = getExtractParamVal(row, "Alkalinity");
 
         const caMeq = !isNaN(caVal) ? caVal / 20.04 : 0;
         const mgMeq = !isNaN(mgVal) ? mgVal / 12.15 : 0;
@@ -543,21 +1036,50 @@ export default function GisChoroplethMap({
           if (denom > 0) val = (mgMeq * 100) / denom;
         }
       } else {
-        const paramCol = Object.keys(headerMap).find((k) => headerMap[k] === activeParam) || activeParam;
-        val = parseFloat(row[paramCol] || row[activeParam]);
+        val = getExtractParamVal(row, activeParam);
       }
 
       if (!isNaN(val)) {
-        if (!groups[gName]) {
-          groups[gName] = { lats: [], lons: [], vals: [] };
+        if (!groups[compositeKey]) {
+          groups[compositeKey] = {
+            name: displayName,
+            state: rowSt,
+            district: rowDt,
+            block: rowBlk,
+            lats: [],
+            lons: [],
+            vals: []
+          };
         }
-        if (lat !== null && lon !== null) {
-          groups[gName].lats.push(lat);
-          groups[gName].lons.push(lon);
+        if (lat !== null && lon !== null && !isNaN(lat) && !isNaN(lon)) {
+          groups[compositeKey].lats.push(lat);
+          groups[compositeKey].lons.push(lon);
         }
-        groups[gName].vals.push(val);
+        groups[compositeKey].vals.push(val);
       }
     });
+
+    const userLayers = (effectiveLayers || []).filter((l) => l.visible && l.geoJson);
+    const defaultIndiaLayers: ShapefileLayer[] = [
+      {
+        id: "india-default-layer",
+        name: "India Boundary",
+        visible: true,
+        strokeColor: "#0f172a",
+        strokeWidth: 1.8,
+        fillColor: "#e2e8f0",
+        fillOpacity: 0.1,
+        showLabels: true,
+        labelKey: "name",
+        labelColor: "#0f172a",
+        labelSize: 10,
+        geoJson: {
+          type: "FeatureCollection",
+          features: [INDIA_BOUNDARY]
+        }
+      }
+    ];
+    const activeLayersToScan = userLayers.length > 0 ? userLayers : defaultIndiaLayers;
 
     const list: GroupData[] = [];
     Object.entries(groups).forEach(([name, data]) => {
@@ -569,6 +1091,45 @@ export default function GisChoroplethMap({
       if (data.lons.length > 0 && data.lats.length > 0) {
         centroidLon = data.lons.reduce((a, b) => a + b, 0) / data.lons.length;
         centroidLat = data.lats.reduce((a, b) => a + b, 0) / data.lats.length;
+      } else {
+        // Fallback to feature polygon centroid from layer if data has no Lat/Lon
+        let matchedCentroid: [number, number] | null = null;
+        for (const layer of activeLayersToScan) {
+          const feats = getMatchingFeaturesForLayer(layer);
+          for (const f of feats) {
+            if (!f || !f.properties) continue;
+            const propVals = Object.values(f.properties).map((v) => String(v).trim());
+            if (propVals.some((pv) => norm(pv) === norm(name) || norm(pv).includes(norm(name)) || norm(name).includes(norm(pv)))) {
+              // Calculate feature bounding box center
+              let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+              const traverseCoords = (coords: any) => {
+                if (Array.isArray(coords) && typeof coords[0] === "number" && typeof coords[1] === "number") {
+                  const x = coords[0], y = coords[1];
+                  if (!isNaN(x) && !isNaN(y)) {
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                  }
+                } else if (Array.isArray(coords)) {
+                  coords.forEach(traverseCoords);
+                }
+              };
+              if (f.geometry && f.geometry.coordinates) {
+                traverseCoords(f.geometry.coordinates);
+                if (minX !== Infinity && maxX !== -Infinity && minY !== Infinity && maxY !== -Infinity) {
+                  matchedCentroid = [(minX + maxX) / 2, (minY + maxY) / 2];
+                  break;
+                }
+              }
+            }
+          }
+          if (matchedCentroid) break;
+        }
+        if (matchedCentroid) {
+          centroidLon = matchedCentroid[0];
+          centroidLat = matchedCentroid[1];
+        }
       }
 
       // Calculate exceedance rate
@@ -589,11 +1150,14 @@ export default function GisChoroplethMap({
         } else if (activeParam === "MH") {
           if (v > 50) failCount++;
         } else if (activeParam === "pH") {
-          if (v < activeConfig.b1 || v > activeConfig.b2) failCount++;
-        } else if (activeConfig.b1 === activeConfig.b2) {
-          if (v > activeConfig.b1) failCount++;
+          const b1 = activeConfig?.b1 ?? 6.5;
+          const b2 = activeConfig?.b2 ?? 8.5;
+          if (v < b1 || v > b2) failCount++;
+        } else if (activeConfig && activeConfig.b1 === activeConfig.b2) {
+          if (v > (activeConfig.b1 ?? 0)) failCount++;
         } else {
-          if (v > activeConfig.b2) failCount++;
+          const limit = activeConfig?.b2 ?? activeConfig?.b1 ?? 0;
+          if (v > limit) failCount++;
         }
       });
 
@@ -601,7 +1165,10 @@ export default function GisChoroplethMap({
       const avgValue = sum / data.vals.length;
 
       list.push({
-        name,
+        name: data.name,
+        state: data.state,
+        district: data.district,
+        block: data.block,
         centroidLon,
         centroidLat,
         totalSamples: data.vals.length,
@@ -616,20 +1183,74 @@ export default function GisChoroplethMap({
 
   const groupList = useMemo(() => {
     return computeGroupList(seasonalFilteredData);
-  }, [seasonalFilteredData, headers, activeParam, activeConfig, headerMap, reportingLevel]);
+  }, [seasonalFilteredData, headers, activeParam, activeConfig, headerMap, reportingLevel, effectiveLayers]);
 
   const groupListPre = useMemo(() => {
     return computeGroupList(preDataSubset);
-  }, [preDataSubset, headers, activeParam, activeConfig, headerMap, reportingLevel]);
+  }, [preDataSubset, headers, activeParam, activeConfig, headerMap, reportingLevel, effectiveLayers]);
 
   const groupListPost = useMemo(() => {
     return computeGroupList(postDataSubset);
-  }, [postDataSubset, headers, activeParam, activeConfig, headerMap, reportingLevel]);
+  }, [postDataSubset, headers, activeParam, activeConfig, headerMap, reportingLevel, effectiveLayers]);
+
+  // Compact summary statistics for Evaluated Regions, Regional State Summary, & Highest Shift Region
+  const regionalSummaryStats = useMemo(() => {
+    if (!groupList || groupList.length === 0) return null;
+
+    const totalRegions = groupList.length;
+    const totalSamples = groupList.reduce((acc, g) => acc + g.totalSamples, 0);
+    const totalExceeded = groupList.reduce((acc, g) => acc + g.failCount, 0);
+    const overallExceedancePct = totalSamples > 0 ? (totalExceeded / totalSamples) * 100 : 0;
+
+    let highestRegion: GroupData | null = null;
+    let maxPct = -1;
+    groupList.forEach((g) => {
+      if (g.pctExceedance > maxPct) {
+        maxPct = g.pctExceedance;
+        highestRegion = g;
+      }
+    });
+
+    const nilExceedanceCount = groupList.filter((g) => g.pctExceedance === 0).length;
+
+    let highestShiftRegion: { name: string; shiftPct: number; prePct: number; postPct: number } | null = null;
+    if (groupListPre.length > 0 && groupListPost.length > 0) {
+      const postMap = new Map<string, number>();
+      groupListPost.forEach((g) => postMap.set(g.name, g.pctExceedance));
+
+      let maxShift = -1;
+      groupListPre.forEach((gPre) => {
+        if (postMap.has(gPre.name)) {
+          const postPct = postMap.get(gPre.name)!;
+          const shift = Math.abs(postPct - gPre.pctExceedance);
+          if (shift > maxShift) {
+            maxShift = shift;
+            highestShiftRegion = {
+              name: gPre.name,
+              shiftPct: postPct - gPre.pctExceedance,
+              prePct: gPre.pctExceedance,
+              postPct,
+            };
+          }
+        }
+      });
+    }
+
+    return {
+      totalRegions,
+      totalSamples,
+      totalExceeded,
+      overallExceedancePct,
+      highestRegion,
+      nilExceedanceCount,
+      highestShiftRegion,
+    };
+  }, [groupList, groupListPre, groupListPost]);
   useEffect(() => {
     // Defaults only run if classes were reset (already removed from metric switch)
   }, [activeParam, groupList]);
 
-  // 3. Determine map bounding box dynamically based on active centroids
+  // 3. Determine map bounding box dynamically based on active shapefile features and data centroids
   const mapBounds = useMemo(() => {
     // Default bounding box for India
     const defaultBounds = {
@@ -639,23 +1260,86 @@ export default function GisChoroplethMap({
       maxLat: 36.0,
     };
 
-    if (groupList.length === 0) return defaultBounds;
+    let minLon = Infinity;
+    let maxLon = -Infinity;
+    let minLat = Infinity;
+    let maxLat = -Infinity;
 
-    // If state/district filter is applied, crop the bounds to fit our active points perfectly
-    const validCoords = groupList.filter((g) => g.centroidLon !== 78.96 || g.centroidLat !== 20.59);
-    if (validCoords.length === 0) return defaultBounds;
+    const addCoord = (lon: number, lat: number) => {
+      if (
+        typeof lon === "number" &&
+        typeof lat === "number" &&
+        !isNaN(lon) &&
+        !isNaN(lat) &&
+        Number.isFinite(lon) &&
+        Number.isFinite(lat) &&
+        Math.abs(lon) <= 180 &&
+        Math.abs(lat) <= 90 &&
+        !(Math.abs(lon) < 0.0001 && Math.abs(lat) < 0.0001)
+      ) {
+        if (lon < minLon) minLon = lon;
+        if (lon > maxLon) maxLon = lon;
+        if (lat < minLat) minLat = lat;
+        if (lat > maxLat) maxLat = lat;
+      }
+    };
 
-    const lons = validCoords.map((g) => g.centroidLon).filter(v => typeof v === "number" && !isNaN(v) && Number.isFinite(v));
-    const lats = validCoords.map((g) => g.centroidLat).filter(v => typeof v === "number" && !isNaN(v) && Number.isFinite(v));
+    // Determine active layers (user uploaded shapefile layers or fallback India boundary layer)
+    const userLayers = (effectiveLayers || []).filter((l) => l.visible && l.geoJson);
+    const defaultIndiaLayers: ShapefileLayer[] = [
+      {
+        id: "india-default-layer",
+        name: "India Boundary",
+        visible: true,
+        strokeColor: "#0f172a",
+        strokeWidth: 1.8,
+        fillColor: "#e2e8f0",
+        fillOpacity: 0.1,
+        showLabels: true,
+        labelKey: "name",
+        labelColor: "#0f172a",
+        labelSize: 10,
+        geoJson: {
+          type: "FeatureCollection",
+          features: [INDIA_BOUNDARY]
+        }
+      }
+    ];
+    const activeLayersToScan = userLayers.length > 0 ? userLayers : defaultIndiaLayers;
 
-    if (lons.length === 0 || lats.length === 0) return defaultBounds;
+    const traverse = (coords: any) => {
+      if (!coords) return;
+      if (Array.isArray(coords) && typeof coords[0] === "number" && typeof coords[1] === "number") {
+        addCoord(coords[0], coords[1]);
+      } else if (Array.isArray(coords)) {
+        for (let i = 0; i < coords.length; i++) {
+          traverse(coords[i]);
+        }
+      }
+    };
 
-    let minLon = Math.min(...lons);
-    let maxLon = Math.max(...lons);
-    let minLat = Math.min(...lats);
-    let maxLat = Math.max(...lats);
+    activeLayersToScan.forEach(l => {
+      if (!l || !l.geoJson || !l.visible) return;
+      const feats = getMatchingFeaturesForLayer(l);
+      feats.forEach((f: any) => {
+        if (f && f.geometry) {
+          traverse(f.geometry.coordinates);
+        }
+      });
+    });
 
-    // If single point, expand bounds slightly
+    // Collect coordinates from active data points
+    groupList.forEach((g) => {
+      if (g.centroidLon && g.centroidLat && (g.centroidLon !== 78.96 || g.centroidLat !== 20.59)) {
+        addCoord(g.centroidLon, g.centroidLat);
+      }
+    });
+
+    if (minLon === Infinity || maxLon === -Infinity || minLat === Infinity || maxLat === -Infinity) {
+      return defaultBounds;
+    }
+
+    // If single point or flat line, expand bounds
     if (minLon === maxLon) {
       minLon -= 1.0;
       maxLon += 1.0;
@@ -665,25 +1349,25 @@ export default function GisChoroplethMap({
       maxLat += 1.0;
     }
 
-    // Add 15% padding to bounds so centroids are not right on the border
-    const lonPadding = (maxLon - minLon) * 0.15;
-    const latPadding = (maxLat - minLat) * 0.15;
+    // Add 10% padding to bounds so shapes and centroids fit comfortably in view
+    const lonPadding = (maxLon - minLon) * 0.10;
+    const latPadding = (maxLat - minLat) * 0.10;
 
     return {
-      minLon: Math.max(65.0, minLon - lonPadding),
-      maxLon: Math.min(99.0, maxLon + lonPadding),
-      minLat: Math.max(5.0, minLat - latPadding),
-      maxLat: Math.min(39.0, maxLat + latPadding),
+      minLon: Math.max(-180, minLon - lonPadding),
+      maxLon: Math.min(180, maxLon + lonPadding),
+      minLat: Math.max(-85, minLat - latPadding),
+      maxLat: Math.min(85, maxLat + latPadding),
     };
-  }, [groupList]);
+  }, [groupList, effectiveLayers, selectedState, selectedDistrict, districtStateMap]);
 
   // Five-color gradient for groundwater parameter exceedance percentage (customizable classes)
   const getColorForExceedance = (pct: number): string => {
     if (pct === 0) return nilColor; // Nil Exceedance color
-    if (activeClasses && activeClasses.length > 0) {
-      const matched = activeClasses.find(c => pct <= c.limit);
-      if (matched) return matched.color;
-      return activeClasses[activeClasses.length - 1].color;
+    if (activeClasses && Array.isArray(activeClasses) && activeClasses.length > 0) {
+      const matched = activeClasses.find(c => c && typeof c.limit === "number" && pct <= c.limit);
+      if (matched && matched.color) return matched.color;
+      return activeClasses[activeClasses.length - 1]?.color || "#22c55e";
     }
     if (pct <= 10) return "#22c55e"; // Green (Low)
     if (pct <= 25) return "#eab308"; // Yellow (Moderate)
@@ -694,7 +1378,10 @@ export default function GisChoroplethMap({
 
   // Projection coordinate helpers - Geospatial Equirectangular/Mercator with true aspect-ratio scaling
   const project = (lon: number, lat: number, width: number, height: number): [number, number] => {
-    const { minLon, maxLon, minLat, maxLat } = mapBounds;
+    let { minLon, maxLon, minLat, maxLat } = mapBounds;
+    if (!Number.isFinite(minLon) || !Number.isFinite(maxLon) || !Number.isFinite(minLat) || !Number.isFinite(maxLat)) {
+      minLon = 68.1; maxLon = 97.4; minLat = 8.0; maxLat = 36.0;
+    }
 
     const midLon = (minLon + maxLon) / 2;
     const midLat = (minLat + maxLat) / 2;
@@ -712,7 +1399,7 @@ export default function GisChoroplethMap({
     // Uniform spatial scale (pixels per degree of latitude/effective longitude)
     const scaleX = availW / spanXDeg;
     const scaleY = availH / spanYDeg;
-    const fitScale = Math.min(scaleX, scaleY);
+    const fitScale = Math.min(scaleX, scaleY) || 1;
 
     const midX = width / 2;
     const midY = height / 2;
@@ -725,11 +1412,18 @@ export default function GisChoroplethMap({
     const x = (screenX0 - midX) * zoom + midX + panX;
     const y = (screenY0 - midY) * zoom + midY + panY;
 
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return [width / 2, height / 2];
+    }
+
     return [x, y];
   };
 
   const unproject = (x: number, y: number, width: number, height: number): [number, number] => {
-    const { minLon, maxLon, minLat, maxLat } = mapBounds;
+    let { minLon, maxLon, minLat, maxLat } = mapBounds;
+    if (!Number.isFinite(minLon) || !Number.isFinite(maxLon) || !Number.isFinite(minLat) || !Number.isFinite(maxLat)) {
+      minLon = 68.1; maxLon = 97.4; minLat = 8.0; maxLat = 36.0;
+    }
 
     const midLon = (minLon + maxLon) / 2;
     const midLat = (minLat + maxLat) / 2;
@@ -743,7 +1437,7 @@ export default function GisChoroplethMap({
     const availW = Math.max(10, width - padX * 2);
     const availH = Math.max(10, height - padY * 2);
 
-    const fitScale = Math.min(availW / spanXDeg, availH / spanYDeg);
+    const fitScale = Math.min(availW / spanXDeg, availH / spanYDeg) || 1;
 
     const midX = width / 2;
     const midY = height / 2;
@@ -760,13 +1454,17 @@ export default function GisChoroplethMap({
     return [lon, lat];
   };
 
-  // Helper to find a matched statistical group for a given GeoJSON feature using fuzzy matching
+  // Helper to find a matched statistical group for a given GeoJSON feature using fuzzy matching + spatial point-in-polygon
   const findGroupForFeature = (f: any, gList: any[]) => {
-    if (!f || !f.properties) return null;
+    if (!f || typeof f !== "object" || !f.properties) return null;
     
     if (featureMatchCache.current.has(f)) {
-      const cachedName = featureMatchCache.current.get(f);
-      if (cachedName) return gList.find(g => g.name === cachedName) || null;
+      const cachedVal = featureMatchCache.current.get(f);
+      if (typeof cachedVal === "string") {
+        return gList.find(g => g.name === cachedVal) || null;
+      } else if (cachedVal && typeof cachedVal === "object") {
+        return cachedVal;
+      }
       return null;
     }
 
@@ -814,10 +1512,44 @@ export default function GisChoroplethMap({
       return 1 - dist / maxLen;
     };
 
+    // Extract feature's state and district property values if available
+    let fState = "";
+    let fDistrict = "";
+    if (f.properties) {
+      for (const [k, v] of Object.entries(f.properties)) {
+        const kClean = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const vStr = String(v || "").trim();
+        if (!vStr) continue;
+        if (["state", "statename", "stname", "stnm", "st", "statecode", "stcode", "statename", "stname"].some(x => kClean === x || kClean.includes("state") || kClean.includes("stname"))) {
+          if (!fState) fState = vStr;
+        }
+        if (["district", "districtname", "distname", "dtname", "distnm", "dt", "distname", "districtname"].some(x => kClean === x || kClean.includes("district") || kClean.includes("dist"))) {
+          if (!fDistrict) fDistrict = vStr;
+        }
+      }
+    }
+
     let bestGroup: any = null;
     let bestScore = 0;
 
     for (const g of gList) {
+      // Prevent matching feature to group if State properties contradict
+      if (g.state && fState) {
+        const normGS = norm(g.state);
+        const normFS = norm(fState);
+        if (normGS && normFS && normGS !== normFS && !normGS.includes(normFS) && !normFS.includes(normGS)) {
+          continue;
+        }
+      }
+      // Prevent matching feature to group if District properties contradict (ignoring numeric ID properties)
+      if (g.district && fDistrict && !/^\d+$/.test(fDistrict.trim())) {
+        const normGD = norm(g.district);
+        const normFD = norm(fDistrict);
+        if (normGD && normFD && normGD !== normFD && !normGD.includes(normFD) && !normFD.includes(normGD)) {
+          continue;
+        }
+      }
+
       for (const val of propValues) {
         // First check exact normalized equality
         const score = getFuzzyScore(val, g.name);
@@ -833,46 +1565,72 @@ export default function GisChoroplethMap({
       featureMatchCache.current.set(f, bestGroup.name);
       return bestGroup;
     }
+
+    // SPATIAL POINT-IN-POLYGON (PIP) FALLBACK MATCHING:
+    // If string match score < 0.55, check which data points/centroids in gList lie inside feature f
+    if (f.geometry) {
+      const insideGroups = gList.filter((g) => {
+        if (!g.centroidLon || !g.centroidLat) return false;
+        if (g.centroidLon === 78.96 && g.centroidLat === 20.59) return false;
+        return isPointInFeature(g.centroidLon, g.centroidLat, f);
+      });
+
+      if (insideGroups.length > 0) {
+        let totalSamples = 0;
+        let failCount = 0;
+        let sumVal = 0;
+        insideGroups.forEach((g) => {
+          totalSamples += g.totalSamples || 0;
+          failCount += g.failCount || 0;
+          sumVal += (g.avgValue || 0) * (g.totalSamples || 1);
+        });
+
+        const pctExceedance = totalSamples > 0 ? (failCount / totalSamples) * 100 : 0;
+        const avgValue = totalSamples > 0 ? sumVal / totalSamples : 0;
+
+        const featName = String(
+          f.properties?.label ||
+          f.properties?.name ||
+          f.properties?.Name ||
+          f.properties?.NAME ||
+          f.properties?.DISTRICT ||
+          f.properties?.District ||
+          f.properties?.BLOCK ||
+          f.properties?.Block ||
+          f.properties?.STNAME ||
+          Object.values(f.properties)[0] ||
+          "Region"
+        ).trim();
+
+        const spatialGroup: GroupData = {
+          name: featName,
+          centroidLon: insideGroups[0].centroidLon,
+          centroidLat: insideGroups[0].centroidLat,
+          totalSamples,
+          failCount,
+          pctExceedance,
+          avgValue,
+        };
+
+        featureMatchCache.current.set(f, spatialGroup);
+        return spatialGroup;
+      }
+    }
+
     featureMatchCache.current.set(f, null);
     return null;
   };
 
   // Helper to check if a feature matches the selectedState or selectedDistrict filters
-  const checkIfFeatureMatchesFilter = (f: any, gList: any[]): boolean => {
-    if (!f || !f.properties) return false;
-
-    const selDist = selectedDistrict ? selectedDistrict.trim().toLowerCase() : "";
-    const selState = selectedState ? selectedState.trim().toLowerCase() : "";
-
-    if (!selDist && !selState) return false;
-
-    // Gather all string property values from the feature
-    const propValues = Object.values(f.properties).map(v => String(v).trim().toLowerCase());
-
-    // Check fuzzy match with the group list
-    const matchedGroup = findGroupForFeature(f, gList);
-    const matchedGroupName = matchedGroup ? matchedGroup.name.trim().toLowerCase() : "";
-
-    if (selDist) {
-      // Check direct match
-      const propMatch = propValues.some(val => val === selDist || val.includes(selDist) || selDist.includes(val));
-      const groupMatch = matchedGroupName && (matchedGroupName === selDist || matchedGroupName.includes(selDist) || selDist.includes(matchedGroupName));
-      if (propMatch || groupMatch) return true;
-    } else if (selState) {
-      // Check direct match
-      const propMatch = propValues.some(val => val === selState || val.includes(selState) || selState.includes(val));
-      const groupMatch = matchedGroupName && (matchedGroupName === selState || matchedGroupName.includes(selState) || selState.includes(matchedGroupName));
-      if (propMatch || groupMatch) return true;
-    }
-
-    return false;
+  const checkIfFeatureMatchesFilter = (f: any, gList?: any[]): boolean => {
+    return featureMatchesSelection(f, selectedState, selectedDistrict, districtStateMap);
   };
 
   // A4 layout configurations
   const layoutSizes = useMemo(() => ({
-    default: { width: 650, height: 500, style: "w-full lg:w-2/3 h-[500px]" },
-    "a4-portrait": { width: 595, height: 842, style: "w-full max-w-[500px] aspect-[1/1.414] h-auto border border-slate-200 shadow-lg mx-auto" },
-    "a4-landscape": { width: 842, height: 595, style: "w-full max-w-[750px] aspect-[1.414/1] h-auto border border-slate-200 shadow-lg mx-auto" },
+    default: { width: 650, height: 500, style: "w-full lg:w-2/3 min-h-[500px]" },
+    "a4-portrait": { width: 595, height: 842, style: "w-full max-w-[500px] min-h-[600px] border border-slate-200 shadow-lg mx-auto" },
+    "a4-landscape": { width: 842, height: 595, style: "w-full max-w-[750px] min-h-[500px] border border-slate-200 shadow-lg mx-auto" },
   }), []);
 
   const currentLayout = layoutSizes[layoutMode] || layoutSizes.default;
@@ -898,7 +1656,7 @@ export default function GisChoroplethMap({
     if (transparentBackground) {
       ctx.clearRect(0, 0, width, height);
     } else {
-      ctx.fillStyle = "#f8fafc";
+      ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, width, height);
     }
 
@@ -1018,9 +1776,29 @@ export default function GisChoroplethMap({
       ctx.restore();
     }
 
-    const activeLayers = (layers || []).filter(l => l.visible && l.geoJson);
+    const userLayers = (effectiveLayers || []).filter(l => l.visible && l.geoJson);
+    const defaultIndiaLayers: ShapefileLayer[] = [
+      {
+        id: "india-default-layer",
+        name: "India Boundary",
+        visible: true,
+        strokeColor: "#0f172a",
+        strokeWidth: 1.8,
+        fillColor: "#e2e8f0",
+        fillOpacity: 0.1,
+        showLabels: true,
+        labelKey: "name",
+        labelColor: "#0f172a",
+        labelSize: 10,
+        geoJson: {
+          type: "FeatureCollection",
+          features: [INDIA_BOUNDARY]
+        }
+      }
+    ];
+    const activeLayers = userLayers.length > 0 ? userLayers : defaultIndiaLayers;
     const hasLayers = activeLayers.length > 0;
-    const shouldDrawIndiaBoundary = !hasLayers || showIndiaBoundary;
+    const shouldDrawIndiaBoundary = (userLayers.length === 0 && isStateAll(selectedState)) || (showIndiaBoundary && isStateAll(selectedState));
 
     // Draw grid background if transparent background is OFF and grid lines are enabled
     if (!transparentBackground && showGridLines) {
@@ -1038,14 +1816,6 @@ export default function GisChoroplethMap({
         ctx.lineTo(width, y);
         ctx.stroke();
       }
-    }
-
-    if (gList.length === 0) {
-      ctx.fillStyle = "#64748b";
-      ctx.font = `bold 14px ${fontFamily}`;
-      ctx.textAlign = "center";
-      ctx.fillText("No spatial data available to plot.", width / 2, height / 2);
-      return;
     }
 
     // Draw high-fidelity Latitude/Longitude Grid lines
@@ -1111,167 +1881,215 @@ export default function GisChoroplethMap({
 
     // MODE A: REGION-BASED SHAPEFILE CHOROPLETH (Colors uploaded shapefile features directly)
     if (choroplethMode === "region" && hasLayers) {
-      activeLayers.forEach((layer) => {
+      // 1. Draw Primary Fill Layer
+      if (primaryLayer && primaryLayer.geoJson) {
         try {
-          if (!layer || !layer.geoJson) return;
           ctx.save();
-          
-          const strokeColor = layer.strokeColor || "#475569";
-          const strokeWidth = layer.strokeWidth || 1.0;
-          const features = layer.geoJson.features || (layer.geoJson.type === "Feature" ? [layer.geoJson] : []);
+          const strokeColor = primaryLayer.strokeColor || "#475569";
+          const strokeWidth = primaryLayer.strokeWidth || 1.0;
+          const features = getMatchingFeaturesForLayer(primaryLayer);
 
           features.forEach((f: any) => {
             try {
               if (!f || !f.geometry) return;
 
-          const matchedGroup = findGroupForFeature(f, gList);
-          const finalFillColor = matchedGroup 
-            ? getColorForExceedance(matchedGroup.pctExceedance)
-            : (transparentBackground ? "rgba(226, 232, 240, 0.05)" : "rgba(226, 232, 240, 0.45)");
+              const matchedGroup = findGroupForFeature(f, gList);
+              const fallbackColor = primaryLayer.fillColor || (transparentBackground ? "rgba(226, 232, 240, 0.25)" : "#e2e8f0");
+              const finalFillColor = matchedGroup 
+                ? getColorForExceedance(matchedGroup.pctExceedance)
+                : fallbackColor;
 
-          const drawPolygonRing = (ring: any[]) => {
-            if (!ring || !Array.isArray(ring) || ring.length === 0) return;
-            
-            // PRECOMPUTE SCREEN COORDINATES TO AVOID RE-PROJECTING 3 TIMES
-            const screenPts: [number, number][] = [];
-            ring.forEach((pt: any) => {
-              if (!pt || !Array.isArray(pt) || pt.length < 2) return;
-              const [lon, lat] = pt;
-              if (typeof lon !== "number" || typeof lat !== "number" || isNaN(lon) || isNaN(lat)) return;
-              screenPts.push(project(lon, lat, width, height));
-            });
-            if (screenPts.length === 0) return;
+              const drawPolygonRing = (ring: any[]) => {
+                if (!ring || !Array.isArray(ring) || ring.length === 0) return;
+                
+                const screenPts: [number, number][] = [];
+                ring.forEach((pt: any) => {
+                  if (!pt || !Array.isArray(pt) || pt.length < 2) return;
+                  const [lon, lat] = pt;
+                  if (typeof lon !== "number" || typeof lat !== "number" || isNaN(lon) || isNaN(lat)) return;
+                  screenPts.push(project(lon, lat, width, height));
+                });
+                if (screenPts.length === 0) return;
 
-            // Build path and find local vertical bounding box
-            ctx.beginPath();
-            let minY = Infinity;
-            let maxY = -Infinity;
-            
-            screenPts.forEach(([sx, sy], idx) => {
-              if (idx === 0) ctx.moveTo(sx, sy);
-              else ctx.lineTo(sx, sy);
-              if (Number.isFinite(sy)) {
-                if (sy < minY) minY = sy;
-                if (sy > maxY) maxY = sy;
-              }
-            });
-            ctx.closePath();
-            
-            ctx.fillStyle = finalFillColor;
-            ctx.fill();
+                ctx.beginPath();
+                let minY = Infinity;
+                let maxY = -Infinity;
+                
+                screenPts.forEach(([sx, sy], idx) => {
+                  if (idx === 0) ctx.moveTo(sx, sy);
+                  else ctx.lineTo(sx, sy);
+                  if (Number.isFinite(sy)) {
+                    if (sy < minY) minY = sy;
+                    if (sy > maxY) maxY = sy;
+                  }
+                });
+                ctx.closePath();
+                
+                ctx.fillStyle = finalFillColor;
+                ctx.fill();
 
-            // Guard against divide by zero, infinite values, or extreme shapes
-            if (Number.isFinite(minY) && Number.isFinite(maxY) && maxY > minY) {
-              // Apply a premium flat glossy sheen overlay clipped to the polygon ring bounds
-              ctx.save();
+                if (primaryLayer.showStroke !== false) {
+                  ctx.strokeStyle = matchedGroup ? "#1e293b" : strokeColor;
+                  ctx.lineWidth = matchedGroup ? 1.0 : strokeWidth;
+                  ctx.stroke();
+                }
+              };
 
-            }
+              const drawGeom = (geom: any) => {
+                if (!geom) return;
+                if (geom.type === "Polygon") {
+                  geom.coordinates.forEach((ring: any[]) => drawPolygonRing(ring));
+                } else if (geom.type === "MultiPolygon") {
+                  geom.coordinates.forEach((poly: any[][]) => {
+                    poly.forEach((ring: any[]) => drawPolygonRing(ring));
+                  });
+                } else if (geom.type === "GeometryCollection") {
+                  geom.geometries?.forEach((g: any) => drawGeom(g));
+                }
+              };
 
-            if (layer.showStroke !== false) {
-              ctx.strokeStyle = matchedGroup ? "#1e293b" : strokeColor;
-              ctx.lineWidth = matchedGroup ? 1.0 : strokeWidth;
-              ctx.stroke();
-            }
-          };
+              drawGeom(f.geometry);
 
-          const drawGeom = (geom: any) => {
-            if (!geom) return;
-            if (geom.type === "Polygon") {
-              geom.coordinates.forEach((ring: any[]) => drawPolygonRing(ring));
-            } else if (geom.type === "MultiPolygon") {
-              geom.coordinates.forEach((poly: any[][]) => {
-                poly.forEach((ring: any[]) => drawPolygonRing(ring));
-              });
-            } else if (geom.type === "GeometryCollection") {
-              geom.geometries?.forEach((g: any) => drawGeom(g));
-            }
-          };
-
-          drawGeom(f.geometry);
-
-          // Labels for region mode showing exceedance percentage
-          if (layer.showLabels && layer.labelKey) {
-            let avgLon = 0, avgLat = 0, count = 0;
-            const accum = (ring: any[]) => {
-              if (!ring || !Array.isArray(ring)) return;
-              ring.forEach((pt: any) => {
-                if (!pt || !Array.isArray(pt) || pt.length < 2) return;
-                const [lon, lat] = pt;
-                if (typeof lon !== "number" || typeof lat !== "number" || isNaN(lon) || isNaN(lat)) return;
-                avgLon += lon;
-                avgLat += lat;
-                count++;
-              });
-            };
-            
-            const geom = f.geometry;
-            if (geom.type === "Polygon") {
-              geom.coordinates.forEach(accum);
-            } else if (geom.type === "MultiPolygon") {
-              geom.coordinates.forEach((poly: any[][]) => poly.forEach(accum));
-            }
-            
-            if (count > 0) {
-              const lon = avgLon / count;
-              const lat = avgLat / count;
-              const [sx, sy] = project(lon, lat, width, height);
-              
-              if (sx >= 0 && sx <= width && sy >= 0 && sy <= height) {
-                const baseLabel = String(f.properties?.[layer.labelKey] || "");
-                const isLayerState = (layer.name || "").toLowerCase().includes("state");
-                const isLayerDist = (layer.name || "").toLowerCase().includes("dist") || (layer.name || "").toLowerCase().includes("district");
-                const isLayerBlock = (layer.name || "").toLowerCase().includes("block");
-                const showThisLayerLabels = showRegionNames && (
-                  isLayerState ? showStateNames : isLayerDist ? showDistrictNames : isLayerBlock ? showBlockNames : true
-                );
-                if (showThisLayerLabels && baseLabel) {
-                  const labelText = nameOverrides[baseLabel] || baseLabel;
-                  const labelLower = labelText.trim().toLowerCase();
-                  if (!drawnNames.has(labelLower)) {
-                    drawnNames.add(labelLower);
-                    ctx.font = `${stateFontStyle} ${stateFontSize || layer.labelSize || 9}px ${stateFontFamily || "sans-serif"}`;
-                    ctx.fillStyle = stateFontColor || layer.labelColor || "#0f172a";
-                    ctx.textAlign = "center";
-                    ctx.textBaseline = "middle";
-                    const offset = labelOffsets[baseLabel] || labelOffsets[labelText] || { dx: 0, dy: 0 };
-                    const finalSx = sx + offset.dx;
-                    const finalSy = sy + offset.dy;
-                    ctx.fillText(labelText, finalSx, finalSy);
-
-                    // Draw sub-label (% of samples above permissible limit) if match found in gList
-                    if (showExceedanceSubLabel) {
-                      const match = gList.find((g) => g.name.toLowerCase() === baseLabel.toLowerCase() || g.name.toLowerCase() === labelText.toLowerCase());
-                      if (match) {
-                        ctx.font = `${subLabelFontStyle} ${subLabelFontSize}px ${subLabelFontFamily || "sans-serif"}`;
-                        ctx.fillStyle = subLabelFontColor;
+              // Labels for primary region mode showing exceedance percentage
+              if (primaryLayer.showLabels && primaryLayer.labelKey) {
+                let avgLon = 0, avgLat = 0, count = 0;
+                const accum = (ring: any[]) => {
+                  if (!ring || !Array.isArray(ring)) return;
+                  ring.forEach((pt: any) => {
+                    if (!pt || !Array.isArray(pt) || pt.length < 2) return;
+                    const [lon, lat] = pt;
+                    if (typeof lon !== "number" || typeof lat !== "number" || isNaN(lon) || isNaN(lat)) return;
+                    avgLon += lon;
+                    avgLat += lat;
+                    count++;
+                  });
+                };
+                
+                const geom = f.geometry;
+                if (geom.type === "Polygon") {
+                  geom.coordinates.forEach(accum);
+                } else if (geom.type === "MultiPolygon") {
+                  geom.coordinates.forEach((poly: any[][]) => poly.forEach(accum));
+                }
+                
+                if (count > 0) {
+                  const lon = avgLon / count;
+                  const lat = avgLat / count;
+                  const [sx, sy] = project(lon, lat, width, height);
+                  
+                  if (sx >= 0 && sx <= width && sy >= 0 && sy <= height) {
+                    const baseLabel = String(f.properties?.[primaryLayer.labelKey] || "");
+                    const isLayerState = (primaryLayer.name || "").toLowerCase().includes("state");
+                    const isLayerDist = (primaryLayer.name || "").toLowerCase().includes("dist") || (primaryLayer.name || "").toLowerCase().includes("district");
+                    const isLayerBlock = (primaryLayer.name || "").toLowerCase().includes("block");
+                    const showThisLayerLabels = showRegionNames && (
+                      isLayerState ? showStateNames : isLayerDist ? showDistrictNames : isLayerBlock ? showBlockNames : true
+                    );
+                    if (showThisLayerLabels && baseLabel) {
+                      const labelText = nameOverrides[baseLabel] || baseLabel;
+                      const labelLower = labelText.trim().toLowerCase();
+                      if (!drawnNames.has(labelLower)) {
+                        drawnNames.add(labelLower);
+                        ctx.font = `${stateFontStyle} ${stateFontSize || primaryLayer.labelSize || 9}px ${stateFontFamily || "sans-serif"}`;
+                        ctx.fillStyle = stateFontColor || primaryLayer.labelColor || "#0f172a";
                         ctx.textAlign = "center";
-                        ctx.textBaseline = "top";
-                        let subText = `(${match.pctExceedance.toFixed(1)}%)`;
-                        if (subLabelFormat === "full") subText = `(${match.pctExceedance.toFixed(1)}% of samples above permissible limit)`;
-                        else if (subLabelFormat === "exceedance") subText = `(${match.pctExceedance.toFixed(1)}% Exceedance)`;
-                        else if (subLabelFormat === "short_limit") subText = `(${match.pctExceedance.toFixed(1)}% samples > limit)`;
-                        const subY = finalSy + Math.round((stateFontSize || layer.labelSize || 9) / 2) + 2;
-                        ctx.fillText(subText, finalSx, subY);
-                      }
-                    }
+                        ctx.textBaseline = "middle";
+                        const offset = labelOffsets[baseLabel] || labelOffsets[labelText] || { dx: 0, dy: 0 };
+                        const finalSx = sx + offset.dx;
+                        const finalSy = sy + offset.dy;
+                        ctx.fillText(labelText, finalSx, finalSy);
 
-                    renderedLabelPositionsRef.current.set(baseLabel.toLowerCase(), { sx: finalSx, sy: finalSy, name: baseLabel });
-                    if (labelText !== baseLabel) {
-                      renderedLabelPositionsRef.current.set(labelText.toLowerCase(), { sx: finalSx, sy: finalSy, name: baseLabel });
+                        // Draw sub-label (% of samples above permissible limit) if match found in gList
+                        if (showExceedanceSubLabel) {
+                          const match = gList.find((g) => g.name.toLowerCase() === baseLabel.toLowerCase() || g.name.toLowerCase() === labelText.toLowerCase());
+                          if (match) {
+                            ctx.font = `${subLabelFontStyle} ${subLabelFontSize}px ${subLabelFontFamily || "sans-serif"}`;
+                            ctx.fillStyle = subLabelFontColor;
+                            ctx.textAlign = "center";
+                            ctx.textBaseline = "top";
+                            let subText = `(${match.pctExceedance.toFixed(1)}%)`;
+                            if (subLabelFormat === "full") subText = `(${match.pctExceedance.toFixed(1)}% of samples above permissible limit)`;
+                            else if (subLabelFormat === "exceedance") subText = `(${match.pctExceedance.toFixed(1)}% Exceedance)`;
+                            else if (subLabelFormat === "short_limit") subText = `(${match.pctExceedance.toFixed(1)}% samples > limit)`;
+                            const subY = finalSy + Math.round((stateFontSize || primaryLayer.labelSize || 9) / 2) + 2;
+                            ctx.fillText(subText, finalSx, subY);
+                          }
+                        }
+
+                        renderedLabelPositionsRef.current.set(baseLabel.toLowerCase(), { sx: finalSx, sy: finalSy, name: baseLabel });
+                        if (labelText !== baseLabel) {
+                          renderedLabelPositionsRef.current.set(labelText.toLowerCase(), { sx: finalSx, sy: finalSy, name: baseLabel });
+                        }
+                      }
                     }
                   }
                 }
               }
-            }
-          }
             } catch (err) {
-              console.error("Error rendering feature in Mode A:", err);
+              console.error("Error rendering feature in primaryLayer Mode A:", err);
             }
           });
 
           ctx.restore();
         } catch (err) {
-          console.error("Error rendering layer in Mode A:", err);
+          console.error("Error rendering primaryLayer in Mode A:", err);
+        }
+      }
+
+      // 2. Draw Secondary Layers (Boundary Outlines ONLY)
+      secondaryLayers.forEach((secLayer) => {
+        try {
+          if (!secLayer || !secLayer.geoJson) return;
+          ctx.save();
+          const strokeColor = secLayer.strokeColor || "#334155";
+          const strokeWidth = secLayer.strokeWidth || 1.8;
+          const features = getMatchingFeaturesForLayer(secLayer);
+
+          features.forEach((f: any) => {
+            try {
+              if (!f || !f.geometry) return;
+
+              const drawPolygonRingOutline = (ring: any[]) => {
+                if (!ring || !Array.isArray(ring) || ring.length === 0) return;
+                ctx.beginPath();
+                ring.forEach((pt: any, idx: number) => {
+                  if (!pt || !Array.isArray(pt) || pt.length < 2) return;
+                  const [lon, lat] = pt;
+                  if (typeof lon !== "number" || typeof lat !== "number" || isNaN(lon) || isNaN(lat)) return;
+                  const [sx, sy] = project(lon, lat, width, height);
+                  if (idx === 0) ctx.moveTo(sx, sy);
+                  else ctx.lineTo(sx, sy);
+                });
+                ctx.closePath();
+                if (secLayer.showStroke !== false) {
+                  ctx.strokeStyle = strokeColor;
+                  ctx.lineWidth = strokeWidth;
+                  ctx.stroke();
+                }
+              };
+
+              const drawGeomOutline = (geom: any) => {
+                if (!geom) return;
+                if (geom.type === "Polygon") {
+                  geom.coordinates.forEach((ring: any[]) => drawPolygonRingOutline(ring));
+                } else if (geom.type === "MultiPolygon") {
+                  geom.coordinates.forEach((poly: any[][]) => {
+                    poly.forEach((ring: any[]) => drawPolygonRingOutline(ring));
+                  });
+                } else if (geom.type === "GeometryCollection") {
+                  geom.geometries?.forEach((g: any) => drawGeomOutline(g));
+                }
+              };
+
+              drawGeomOutline(f.geometry);
+            } catch (err) {
+              console.error("Error rendering secondaryLayer outline:", err);
+            }
+          });
+
+          ctx.restore();
+        } catch (err) {
+          console.error("Error rendering secondaryLayer in Mode A:", err);
         }
       });
     } 
@@ -1314,6 +2132,8 @@ export default function GisChoroplethMap({
                 });
               });
             });
+          } else if (geom.type === "GeometryCollection") {
+            geom.geometries?.forEach((g: any) => drawGeomForClip(g));
           }
         };
 
@@ -1368,9 +2188,11 @@ export default function GisChoroplethMap({
           activeLayers.forEach(l => {
             try {
               if (!l || !l.geoJson) return;
-              const features = l.geoJson.features || (l.geoJson.type === "Feature" ? [l.geoJson] : []);
+              const features = getMatchingFeaturesForLayer(l);
               features.forEach(f => {
-                if (f && f.geometry) drawGeomForClip(f.geometry);
+                if (f && f.geometry) {
+                  drawGeomForClip(f.geometry);
+                }
               });
             } catch (err) {
               console.error("Error in clip drawing for layer:", err);
@@ -1388,8 +2210,10 @@ export default function GisChoroplethMap({
         }
 
         ctx.closePath();
+        ctx.clip();
         // Render Voronoi stretched to canvas
         ctx.drawImage(offCanvas, 0, 0, width, height);
+        ctx.restore();
 
 
       }
@@ -1433,9 +2257,11 @@ export default function GisChoroplethMap({
               }
             };
 
-            const features = layer.geoJson.features || (layer.geoJson.type === "Feature" ? [layer.geoJson] : []);
+            const features = getMatchingFeaturesForLayer(layer);
             features.forEach((f: any) => {
-              if (f && f.geometry) drawGeom(f.geometry);
+              if (f && f.geometry) {
+                drawGeom(f.geometry);
+              }
             });
             ctx.restore();
           } catch (err) {
@@ -1650,15 +2476,60 @@ export default function GisChoroplethMap({
         if (!drawnNames.has(labelLower)) {
           drawnNames.add(labelLower);
           ctx.save();
+
+          const offset = labelOffsets[g.name] || labelOffsets[displayName] || { dx: 0, dy: 0 };
+          const finalSx = Math.round(sx + offset.dx);
+          const finalSy = Math.round(sy + offset.dy);
+
+          // 3D Glossy Bubble Points Facility
+          if (show3DBubbles && Number.isFinite(finalSx) && Number.isFinite(finalSy)) {
+            const safePct = typeof g.pctExceedance === "number" && !isNaN(g.pctExceedance) ? g.pctExceedance : 0;
+            const bRadius = Math.min(14, Math.max(5, 5 + (safePct / 100) * 8));
+            const r0 = Math.max(0.1, bRadius * 0.1);
+            const r1 = Math.max(1, bRadius);
+            try {
+              const bubbleGrad = ctx.createRadialGradient(
+                finalSx - bRadius * 0.35,
+                finalSy - bRadius * 0.35 - 12,
+                r0,
+                finalSx,
+                finalSy - 12,
+                r1
+              );
+              const coreCol = getColorForExceedance(safePct) || "#22c55e";
+              bubbleGrad.addColorStop(0, "#ffffff");
+              bubbleGrad.addColorStop(0.35, coreCol);
+              bubbleGrad.addColorStop(1, "#0f172a");
+
+              ctx.beginPath();
+              ctx.arc(finalSx, finalSy - 12, r1, 0, 2 * Math.PI);
+              ctx.fillStyle = bubbleGrad;
+              ctx.shadowColor = "rgba(0,0,0,0.35)";
+              ctx.shadowBlur = 4;
+              ctx.shadowOffsetX = 1;
+              ctx.shadowOffsetY = 2;
+              ctx.fill();
+              ctx.shadowColor = "transparent";
+
+              ctx.strokeStyle = "#ffffff";
+              ctx.lineWidth = 1;
+              ctx.stroke();
+
+              // Specular sheen dot
+              ctx.beginPath();
+              ctx.arc(finalSx - bRadius * 0.3, finalSy - 12 - bRadius * 0.3, bRadius * 0.25, 0, 2 * Math.PI);
+              ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+              ctx.fill();
+            } catch (err) {
+              // Ignore any transient canvas gradient error safely
+            }
+          }
           
           // 1. Main State / UT / District Name Label
           ctx.font = `${stateFontStyle} ${stateFontSize}px ${stateFontFamily}, sans-serif`;
           ctx.fillStyle = stateFontColor;
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
-          const offset = labelOffsets[g.name] || labelOffsets[displayName] || { dx: 0, dy: 0 };
-          const finalSx = Math.round(sx + offset.dx);
-          const finalSy = Math.round(sy + offset.dy);
           ctx.fillText(labelText, finalSx, finalSy);
 
           // 2. Sub-label: (% of samples above permissible limit)
@@ -1704,32 +2575,40 @@ export default function GisChoroplethMap({
 
     // Draw Customizable map legend with transparent/translucent background (Rule 4 & 6 & 8) - Draggable!
     ctx.save();
-    const lW = 160;
-    const lH = Math.max(110, (activeClasses.length + 2) * 15 + 30);
-    const lX = legendPos.x === 420 ? Math.round(width - 180) : Math.round(legendPos.x);
-    const lY = legendPos.y === 280 ? Math.round(height - lH - 20) : Math.round(legendPos.y);
+    const lW = 145;
+    const lH = Math.max(85, (activeClasses.length + 1) * 12 + 24);
+    const lX = legendPos.x === 420 ? Math.round(width - 160) : Math.round(legendPos.x);
+    const lY = legendPos.y === 280 ? Math.round(height - lH - 16) : Math.round(legendPos.y);
+
+    const drawRectRounded = (x: number, y: number, w: number, h: number, r: number) => {
+      if (typeof (ctx as any).roundRect === "function") {
+        (ctx as any).roundRect(x, y, w, h, r);
+      } else {
+        ctx.rect(x, y, w, h);
+      }
+    };
 
     if (!legendTransparent) {
-      ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.94)";
       ctx.strokeStyle = "rgba(15, 23, 42, 0.15)";
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.roundRect(lX, lY, lW, lH, 12);
+      drawRectRounded(lX, lY, lW, lH, 8);
       ctx.fill();
       ctx.stroke();
     } else {
-      ctx.strokeStyle = "rgba(148, 163, 184, 0.25)";
-      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = "rgba(148, 163, 184, 0.3)";
+      ctx.setLineDash([3, 3]);
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.roundRect(lX, lY, lW, lH, 12);
+      drawRectRounded(lX, lY, lW, lH, 8);
       ctx.stroke();
     }
 
-    ctx.font = `${legendFontStyle} ${legendFontSize}px ${legendFontFamily}`;
+    ctx.font = `bold 8.5px ${legendFontFamily}`;
     ctx.fillStyle = legendFontColor;
     ctx.textAlign = "left";
-    ctx.fillText("% Exceedance Legend", lX + 12, lY + 20);
+    ctx.fillText("% Exceedance Legend", lX + 8, lY + 14);
 
     const activeLegendClasses: {color: string, label: string}[] = [];
     activeLegendClasses.push({ color: nilColor, label: nilLabel });
@@ -1746,18 +2625,18 @@ export default function GisChoroplethMap({
     });
 
     activeLegendClasses.forEach((item, idx) => {
-      const itemY = lY + 36 + idx * 13;
-      if (itemY + 10 < lY + lH) {
+      const itemY = lY + 26 + idx * 11.5;
+      if (itemY + 8 < lY + lH) {
         ctx.save();
         ctx.fillStyle = item.color;
         ctx.beginPath();
-        ctx.roundRect(lX + 12, itemY - 8, 9, 9, 2.5);
+        drawRectRounded(lX + 8, itemY - 7, 8, 8, 2);
         ctx.fill();
         ctx.restore();
 
-        ctx.font = `${legendFontStyle} ${legendFontSize}px ${legendFontFamily}`;
+        ctx.font = `${legendFontStyle} ${Math.min(legendFontSize, 8.5)}px ${legendFontFamily}`;
         ctx.fillStyle = legendFontColor;
-        ctx.fillText(item.label, lX + 27, itemY);
+        ctx.fillText(item.label, lX + 21, itemY);
       }
     });
     ctx.restore();
@@ -1786,6 +2665,23 @@ export default function GisChoroplethMap({
         ctx.fillRect(6, height - 6 - size, size, size);
         ctx.fillRect(width - 6 - size, height - 6 - size, size, size);
       }
+      ctx.restore();
+    }
+
+    if (gList.length === 0) {
+      ctx.save();
+      ctx.fillStyle = "rgba(241, 245, 249, 0.92)";
+      ctx.strokeStyle = "#cbd5e1";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(width / 2 - 130, height / 2 - 16, 260, 32, 10);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#475569";
+      ctx.font = `bold 11px ${fontFamily}`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("No sample data for active filter", width / 2, height / 2);
       ctx.restore();
     }
   };
@@ -1822,6 +2718,16 @@ export default function GisChoroplethMap({
 
   useEffect(() => {
     renderMap();
+    const timer1 = setTimeout(() => {
+      renderMap();
+    }, 50);
+    const timer2 = setTimeout(() => {
+      renderMap();
+    }, 200);
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+    };
   }, [
     groupList, 
     groupListPre,
@@ -1833,7 +2739,7 @@ export default function GisChoroplethMap({
     hoveredGroup, 
     mapBounds, 
     customMapTitle, 
-    layers, 
+    effectiveLayers, 
     activeClasses, 
     choroplethMode, 
     transparentBackground, 
@@ -1886,6 +2792,8 @@ export default function GisChoroplethMap({
     legendFontColor,
     nilColor,
     nilLabel,
+    selectedBoundaryLayerId,
+    primaryLayer,
     isVisible
   ]);
 
@@ -2009,13 +2917,33 @@ export default function GisChoroplethMap({
       // Unproject screen coordinates to geographic coordinates
       const [mouseLon, mouseLat] = unproject(x, y, width, height);
 
-      const activeLayers = (layers || []).filter((l) => l.visible && l.geoJson);
+      const userLayers = (effectiveLayers || []).filter((l) => l.visible && l.geoJson);
+      const defaultIndiaLayers: ShapefileLayer[] = [
+        {
+          id: "india-default-layer",
+          name: "India Boundary",
+          visible: true,
+          strokeColor: "#0f172a",
+          strokeWidth: 1.8,
+          fillColor: "#e2e8f0",
+          fillOpacity: 0.1,
+          showLabels: true,
+          labelKey: "name",
+          labelColor: "#0f172a",
+          labelSize: 10,
+          geoJson: {
+            type: "FeatureCollection",
+            features: [INDIA_BOUNDARY]
+          }
+        }
+      ];
+      const activeLayers = userLayers.length > 0 ? userLayers : defaultIndiaLayers;
       let foundGroup: GroupData | null = null;
 
       // 1. Polygon hit-test: check if mouse is inside any GeoJSON shapefile feature
       if (activeLayers.length > 0 && Number.isFinite(mouseLon) && Number.isFinite(mouseLat)) {
         for (const layer of activeLayers) {
-          const features = layer.geoJson.features || (layer.geoJson.type === "Feature" ? [layer.geoJson] : []);
+          const features = getMatchingFeaturesForLayer(layer);
           for (const f of features) {
             if (f && f.geometry && isPointInFeature(mouseLon, mouseLat, f)) {
               const matched = findGroupForFeature(f, groupList);
@@ -2109,12 +3037,32 @@ export default function GisChoroplethMap({
     const [lon, lat] = unproject(x, y, canvas.width, canvas.height);
 
     // 3. Find which feature was clicked
-    const activeLayers = (layers || []).filter(l => l.visible && l.geoJson);
+    const userLayers = (effectiveLayers || []).filter(l => l.visible && l.geoJson);
+    const defaultIndiaLayers: ShapefileLayer[] = [
+      {
+        id: "india-default-layer",
+        name: "India Boundary",
+        visible: true,
+        strokeColor: "#0f172a",
+        strokeWidth: 1.8,
+        fillColor: "#e2e8f0",
+        fillOpacity: 0.1,
+        showLabels: true,
+        labelKey: "name",
+        labelColor: "#0f172a",
+        labelSize: 10,
+        geoJson: {
+          type: "FeatureCollection",
+          features: [INDIA_BOUNDARY]
+        }
+      }
+    ];
+    const activeLayers = userLayers.length > 0 ? userLayers : defaultIndiaLayers;
     let clickedFeature: any = null;
     let clickedLayer: any = null;
 
     for (const layer of activeLayers) {
-      const features = layer.geoJson.features || (layer.geoJson.type === "Feature" ? [layer.geoJson] : []);
+      const features = getMatchingFeaturesForLayer(layer);
       for (const f of features) {
         if (f && f.geometry && isPointInFeature(lon, lat, f)) {
           clickedFeature = f;
@@ -2381,43 +3329,81 @@ export default function GisChoroplethMap({
           </p>
 
           {/* Season Selector */}
-          <div className="bg-slate-50/50 p-2.5 rounded-xl border border-slate-200/50">
-            <label className="text-[9px] font-black uppercase text-indigo-950 tracking-wider block mb-1.5 flex items-center gap-1">
-              <Calendar className="w-3 h-3 text-indigo-500" />
-              Season Filter
+          <div className="bg-slate-50/50 p-2.5 rounded-xl border border-slate-200/50 space-y-1.5">
+            <label className="text-[9px] font-black uppercase text-indigo-950 tracking-wider flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <Calendar className="w-3 h-3 text-indigo-500" />
+                Season Filter
+              </span>
+              {detectedSeasons.count === 1 && (
+                <span className="text-[8px] font-black text-amber-800 bg-amber-100/90 border border-amber-200 px-1.5 py-0.5 rounded uppercase">
+                  Single Season Sheet
+                </span>
+              )}
             </label>
             <div className="grid grid-cols-3 gap-1 bg-slate-200/50 p-0.5 rounded-lg">
               <button
                 onClick={() => setSeasonFilter("pre")}
+                disabled={!detectedSeasons.hasPre && detectedSeasons.hasPost}
+                title={!detectedSeasons.hasPre && detectedSeasons.hasPost ? "No Pre-Monsoon data in imported sheet" : "Show Pre-Monsoon Map"}
                 className={`py-1 rounded-md text-[10px] font-bold transition-all ${
                   seasonFilter === "pre"
                     ? "bg-white text-indigo-600 shadow-xs"
-                    : "text-slate-600 hover:text-slate-900"
+                    : !detectedSeasons.hasPre && detectedSeasons.hasPost
+                    ? "text-slate-400 opacity-50 cursor-not-allowed"
+                    : "text-slate-600 hover:text-slate-900 cursor-pointer"
                 }`}
               >
-                Pre-Mon
+                Pre-Mon {detectedSeasons.hasPre && !detectedSeasons.hasPost ? "✓" : ""}
               </button>
               <button
                 onClick={() => setSeasonFilter("post")}
+                disabled={!detectedSeasons.hasPost && detectedSeasons.hasPre}
+                title={!detectedSeasons.hasPost && detectedSeasons.hasPre ? "No Post-Monsoon data in imported sheet" : "Show Post-Monsoon Map"}
                 className={`py-1 rounded-md text-[10px] font-bold transition-all ${
                   seasonFilter === "post"
                     ? "bg-white text-indigo-600 shadow-xs"
-                    : "text-slate-600 hover:text-slate-900"
+                    : !detectedSeasons.hasPost && detectedSeasons.hasPre
+                    ? "text-slate-400 opacity-50 cursor-not-allowed"
+                    : "text-slate-600 hover:text-slate-900 cursor-pointer"
                 }`}
               >
-                Post-Mon
+                Post-Mon {detectedSeasons.hasPost && !detectedSeasons.hasPre ? "✓" : ""}
               </button>
               <button
                 onClick={() => setSeasonFilter("both")}
+                disabled={!detectedSeasons.hasPre || !detectedSeasons.hasPost}
+                title={
+                  !detectedSeasons.hasPre || !detectedSeasons.hasPost
+                    ? "Side-by-side comparison requires both Pre and Post Monsoon data in sheet"
+                    : "Show Both Seasons Side-by-Side"
+                }
                 className={`py-1 rounded-md text-[10px] font-bold transition-all ${
-                  seasonFilter === "both"
+                  seasonFilter === "both" && detectedSeasons.hasPre && detectedSeasons.hasPost
                     ? "bg-white text-indigo-600 shadow-xs"
-                    : "text-slate-600 hover:text-slate-900"
+                    : (!detectedSeasons.hasPre || !detectedSeasons.hasPost)
+                    ? "text-slate-400 opacity-50 cursor-not-allowed"
+                    : "text-slate-600 hover:text-slate-900 cursor-pointer"
                 }`}
               >
                 Both
               </button>
             </div>
+            {!detectedSeasons.hasPost && detectedSeasons.hasPre && (
+              <div className="text-[9.5px] font-medium text-amber-800 bg-amber-50/90 border border-amber-200/80 p-2 rounded-lg leading-snug">
+                💡 <strong>Single Season Detected:</strong> Sheet contains <strong>Pre-Monsoon</strong> data only. Choropleth map is automatically set to Pre-Monsoon mode.
+              </div>
+            )}
+            {!detectedSeasons.hasPre && detectedSeasons.hasPost && (
+              <div className="text-[9.5px] font-medium text-amber-800 bg-amber-50/90 border border-amber-200/80 p-2 rounded-lg leading-snug">
+                💡 <strong>Single Season Detected:</strong> Sheet contains <strong>Post-Monsoon</strong> data only. Choropleth map is automatically set to Post-Monsoon mode.
+              </div>
+            )}
+            {detectedSeasons.hasPre && detectedSeasons.hasPost && (
+              <div className="text-[9.5px] font-medium text-emerald-800 bg-emerald-50/90 border border-emerald-200/80 p-2 rounded-lg leading-snug">
+                ✨ <strong>Dual Seasons Detected:</strong> Sheet contains both Pre & Post Monsoon data. Side-by-side mode available.
+              </div>
+            )}
           </div>
 
           {/* Options */}
@@ -2468,7 +3454,149 @@ export default function GisChoroplethMap({
             </div>
           </div>
 
+          {/* Shapefile Layer Management & Upload */}
+          <div className="bg-slate-50/50 p-2.5 rounded-xl border border-slate-200/50 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[9px] font-black uppercase text-indigo-950 tracking-wider flex items-center gap-1.5">
+                <Layers className="w-3 h-3 text-indigo-600" /> Shapefile Layers ({effectiveLayers.length})
+              </span>
+              <label className="cursor-pointer px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all shadow-xs">
+                <Upload className="w-3 h-3" />
+                Upload .zip / .geojson
+                <input
+                  type="file"
+                  accept=".zip,.geojson,.json"
+                  multiple
+                  className="hidden"
+                  onChange={handleShapefileUpload}
+                />
+              </label>
+            </div>
 
+            {/* Primary Boundary Selection */}
+            {effectiveLayers.length > 0 && (
+              <div className="flex items-center justify-between gap-2 p-1.5 bg-white rounded-lg border border-slate-200 text-[10px]">
+                <span className="font-bold text-slate-700 shrink-0">Choropleth Boundary:</span>
+                <select
+                  value={selectedBoundaryLayerId}
+                  onChange={(e) => setSelectedBoundaryLayerId(e.target.value)}
+                  className="text-[10px] font-bold bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-slate-800 max-w-[140px] truncate"
+                >
+                  <option value="auto">Auto ({primaryLayer?.name || "Detect"})</option>
+                  {effectiveLayers.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name} {l.visible ? "" : "(Hidden)"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {effectiveLayers.length === 0 ? (
+              <div className="text-[10px] text-slate-400 italic p-2 bg-white/60 rounded-lg border border-dashed border-slate-200 text-center">
+                No custom shapefiles uploaded yet. Using default India boundary layer.
+              </div>
+            ) : (
+              <div className="space-y-1.5 max-h-52 overflow-y-auto pr-0.5">
+                {effectiveLayers.map((layer) => {
+                  const sampleFeatures = layer.geoJson?.features || (layer.geoJson?.type === "Feature" ? [layer.geoJson] : []);
+                  const propKeys = sampleFeatures[0]?.properties ? Object.keys(sampleFeatures[0].properties) : [];
+
+                  return (
+                    <div key={layer.id} className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEffectiveLayers((prev) =>
+                                prev.map((l) => (l.id === layer.id ? { ...l, visible: !l.visible } : l))
+                              );
+                            }}
+                            className={`p-1 rounded transition-colors ${
+                              layer.visible ? "text-indigo-600 hover:bg-indigo-50" : "text-slate-400 hover:bg-slate-100"
+                            }`}
+                            title={layer.visible ? "Hide layer" : "Show layer"}
+                          >
+                            {layer.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                          </button>
+                          <span className="text-[11px] font-bold text-slate-800 truncate" title={layer.name}>
+                            {layer.name}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEffectiveLayers((prev) => prev.filter((l) => l.id !== layer.id));
+                            triggerToast(`Removed shapefile layer: ${layer.name}`, "info");
+                          }}
+                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
+                          title="Delete layer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      {layer.visible && propKeys.length > 0 && (
+                        <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-slate-100">
+                          <div>
+                            <span className="text-[8px] font-bold uppercase text-slate-400 block mb-0.5">Label Attribute</span>
+                            <select
+                              value={layer.labelKey || ""}
+                              onChange={(e) => {
+                                const newKey = e.target.value;
+                                setEffectiveLayers((prev) =>
+                                  prev.map((l) => (l.id === layer.id ? { ...l, labelKey: newKey } : l))
+                                );
+                              }}
+                              className="w-full text-[9px] font-bold bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-slate-700"
+                            >
+                              <option value="">Auto-Detect</option>
+                              {propKeys.map((k) => (
+                                <option key={k} value={k}>
+                                  {k}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="flex items-center gap-1.5 self-end justify-end">
+                            <label className="flex flex-col items-center cursor-pointer">
+                              <span className="text-[8px] font-bold uppercase text-slate-400 mb-0.5">Stroke</span>
+                              <input
+                                type="color"
+                                value={layer.strokeColor || "#0f172a"}
+                                onChange={(e) => {
+                                  const color = e.target.value;
+                                  setEffectiveLayers((prev) =>
+                                    prev.map((l) => (l.id === layer.id ? { ...l, strokeColor: color } : l))
+                                  );
+                                }}
+                                className="w-5 h-5 rounded border border-slate-200 cursor-pointer p-0"
+                              />
+                            </label>
+                            <label className="flex flex-col items-center cursor-pointer">
+                              <span className="text-[8px] font-bold uppercase text-slate-400 mb-0.5">Fill</span>
+                              <input
+                                type="color"
+                                value={layer.fillColor || "#3b82f6"}
+                                onChange={(e) => {
+                                  const color = e.target.value;
+                                  setEffectiveLayers((prev) =>
+                                    prev.map((l) => (l.id === layer.id ? { ...l, fillColor: color } : l))
+                                  );
+                                }}
+                                className="w-5 h-5 rounded border border-slate-200 cursor-pointer p-0"
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           {/* Choropleth Mode Selector */}
           <div className="bg-slate-50/50 p-2.5 rounded-xl border border-slate-200/50 space-y-1.5">
@@ -2564,6 +3692,16 @@ export default function GisChoroplethMap({
                   className="rounded text-indigo-600 w-3.5 h-3.5"
                 />
                 <span className="text-[10px] font-bold text-slate-700">Draw India Fallback Border</span>
+              </label>
+
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={show3DBubbles}
+                  onChange={(e) => setShow3DBubbles(e.target.checked)}
+                  className="rounded text-indigo-600 w-3.5 h-3.5"
+                />
+                <span className="text-[10px] font-bold text-slate-700">3D Glossy Bubble Points</span>
               </label>
 
               <div className="col-span-2 pt-2 border-t border-slate-200/40 space-y-2">
@@ -3079,6 +4217,82 @@ export default function GisChoroplethMap({
               Classification & Ranges
             </span>
 
+            {/* Single Color & Multi Color Palette Customizer */}
+            <div className="space-y-1.5 bg-white p-2 rounded-lg border border-slate-200/80 shadow-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-extrabold text-slate-700 flex items-center gap-1">
+                  <Palette className="w-3 h-3 text-indigo-600" />
+                  Exceedance Color Scheme:
+                </span>
+                <span className="text-[7.5px] font-black px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100 uppercase">
+                  {CHOROPLETH_PALETTES.find(p => p.id === selectedPalette)?.badge || "Single Hue"}
+                </span>
+              </div>
+
+              {/* Select Dropdown */}
+              <select
+                value={selectedPalette}
+                onChange={(e) => applyPalette(e.target.value)}
+                className="w-full text-[9.5px] font-bold bg-slate-50 border border-slate-200 rounded-md p-1.5 text-slate-800 shadow-xs hover:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all cursor-pointer"
+              >
+                <optgroup label="🎨 Single Color Monochromatic Shades (Different Exceedance Levels)">
+                  {CHOROPLETH_PALETTES.filter(p => p.type === "single").map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="🌈 Multi-Color Ramps">
+                  {CHOROPLETH_PALETTES.filter(p => p.type === "multi").map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </optgroup>
+              </select>
+
+              {/* Active Color Ramp Shade Preview Bar */}
+              <div className="space-y-1 pt-0.5">
+                <div className="flex items-center justify-between text-[8px] font-bold text-slate-400 px-0.5">
+                  <span>Low Exceedance (Light)</span>
+                  <span>Severe Exceedance (Dark)</span>
+                </div>
+                <div className="flex items-center gap-0.5 p-0.5 bg-slate-100 rounded border border-slate-200/80 shadow-inner">
+                  {activeClasses.map((cls, idx) => (
+                    <div
+                      key={idx}
+                      className="h-4 flex-1 first:rounded-l last:rounded-r border border-black/10 transition-transform hover:scale-105"
+                      style={{ backgroundColor: cls.color }}
+                      title={`${cls.label}: ${cls.color}`}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Quick Single Color Palette Pills */}
+              <div className="grid grid-cols-4 gap-1 pt-1">
+                {[
+                  { id: "red-single", label: "🔴 Red Shades" },
+                  { id: "blue-single", label: "🔵 Blue Shades" },
+                  { id: "orange-single", label: "🟠 Orange Shades" },
+                  { id: "green-single", label: "🟢 Green Shades" },
+                  { id: "purple-single", label: "🟣 Purple Shades" },
+                  { id: "teal-single", label: "🩵 Teal Shades" },
+                  { id: "amber-single", label: "🟡 Amber Shades" },
+                  { id: "gray-single", label: "⚪ Gray Shades" },
+                ].map(item => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => applyPalette(item.id)}
+                    className={`py-1 px-0.5 rounded text-[8px] font-black border transition-all truncate ${
+                      selectedPalette === item.id
+                        ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                        : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Class Count Selector */}
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-500">Number of Classes (up to 5):</span>
@@ -3250,12 +4464,14 @@ export default function GisChoroplethMap({
         </div>
       </div>
 
+
+
       {/* Map and Side-Table Container Wrapper */}
-      <div className="flex-1 flex flex-col lg:flex-row gap-6 items-start min-w-0">
+      <div className="flex-1 flex flex-col lg:flex-row gap-6 items-start min-w-0 w-full">
 
         {/* Main Map Interactive Viewport */}
-        <div className={`flex flex-col sm:flex-row gap-4 ${currentLayout.style} relative flex-1 min-w-0 border border-slate-100 rounded-2xl bg-slate-50/30 overflow-hidden select-none`}>
-          <div className="flex-1 relative min-w-0 h-full flex items-center justify-center">
+        <div className={`flex flex-col sm:flex-row gap-4 ${currentLayout.style} relative flex-1 min-w-[320px] min-h-[500px] border border-slate-200 rounded-2xl bg-white shadow-xs overflow-hidden select-none`}>
+          <div className="flex-1 relative min-w-0 w-full h-full min-h-[480px] flex items-center justify-center p-2">
             <canvas
               ref={canvasRef}
               width={currentLayout.width * pixelRatio}
@@ -3271,16 +4487,17 @@ export default function GisChoroplethMap({
               }}
               className={`block bg-transparent pointer-events-auto mx-auto ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
               style={{
-                width: `${currentLayout.width}px`,
-                height: `${currentLayout.height}px`,
-                maxWidth: "100%",
-                maxHeight: "100%",
+                width: "100%",
+                height: "100%",
+                maxWidth: `${currentLayout.width}px`,
+                maxHeight: `${currentLayout.height}px`,
+                aspectRatio: `${currentLayout.width} / ${currentLayout.height}`,
                 objectFit: "contain"
               }}
             />
           </div>
           {sideBySide && (
-            <div className="flex-1 relative min-w-0 h-full border-l border-slate-200/50 flex items-center justify-center">
+            <div className="flex-1 relative min-w-0 w-full h-full min-h-[480px] border-l border-slate-200/50 flex items-center justify-center p-2">
               <canvas
                 ref={canvasPostRef}
                 width={currentLayout.width * pixelRatio}
@@ -3296,10 +4513,11 @@ export default function GisChoroplethMap({
                 }}
                 className={`block bg-transparent pointer-events-auto mx-auto ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
                 style={{
-                  width: `${currentLayout.width}px`,
-                  height: `${currentLayout.height}px`,
-                  maxWidth: "100%",
-                  maxHeight: "100%",
+                  width: "100%",
+                  height: "100%",
+                  maxWidth: `${currentLayout.width}px`,
+                  maxHeight: `${currentLayout.height}px`,
+                  aspectRatio: `${currentLayout.width} / ${currentLayout.height}`,
                   objectFit: "contain"
                 }}
               />
@@ -3363,7 +4581,7 @@ export default function GisChoroplethMap({
                   <span className="font-extrabold text-slate-800">
                     {hoveredGroup.avgValue.toFixed(2)}{" "}
                     <span className="text-[10px] text-slate-400 font-medium font-mono">
-                      {activeConfig.unit}
+                      {activeConfig?.unit || ""}
                     </span>
                   </span>
                 </div>
@@ -3392,10 +4610,10 @@ export default function GisChoroplethMap({
 
         {/* Statistical Table Panel Side-by-Side (not absolute, just static/relative side-by-side) */}
         {showTableOverlay && (
-          <div className="w-full lg:w-[420px] shrink-0 bg-white border border-slate-200/80 rounded-2xl flex flex-col shadow-xs overflow-hidden max-h-[600px] select-text">
+          <div className="w-full lg:w-[380px] shrink-0 bg-white border border-slate-200/80 rounded-2xl flex flex-col shadow-xs overflow-hidden max-h-[520px] select-text">
             {/* Header */}
-            <div className="px-4 py-3 flex items-center justify-between border-b border-slate-100 bg-slate-50/60 select-none">
-              <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-indigo-950">
+            <div className="px-3 py-2 flex items-center justify-between border-b border-slate-100 bg-slate-50/80 select-none">
+              <div className="flex items-center gap-1.5 text-[9.5px] font-black uppercase tracking-wider text-indigo-950">
                 <Table className="w-3.5 h-3.5 text-indigo-600" />
                 <span>Classification Table</span>
               </div>

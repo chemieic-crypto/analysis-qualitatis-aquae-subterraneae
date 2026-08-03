@@ -42,6 +42,13 @@ import {
 } from "lucide-react";
 import { PARAM_CONFIG } from "../data/config";
 import { INDIA_BOUNDARY } from "../data/india_boundary";
+import { 
+  featureMatchesSelection, 
+  getFilteredGeoJson, 
+  buildDistrictStateMap, 
+  isStateAll, 
+  isDistrictAll 
+} from "../utils/shapefileFilter";
 
 interface GisMapViewProps {
   rawData: any[];
@@ -96,6 +103,16 @@ const DEFAULT_AQUIFER_COLORS: Record<string, string> = {
   "intrusives": "#60cbff"    // 96 203 255
 };
 
+const getDpr = (): number => {
+  if (typeof window === "undefined") return 2.0;
+  const isMobile = window.innerWidth < 768 || (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0);
+  const baseDpr = window.devicePixelRatio || 1.5;
+  if (isMobile) {
+    return Math.min(baseDpr, 2.0);
+  }
+  return Math.min(baseDpr * 1.25, 3.0);
+};
+
 const getInitialColorMapping = (geojson: any, attribute: string): Record<string, string> => {
   const mapping: Record<string, string> = {};
   const features = geojson.features || (geojson.type === "Feature" ? [geojson] : []);
@@ -146,6 +163,14 @@ const getFeatureFillColor = (layer: ShapefileLayer, feature: any): string => {
 
 // Color schemes definitions
 const COLOR_SCHEMES = {
+  "Single Red Shades": ["#fee2e2", "#fca5a5", "#f87171", "#dc2626", "#881337"],
+  "Single Blue Shades": ["#dbeafe", "#93c5fd", "#3b82f6", "#1d4ed8", "#172554"],
+  "Single Orange Shades": ["#fff7ed", "#fed7aa", "#f97316", "#c2410c", "#431407"],
+  "Single Green Shades": ["#dcfce7", "#86efac", "#22c55e", "#15803d", "#052e16"],
+  "Single Purple Shades": ["#f3e8ff", "#d8b4fe", "#a855f7", "#7e22ce", "#3b0764"],
+  "Single Teal Shades": ["#f0fdf4", "#99f6e4", "#14b8a6", "#0f766e", "#042f2e"],
+  "Single Amber Shades": ["#fef9c3", "#fde047", "#eab308", "#ca8a04", "#422006"],
+  "Single Gray Shades": ["#f3f4f6", "#d1d5db", "#6b7280", "#374151", "#030712"],
   "Blue-Yellow-Red": ["#005ce6", "#ffff00", "#ff0000"],
   "Green-Yellow-Red": ["#22c55e", "#facc15", "#ef4444"],
   "Spectral": ["#d53e4f", "#fdae61", "#abdda4", "#2b83ba"],
@@ -912,7 +937,12 @@ export default function GisMapView({
   const rasterCacheKeyLeftRef = useRef<string>("");
   const rasterCacheKeyRightRef = useRef<string>("");
 
-  // Automatic India boundary clipping
+  // District to State mapping built from loaded raw dataset
+  const districtStateMap = useMemo(() => {
+    return buildDistrictStateMap(rawData, headerMap, headers);
+  }, [rawData, headerMap, headers]);
+
+  // Automatic India or custom layer boundary clipping filtered by selected State and District
   const [clipToIndia, setClipToIndia] = useState<boolean>(true);
 
   const effectiveClipGeoJson = useMemo(() => {
@@ -928,30 +958,12 @@ export default function GisMapView({
 
     if (!baseGeoJson) return null;
 
-    if (selectedState && selectedState !== "All" && selectedState !== "National" && selectedState !== "All India") {
-      const selVal = selectedState.trim().toLowerCase();
-      // If it is a FeatureCollection, filter its features!
-      if (baseGeoJson.type === "FeatureCollection" && Array.isArray(baseGeoJson.features)) {
-        const filteredFeatures = baseGeoJson.features.filter((f: any) => {
-          if (!f.properties) return false;
-          return Object.values(f.properties).some(val => {
-            if (typeof val !== "string") return false;
-            const sVal = val.trim().toLowerCase();
-            return sVal === selVal || sVal.includes(selVal) || selVal.includes(sVal);
-          });
-        });
-        
-        if (filteredFeatures.length > 0) {
-          return {
-            ...baseGeoJson,
-            features: filteredFeatures
-          };
-        }
-      }
+    if (!isStateAll(selectedState) || !isDistrictAll(selectedDistrict)) {
+      return getFilteredGeoJson(baseGeoJson, selectedState, selectedDistrict, districtStateMap);
     }
 
     return baseGeoJson;
-  }, [layers, clipTarget, selectedState]);
+  }, [layers, clipTarget, selectedState, selectedDistrict, districtStateMap]);
 
   const shapefilePropertyKeys = useMemo(() => {
     if (!effectiveClipGeoJson) return [];
@@ -1140,7 +1152,7 @@ export default function GisMapView({
     const mouseY = e.clientY - rect.top;
 
     // Scale up to matches dpr-scaled coordinates used in drawing
-    const dpr = (window.devicePixelRatio || 2) * 2.0;
+    const dpr = getDpr();
     const currentWidth = canvasWidth * dpr;
     const currentHeight = canvasHeight * dpr;
 
@@ -1471,7 +1483,7 @@ export default function GisMapView({
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
 
-      const dpr = (window.devicePixelRatio || 2) * 2.0;
+      const dpr = getDpr();
       const currentWidth = canvasWidth * dpr;
       const currentHeight = canvasHeight * dpr;
 
@@ -1742,13 +1754,20 @@ export default function GisMapView({
     const tdsCol = findHeader("TDS", ["tds", "total dissolved solids"]);
     const alkCol = findHeader("Alkalinity", ["alkalinity", "total alkalinity", "alk"]);
 
-    // Filter raw data by selected state if active
+    // Filter raw data by selected state and district if active
     let filteredRaw = rawData;
-    if (selectedState && selectedState !== "All" && selectedState !== "National" && selectedState !== "All India") {
+    if (!isStateAll(selectedState)) {
       const selVal = selectedState.trim().toLowerCase();
       filteredRaw = rawData.filter(d => {
         const stateVal = String(d[stateKey] || "").trim().toLowerCase();
         return stateVal === selVal || stateVal.includes(selVal) || selVal.includes(stateVal);
+      });
+    }
+    if (!isDistrictAll(selectedDistrict)) {
+      const selDist = selectedDistrict.trim().toLowerCase();
+      filteredRaw = filteredRaw.filter(d => {
+        const distVal = String(d[districtKey] || "").trim().toLowerCase();
+        return distVal === selDist || distVal.includes(selDist) || selDist.includes(distVal);
       });
     }
 
@@ -1922,10 +1941,13 @@ export default function GisMapView({
         longitudes = [68.1, 97.4];
       }
     }
-    const baseMinLat = Math.min(...latitudes);
-    const baseMaxLat = Math.max(...latitudes);
-    const baseMinLng = Math.min(...longitudes);
-    const baseMaxLng = Math.max(...longitudes);
+    const getMinVal = (arr: number[]) => arr.reduce((m, v) => (v < m ? v : m), Infinity);
+    const getMaxVal = (arr: number[]) => arr.reduce((m, v) => (v > m ? v : m), -Infinity);
+
+    const baseMinLat = getMinVal(latitudes);
+    const baseMaxLat = getMaxVal(latitudes);
+    const baseMinLng = getMinVal(longitudes);
+    const baseMaxLng = getMaxVal(longitudes);
     const baseCenterLat = (baseMinLat + baseMaxLat) / 2;
     const baseCenterLng = (baseMinLng + baseMaxLng) / 2;
 
@@ -2092,10 +2114,13 @@ export default function GisMapView({
       longitudes = validPoints.map(p => p.lng);
     }
 
-    const minLat = Math.min(...latitudes);
-    const maxLat = Math.max(...latitudes);
-    const minLng = Math.min(...longitudes);
-    const maxLng = Math.max(...longitudes);
+    const getMinVal = (arr: number[]) => arr.reduce((m, v) => (v < m ? v : m), Infinity);
+    const getMaxVal = (arr: number[]) => arr.reduce((m, v) => (v > m ? v : m), -Infinity);
+
+    const minLat = getMinVal(latitudes);
+    const maxLat = getMaxVal(latitudes);
+    const minLng = getMinVal(longitudes);
+    const maxLng = getMaxVal(longitudes);
 
     // Apply interactive panning
     const centerLat = ((minLat + maxLat) / 2) + panOffsetLat;
@@ -2403,6 +2428,9 @@ export default function GisMapView({
     paramOverride?: string,
     noBorder: boolean = false
   ) => {
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+
     // Standard GIS margins suitable for Map neatline sheets
     const margin = 55 * scale;
     const mw = w - 2 * margin;
@@ -2973,13 +3001,17 @@ export default function GisMapView({
               if (gj.type === "FeatureCollection") {
                 gj.features?.forEach((f: any) => {
                   try {
-                    if (f) drawFeatureGeometry(f.geometry, f);
+                    if (f && featureMatchesSelection(f, selectedState, selectedDistrict, districtStateMap)) {
+                      drawFeatureGeometry(f.geometry, f);
+                    }
                   } catch (err) {
                     console.error("Error drawing custom layer feature:", err);
                   }
                 });
               } else if (gj.type === "Feature") {
-                drawFeatureGeometry(gj.geometry, gj);
+                if (featureMatchesSelection(gj, selectedState, selectedDistrict, districtStateMap)) {
+                  drawFeatureGeometry(gj.geometry, gj);
+                }
               } else {
                 drawFeatureGeometry(gj, null);
               }
@@ -3768,6 +3800,7 @@ export default function GisMapView({
             const features = gj.features || (gj.type === "Feature" ? [gj] : []);
             features.forEach((f: any, idx: number) => {
               if (!f || !f.properties) return;
+              if (!featureMatchesSelection(f, selectedState, selectedDistrict, districtStateMap)) return;
               const textVal = String(f.properties[layer.labelKey] || "");
               if (!textVal || textVal.trim().toLowerCase() === "india") return;
 
@@ -3809,6 +3842,7 @@ export default function GisMapView({
 
         features.forEach((f: any, idx: number) => {
           if (!f || !f.properties) return;
+          if (!featureMatchesSelection(f, selectedState, selectedDistrict, districtStateMap)) return;
           const textVal = String(f.properties[shapefileLabelKey] || "");
           if (!textVal || textVal.trim().toLowerCase() === "india") return;
 
@@ -4106,8 +4140,8 @@ export default function GisMapView({
     if (!isVisible) return;
 
     const timeout = setTimeout(() => {
-      // Use Device Pixel Ratio * 2.0 to render ultra-sharp, glossy, high-density non-blurry canvases on high-DPI displays
-      const dpr = (window.devicePixelRatio || 2) * 2.0;
+      // Use getDpr to dynamically balance crispness vs mobile memory constraints
+      const dpr = getDpr();
 
       if (canvasRefLeft.current) {
         const canvas = canvasRefLeft.current;
@@ -5133,9 +5167,9 @@ ${svgStatsPanel}
       return;
     }
     try {
-      // For high professional grade report quality, we render at 300 DPI for the bulletin report integration
+      // For ultra high professional grade report quality, we render at 600 DPI for the bulletin report integration
       const tempCanvas = document.createElement("canvas");
-      const multiplier = 300 / 96; // 300 DPI high resolution
+      const multiplier = 600 / 96; // 600 DPI pristine high resolution
       const w = Math.round(canvasWidth * multiplier);
       const h = Math.round(canvasHeight * multiplier);
       tempCanvas.width = w;
@@ -5179,7 +5213,7 @@ ${svgStatsPanel}
         null,
         "left",
         undefined,
-        true
+        false
       );
 
       const highResUrl = tempCanvas.toDataURL("image/png");
@@ -5223,7 +5257,7 @@ ${svgStatsPanel}
     showToast(`Starting automated generation of ${paramsToGen.length} maps with current custom styles...`, "success");
 
     try {
-      const multiplier = 300 / 96; // 300 DPI high resolution
+      const multiplier = 600 / 96; // 600 DPI pristine high resolution
       const w = Math.round(canvasWidth * multiplier);
       const h = Math.round(canvasHeight * multiplier);
 
@@ -5259,7 +5293,7 @@ ${svgStatsPanel}
           null,
           "left",
           param, // Pass param override!
-          true
+          false
         );
 
         const highResUrl = tempCanvas.toDataURL("image/png");
@@ -5280,6 +5314,107 @@ ${svgStatsPanel}
     } catch (err: any) {
       console.error(err);
       showToast("Failed to run automated map generator: " + err.message, "error");
+    }
+  };
+
+  // Send BOTH Point Map (Monitoring Stations / Point Distribution) AND Parameter Maps simultaneously to Bulletin Report
+  const sendPointAndParameterMapsToBulletin = async () => {
+    if (!setBulletinMaps) {
+      showToast("Annual Report system integration is currently inactive.", "error");
+      return;
+    }
+
+    showToast("Formatting and generating Point Map & All Parameter Maps for Report...", "success");
+
+    try {
+      const multiplier = 600 / 96; // 600 DPI pristine high resolution
+      const w = Math.round(canvasWidth * multiplier);
+      const h = Math.round(canvasHeight * multiplier);
+      const generatedMaps: Record<string, string> = {};
+
+      // 1. Generate Point Map (Monitoring Stations / Sampling Locations)
+      const stationCanvas = document.createElement("canvas");
+      stationCanvas.width = w;
+      stationCanvas.height = h;
+      const stationCtx = stationCanvas.getContext("2d");
+      if (stationCtx) {
+        const stationTitle = customTitle || "Ground Water Quality Monitoring Stations";
+        const stationSubtitle = customSubtitle || "Location distribution of water quality monitoring stations";
+        const stationStats = getStats(isComparisonActive ? leftPanelData : parsedData, "STATIONS");
+
+        drawMapInstance(
+          stationCtx,
+          w,
+          h,
+          multiplier,
+          isComparisonActive ? leftPanelData : parsedData,
+          stationTitle,
+          stationSubtitle,
+          stationStats,
+          false,
+          null,
+          "left",
+          "STATIONS",
+          false // Include boundary & neatline
+        );
+
+        const stationUrl = stationCanvas.toDataURL("image/png");
+        generatedMaps["STATIONS"] = stationUrl;
+        generatedMaps["stations"] = stationUrl;
+        generatedMaps["Stations"] = stationUrl;
+        generatedMaps["POINT_MAP"] = stationUrl;
+      }
+
+      // 2. Generate Parameter Maps for ALL parameters in availableParams
+      const paramsToGen = availableParams.filter(p => p.toUpperCase().trim() !== "STATIONS");
+      for (const param of paramsToGen) {
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width = w;
+        tempCanvas.height = h;
+        const tempCtx = tempCanvas.getContext("2d");
+        if (!tempCtx) continue;
+
+        const config = PARAM_CONFIG[param] || { b1: 1, b2: 10, unit: "mg/L", name: param };
+        const title = customTitle 
+          ? customTitle.replace(selectedParam, param).replace(selectedParam.toUpperCase(), param.toUpperCase())
+          : `Distribution of ${config.name}`;
+        const subtitle = customSubtitle || getMapDefaultTitleAndSubtitle("left").subtitle;
+        const stats = getStats(isComparisonActive ? leftPanelData : parsedData, param);
+
+        drawMapInstance(
+          tempCtx,
+          w,
+          h,
+          multiplier,
+          isComparisonActive ? leftPanelData : parsedData,
+          title,
+          subtitle,
+          stats,
+          false,
+          null,
+          "left",
+          param,
+          false // Include boundary & neatline
+        );
+
+        const highResUrl = tempCanvas.toDataURL("image/png");
+        generatedMaps[param] = highResUrl;
+        generatedMaps[param.toUpperCase()] = highResUrl;
+        generatedMaps[param.toLowerCase()] = highResUrl;
+        generatedMaps[config.name] = highResUrl;
+        generatedMaps[config.name.toUpperCase()] = highResUrl;
+        generatedMaps[config.name.toLowerCase()] = highResUrl;
+      }
+
+      setBulletinMaps(prev => ({
+        ...prev,
+        ...generatedMaps
+      }));
+
+      showToast(`Successfully generated and sent Point Map & ${paramsToGen.length} Parameter Maps simultaneously to Annual Report!`, "success");
+    } catch (err: any) {
+      console.error(err);
+      showToast("Failed to run simultaneous map generator: " + err.message, "error");
     }
   };
 
@@ -7974,19 +8109,28 @@ ${svgStatsPanel}
                 )}
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={sendToBulletin}
-                  className="cursor-pointer bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 shadow-[0_4px_12px_rgba(16,185,129,0.3),inset_0_1px_1px_rgba(255,255,255,0.4)] border border-emerald-600/50 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                  className="cursor-pointer bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md border border-emerald-600/50 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                  title="Send current parameter map to Annual Report"
                 >
-                  <CheckCircle className="w-4 h-4 text-emerald-100" /> Send to Report
+                  <CheckCircle className="w-3.5 h-3.5 text-emerald-100" /> Send Map to Report
+                </button>
+
+                <button
+                  onClick={sendPointAndParameterMapsToBulletin}
+                  className="cursor-pointer bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md border border-indigo-500/50 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                  title="Send BOTH Point Map (Stations) AND All Parameter Maps simultaneously to Annual Report once formatted"
+                >
+                  <Layers className="w-3.5 h-3.5 text-indigo-100" /> Send Point & Parameter Maps
                 </button>
 
                 <button
                   onClick={exportMap}
-                  className="cursor-pointer bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-900 hover:to-black text-white px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 shadow-[0_4px_12px_rgba(15,23,42,0.25),inset_0_1px_1px_rgba(255,255,255,0.25)] border border-slate-800/80 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                  className="cursor-pointer bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-900 hover:to-black text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md border border-slate-800/80 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                 >
-                  <FileDown className="w-4 h-4 text-slate-300" /> Export Map
+                  <FileDown className="w-3.5 h-3.5 text-slate-300" /> Export Map
                 </button>
 
                 {isComparisonActive && (
@@ -8022,8 +8166,8 @@ ${svgStatsPanel}
               <div className={`relative ${canvasAspectClass} w-full rounded-3xl overflow-hidden border-2 border-slate-200/85 ring-4 ring-slate-100/50 shadow-md bg-white transition-all duration-300 group-hover:shadow-lg group-hover:border-slate-300`}>
                 <canvas
                   ref={canvasRefLeft}
-                  width={canvasWidth * (typeof window !== "undefined" ? (window.devicePixelRatio || 2) * 2.0 : 4.0)}
-                  height={canvasHeight * (typeof window !== "undefined" ? (window.devicePixelRatio || 2) * 2.0 : 4.0)}
+                  width={canvasWidth * getDpr()}
+                  height={canvasHeight * getDpr()}
                   className="w-full h-full block cursor-move"
                   onMouseDown={handleCanvasMouseDown}
                   onMouseMove={handleCanvasMouseMove}
@@ -8061,8 +8205,8 @@ ${svgStatsPanel}
                 <div className={`relative ${canvasAspectClass} w-full rounded-3xl overflow-hidden border-2 border-slate-200/85 ring-4 ring-slate-100/50 shadow-md bg-white transition-all duration-300 group-hover:shadow-lg group-hover:border-slate-300`}>
                   <canvas
                     ref={canvasRefRight}
-                    width={canvasWidth * (typeof window !== "undefined" ? (window.devicePixelRatio || 2) * 2.0 : 4.0)}
-                    height={canvasHeight * (typeof window !== "undefined" ? (window.devicePixelRatio || 2) * 2.0 : 4.0)}
+                    width={canvasWidth * getDpr()}
+                    height={canvasHeight * getDpr()}
                     className="w-full h-full block cursor-move"
                     onMouseDown={handleCanvasMouseDown}
                     onMouseMove={handleCanvasMouseMove}

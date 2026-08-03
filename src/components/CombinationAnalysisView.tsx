@@ -6,6 +6,8 @@ import {
   CheckCircle, Table, MapPin, Info
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
+import { downloadExcelJSWorkbook } from "../utils/excelFormatter";
 
 interface CombinationAnalysisViewProps {
   rawData: any[];
@@ -534,8 +536,17 @@ export function CombinationAnalysisView({
   }, [currentFilteredData, columnMapping]);
 
   // Export fully detailed report
-  const exportMultiSheet = () => {
-    const wb = XLSX.utils.book_new();
+  const exportMultiSheet = async () => {
+    const wb = new ExcelJS.Workbook();
+
+    const addJsonSheet = (sheetName: string, jsonRows: any[]) => {
+      const ws = wb.addWorksheet(sheetName);
+      if (jsonRows.length > 0) {
+        const headers = Object.keys(jsonRows[0]);
+        ws.addRow(headers);
+        jsonRows.forEach(row => ws.addRow(headers.map(h => row[h])));
+      }
+    };
 
     // 1. Detailed well data
     const rawExport = currentFilteredData.map(r => {
@@ -563,7 +574,7 @@ export function CombinationAnalysisView({
 
       return res;
     });
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rawExport), "Detailed Well Log");
+    addJsonSheet("Detailed Well Log", rawExport);
 
     // 2. Combo breakdown matrix
     const comboExport = comboAnalysis.map(c => ({
@@ -571,9 +582,9 @@ export function CombinationAnalysisView({
       'Number of Wells': c.count,
       'Percentage (%)': c.percentage
     }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(comboExport), "Combination Matrix");
+    addJsonSheet("Combination Matrix", comboExport);
 
-    XLSX.writeFile(wb, "Water_Quality_Combination_Report.xlsx");
+    await downloadExcelJSWorkbook(wb, "Water_Quality_Combination_Report.xlsx");
   };
 
   // Pure CSS conic gradient donut calculation helper

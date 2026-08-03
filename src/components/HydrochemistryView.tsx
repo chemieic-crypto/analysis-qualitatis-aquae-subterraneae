@@ -14,6 +14,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { PARAM_CONFIG } from "../data/config";
+import { formatExcelJSWorksheet, downloadExcelJSWorkbook } from "../utils/excelFormatter";
 
 const getParamUnit = (key: string): string => {
   const conf = PARAM_CONFIG[key];
@@ -463,32 +464,9 @@ export default function HydrochemistryView({
       });
 
       // Style sheet
-      sheet.eachRow((row, rowNumber) => {
-        row.eachCell((cell) => {
-          if (rowNumber === 1) {
-            cell.font = { name: "Times New Roman", size: 12, bold: true, color: { argb: "FFFFFFFF" } };
-            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF000000" } };
-            cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
-          } else {
-            cell.font = { name: "Times New Roman", size: 12 };
-            cell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
-          }
+      formatExcelJSWorksheet(sheet, 1);
 
-          cell.border = {
-            top: { style: "thin", color: { argb: "FF000000" } },
-            left: { style: "thin", color: { argb: "FF000000" } },
-            bottom: { style: "thin", color: { argb: "FF000000" } },
-            right: { style: "thin", color: { argb: "FF000000" } }
-          };
-        });
-      });
-
-      const buf = await workbook.xlsx.writeBuffer();
-      const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = `Hydrochemistry_Calculated_Data_${Date.now()}.xlsx`;
-      link.click();
+      await downloadExcelJSWorkbook(workbook, `Hydrochemistry_Calculated_Data_${Date.now()}.xlsx`);
 
       showToast("Styled Excel Report written successfully!", "success");
     } catch (err) {

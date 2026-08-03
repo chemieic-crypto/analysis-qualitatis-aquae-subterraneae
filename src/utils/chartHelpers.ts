@@ -146,14 +146,32 @@ export function safeStringToBase64(str: string): string {
   try {
     const bytes = new TextEncoder().encode(str);
     let binary = "";
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
+    const chunkSize = 8192;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
     }
     return window.btoa(binary);
   } catch (e) {
     console.error("safeStringToBase64 failed:", e);
     return "";
+  }
+}
+
+export function safeBase64ToString(str: string): string {
+  try {
+    const binary = window.atob(str);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder("utf-8").decode(bytes);
+  } catch (e) {
+    try {
+      return decodeURIComponent(escape(window.atob(str)));
+    } catch (_) {
+      return window.atob(str);
+    }
   }
 }
 
@@ -439,25 +457,51 @@ function cropCanvasToContent(canvas: HTMLCanvasElement): HTMLCanvasElement {
  */
 function convertSvgToCroppedPng(base64Svg: string, width: number, height: number): Promise<string> {
   return new Promise((resolve) => {
+    const scale = 6.0; // High resolution 600 DPI scaling for crystal clear vector curves
+    const targetW = Math.round(width * scale);
+    const targetH = Math.round(height * scale);
+
+    let preparedSvg = base64Svg;
+    if (preparedSvg && preparedSvg.startsWith("data:image/svg+xml")) {
+      try {
+        const commaIndex = preparedSvg.indexOf(",");
+        const isBase64 = preparedSvg.includes(";base64,");
+        let decoded = isBase64
+          ? safeBase64ToString(preparedSvg.substring(commaIndex + 1))
+          : decodeURIComponent(preparedSvg.substring(commaIndex + 1));
+
+        if (!/<svg[^>]*\bviewBox=/i.test(decoded)) {
+          decoded = decoded.replace(/<svg/i, `<svg viewBox="0 0 ${width} ${height}"`);
+        }
+        decoded = decoded.replace(/<svg([^>]*)\bwidth\s*=\s*["'][^"']*["']/i, '<svg$1');
+        decoded = decoded.replace(/<svg([^>]*)\bheight\s*=\s*["'][^"']*["']/i, '<svg$1');
+        decoded = decoded.replace(/<svg/i, `<svg width="${targetW}" height="${targetH}"`);
+
+        preparedSvg = isBase64
+          ? "data:image/svg+xml;base64," + safeStringToBase64(decoded)
+          : "data:image/svg+xml;utf8," + encodeURIComponent(decoded);
+      } catch (err) {
+        console.warn("Failed to scale base64Svg in convertSvgToCroppedPng:", err);
+      }
+    }
+
     const img = new Image();
     img.onload = () => {
       try {
-        const scale = 3.0; // High resolution scaling to remove blurriness and ensure crystal clear curves
         const canvas = document.createElement("canvas");
-        canvas.width = width * scale;
-        canvas.height = height * scale;
+        canvas.width = targetW;
+        canvas.height = targetH;
         const ctx = canvas.getContext("2d");
         if (!ctx) {
           resolve(base64Svg);
           return;
         }
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.clearRect(0, 0, targetW, targetH);
         
-        // Use smooth scaling settings for top quality
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
         
-        ctx.drawImage(img, 0, 0, width * scale, height * scale);
+        ctx.drawImage(img, 0, 0, targetW, targetH);
 
         const croppedCanvas = cropCanvasToContent(canvas);
         resolve(croppedCanvas.toDataURL("image/png"));
@@ -469,7 +513,7 @@ function convertSvgToCroppedPng(base64Svg: string, width: number, height: number
     img.onerror = () => {
       resolve(base64Svg);
     };
-    img.src = base64Svg;
+    img.src = preparedSvg;
   });
 }
 

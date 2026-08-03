@@ -22,14 +22,19 @@ function stringToBase64(str: string): string {
   try {
     const bytes = new TextEncoder().encode(str);
     let binary = "";
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
+    const chunkSize = 8192;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
     }
     return window.btoa(binary);
   } catch (e) {
     console.error("[Export] stringToBase64 failed:", e);
-    return window.btoa(unescape(encodeURIComponent(str)));
+    try {
+      return window.btoa(unescape(encodeURIComponent(str)));
+    } catch (_) {
+      return "";
+    }
   }
 }
 
@@ -165,6 +170,23 @@ async function ensureBase64Image(src: string): Promise<string> {
  */
 async function convertSvgToPngDataUrl(svgString: string, fallbackDataUrl: string, targetW: number, targetH: number): Promise<string> {
   return new Promise<string>((resolve) => {
+    let isResolved = false;
+
+    const safeResolve = (url: string) => {
+      if (!isResolved) {
+        isResolved = true;
+        clearTimeout(timeoutTimer);
+        resolve(url);
+      }
+    };
+
+    const timeoutTimer = setTimeout(() => {
+      if (!isResolved) {
+        console.warn("[Export] SVG-to-PNG conversion timed out, using fallback DataURL.");
+        safeResolve(fallbackDataUrl);
+      }
+    }, 3000);
+
     let parsedSvg = svgString;
     if (parsedSvg && !parsedSvg.includes("xmlns:xlink=")) {
       parsedSvg = parsedSvg.replace(/<svg/i, `<svg xmlns:xlink="http://www.w3.org/1999/xlink"`);
@@ -178,12 +200,30 @@ async function convertSvgToPngDataUrl(svgString: string, fallbackDataUrl: string
       parsedSvg = parsedSvg.replace(/<svg/i, `<svg style="text-rendering: geometricPrecision; shape-rendering: geometricPrecision; image-rendering: high-quality;"`);
     }
 
+    // CRITICAL: Ensure viewBox is set and replace root width/height with targetW and targetH
+    // so the browser's native Image SVG rasterizer renders vectors at 100% full high-DPI resolution!
+    if (parsedSvg) {
+      const viewBoxMatch = parsedSvg.match(/<svg[^>]*\bviewBox=["']([^"']+)["']/i);
+      const widthMatch = parsedSvg.match(/<svg[^>]*\bwidth=["'](\d+(?:\.\d+)?)%?["']/i);
+      const heightMatch = parsedSvg.match(/<svg[^>]*\bheight=["'](\d+(?:\.\d+)?)%?["']/i);
+      const origW = widthMatch ? (parseFloat(widthMatch[1]) || 550) : 550;
+      const origH = heightMatch ? (parseFloat(heightMatch[1]) || 400) : 400;
+
+      if (!viewBoxMatch) {
+        parsedSvg = parsedSvg.replace(/<svg/i, `<svg viewBox="0 0 ${origW} ${origH}"`);
+      }
+
+      parsedSvg = parsedSvg.replace(/<svg([^>]*)\bwidth\s*=\s*["'][^"']*["']/i, '<svg$1');
+      parsedSvg = parsedSvg.replace(/<svg([^>]*)\bheight\s*=\s*["'][^"']*["']/i, '<svg$1');
+      parsedSvg = parsedSvg.replace(/<svg/i, `<svg width="${targetW}" height="${targetH}"`);
+    }
+
     const canvas = document.createElement("canvas");
     canvas.width = targetW;
     canvas.height = targetH;
     const ctx = canvas.getContext("2d");
     if (!ctx) {
-      resolve(fallbackDataUrl);
+      safeResolve(fallbackDataUrl);
       return;
     }
 
@@ -192,19 +232,16 @@ async function convertSvgToPngDataUrl(svgString: string, fallbackDataUrl: string
     ctx.imageSmoothingQuality = "high";
 
     const img = new Image();
-    let isResolved = false;
 
     const handleSuccess = () => {
-      if (isResolved) return;
-      isResolved = true;
       try {
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(0, 0, targetW, targetH);
         ctx.drawImage(img, 0, 0, targetW, targetH);
-        resolve(canvas.toDataURL("image/png"));
+        safeResolve(canvas.toDataURL("image/png"));
       } catch (e) {
         console.warn("[Export] Canvas drawing failed in convertSvgToPngDataUrl, using fallback:", e);
-        resolve(fallbackDataUrl);
+        safeResolve(fallbackDataUrl);
       }
     };
 
@@ -223,20 +260,20 @@ async function convertSvgToPngDataUrl(svgString: string, fallbackDataUrl: string
             ctx.fillRect(0, 0, targetW, targetH);
             ctx.drawImage(blobImg, 0, 0, targetW, targetH);
             URL.revokeObjectURL(blobUrl);
-            resolve(canvas.toDataURL("image/png"));
+            safeResolve(canvas.toDataURL("image/png"));
           } catch (_) {
             if (blobUrl) URL.revokeObjectURL(blobUrl);
-            resolve(fallbackDataUrl);
+            safeResolve(fallbackDataUrl);
           }
         };
         blobImg.onerror = () => {
           if (blobUrl) URL.revokeObjectURL(blobUrl);
-          resolve(fallbackDataUrl);
+          safeResolve(fallbackDataUrl);
         };
         blobImg.src = blobUrl;
       } catch (err) {
         if (blobUrl) URL.revokeObjectURL(blobUrl);
-        resolve(fallbackDataUrl);
+        safeResolve(fallbackDataUrl);
       }
     };
 
@@ -541,18 +578,18 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
   // Post-process all tables to make them simple MS Word tables with ultra-compact formatting
   const tables = Array.from(div.getElementsByTagName("table"));
   tables.forEach((table) => {
-    // Keep or strip col and colgroup - let's remove them and rely on explicit cell width styles
+    // Remove col and colgroup - rely on explicit cell width styles
     const cols = Array.from(table.querySelectorAll("col, colgroup"));
     cols.forEach((c) => c.parentNode?.removeChild(c));
 
     // Force standard border and padding attributes for Word compatibility
     table.setAttribute("border", "1");
-    table.setAttribute("cellpadding", "1"); // Minimized padding
+    table.setAttribute("cellpadding", "0"); // Minimum padding
     table.setAttribute("cellspacing", "0");
     table.setAttribute("width", "100%");
     
-    // Force fixed table layout with 100% width
-    table.setAttribute("style", "width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 12pt; margin-bottom: 18pt;");
+    // Force fixed table layout with 100% width, collapse borders, zero extra margin
+    table.setAttribute("style", "width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 6pt; margin-bottom: 8pt; mso-table-lspace: 0pt; mso-table-rspace: 0pt; mso-table-anchor-vertical: paragraph; mso-padding-alt: 0pt 0pt 0pt 0pt;");
 
     const rows = Array.from(table.getElementsByTagName("tr"));
 
@@ -577,10 +614,8 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
       const bgMatch = currentStyle.match(/background-color\s*:\s*([^;]+)/i);
       const bgColor = bgMatch ? bgMatch[1] : "";
       
-      const isHeader = row.parentElement?.tagName.toLowerCase() === "thead" || row.querySelector("th") !== null;
-      
-      // Row height will be automatic to fit the text exactly
-      let rowStyle = "";
+      // Auto row height as requested (do not force a minimum height)
+      let rowStyle = `height: auto; min-height: 0pt; mso-height-rule: auto; vertical-align: middle;`;
       
       if (bgColor) {
         rowStyle += ` background-color: ${bgColor};`;
@@ -610,11 +645,12 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
           .replace(/line-height\s*:[^;]+;?/gi, "")
           .replace(/white-space\s*:[^;]+;?/gi, "")
           .replace(/padding\s*:[^;]+;?/gi, "")
+          .replace(/margin\s*:[^;]+;?/gi, "")
           .replace(/display\s*:[^;]+;?/gi, "");
         
         const isTh = cell.tagName.toLowerCase() === "th";
         const isBold = isTh || /font-weight\s*:\s*bold/i.test(cellStyle);
-        const fontSize = isTh ? "10pt" : "9.5pt";
+        const fontSize = "10pt";
         
         // Propagate the corresponding column width from the header
         const explicitWidth = colWidths[colIndex] || "";
@@ -623,11 +659,12 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
           cell.setAttribute("width", explicitWidth.replace("%", ""));
         }
         
-        // 1. Padding: Top/Bottom = 15twips (~0.75pt), Left/Right = 40twips (~2pt)
-        // 2. Vertical centering: vertical-align: middle; mso-vertical-align-alt: middle;
-        // 3. Spacing: line-height: 1.0; mso-line-height-rule: exactly;
-        // 4. Wrapping: word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; white-space: normal !important;
-        cleanedCellStyle += ` font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; padding: 0.75pt 2pt; mso-padding-top-alt: 15twips; mso-padding-bottom-alt: 15twips; mso-padding-left-alt: 40twips; mso-padding-right-alt: 40twips; ${isBold ? "font-weight: bold;" : ""} line-height: 1.0; mso-line-height-rule: exactly; vertical-align: middle; mso-vertical-align-alt: middle; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; white-space: normal !important; margin: 0pt; margin-top: 0pt; margin-bottom: 0pt; mso-margin-top-alt: 0pt; mso-margin-bottom-alt: 0pt;`;
+        // Compact cell padding & margins (top, bottom, left, right set to minimum)
+        const cellPadding = "1pt 2.5pt";
+        const topBottomTwips = "10twips";
+        const leftRightTwips = "20twips";
+
+        cleanedCellStyle += ` font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; padding: ${cellPadding}; mso-padding-top-alt: ${topBottomTwips}; mso-padding-bottom-alt: ${topBottomTwips}; mso-padding-left-alt: ${leftRightTwips}; mso-padding-right-alt: ${leftRightTwips}; ${isBold ? "font-weight: bold;" : ""} line-height: 1.0 !important; mso-line-height-rule: exactly !important; vertical-align: middle; mso-vertical-align-alt: middle; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; white-space: normal !important; margin: 0pt !important; margin-top: 0pt !important; margin-bottom: 0pt !important; mso-margin-top-alt: 0pt !important; mso-margin-bottom-alt: 0pt !important; height: auto; min-height: 0pt;`;
         
         // Align headers centered by default, data aligned according to existing style or left
         if (isTh) {
@@ -638,19 +675,34 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
 
         cell.setAttribute("style", cleanedCellStyle);
 
-        // Strip any paragraph spacing within table cells to strictly follow single-spacing and 0 margins
+        // Remove empty paragraphs or unnecessary break tags inside cell
+        const emptyParagraphs = Array.from(cell.querySelectorAll("p")).filter(p => !p.textContent?.trim());
+        emptyParagraphs.forEach(p => p.parentNode?.removeChild(p));
+
+        const breaks = Array.from(cell.querySelectorAll("br"));
+        breaks.forEach(br => {
+          if (!br.nextSibling || !br.previousSibling) {
+            br.parentNode?.removeChild(br);
+          }
+        });
+
+        // Strip any paragraph spacing within table cells to strictly follow single-spacing (1.0) and 0 pt before/after margins
         const cellParagraphs = Array.from(cell.getElementsByTagName("p"));
+        const alignVal = isTh ? "center" : (/text-align\s*:\s*center/i.test(cellStyle) ? "center" : /text-align\s*:\s*right/i.test(cellStyle) ? "right" : "left");
+
         if (cellParagraphs.length > 0) {
           cellParagraphs.forEach((p) => {
-            p.setAttribute("style", `margin: 0 !important; padding: 0 !important; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; line-height: 1.0 !important; mso-line-height-rule: exactly !important; mso-margin-top-alt: 0pt !important; mso-margin-bottom-alt: 0pt !important; text-align: ${isTh ? "center" : "left"};`);
+            p.setAttribute("style", `margin: 0pt !important; margin-top: 0pt !important; margin-bottom: 0pt !important; padding: 0pt !important; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; line-height: 1.0 !important; mso-line-height-rule: exactly !important; mso-margin-top-alt: 0pt !important; mso-margin-bottom-alt: 0pt !important; text-align: ${alignVal};`);
           });
         } else {
-          // Wrap text inside cell in a single <p> to force Word to apply paragraph settings (Before=0, After=0, LineSpacing=Single)
+          // Wrap text inside cell in a single <p> to force Word to apply paragraph settings without extra margins
           const originalHTML = cell.innerHTML.trim();
-          cell.innerHTML = `<p style="margin: 0 !important; padding: 0 !important; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; line-height: 1.0 !important; mso-line-height-rule: exactly !important; mso-margin-top-alt: 0pt !important; mso-margin-bottom-alt: 0pt !important; text-align: ${isTh ? "center" : "left"};">${originalHTML}</p>`;
+          if (originalHTML) {
+            cell.innerHTML = `<p style="margin: 0pt !important; margin-top: 0pt !important; margin-bottom: 0pt !important; padding: 0pt !important; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; line-height: 1.0 !important; mso-line-height-rule: exactly !important; mso-margin-top-alt: 0pt !important; mso-margin-bottom-alt: 0pt !important; text-align: ${alignVal};">${originalHTML}</p>`;
+          }
         }
 
-        // Flatten nested divs inside cells into simple inline spans. Word handles text and inline spans inside cells beautifully, but hates block divs.
+        // Flatten nested divs inside cells into simple inline spans
         const cellDivs = Array.from(cell.getElementsByTagName("div"));
         cellDivs.forEach((innerDiv) => {
           const span = document.createElement("span");
@@ -659,6 +711,12 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
         });
       });
     });
+  });
+
+  // Ensure all monsoon plot items are set to display: block in exported Word document so every chart/diagram appears
+  const monsoonPlotItems = Array.from(div.querySelectorAll(".monsoon-plot-item"));
+  monsoonPlotItems.forEach((item) => {
+    (item as HTMLElement).setAttribute("style", "display: block !important; visibility: visible !important; margin-top: 20px; margin-bottom: 25px; text-align: center; page-break-inside: avoid;");
   });
 
   // --- Traversing and re-numbering figures/tables for academic/scientific style ---
@@ -829,12 +887,12 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
   h3 { font-size: 12pt; margin-top: 14pt; }
   h4 { font-size: 11pt; margin-top: 12pt; color: #333333; }
   table {
-    width: auto !important;
+    width: 100% !important;
     max-width: 100% !important;
-    table-layout: auto !important;
-    border-collapse: collapse;
-    margin-top: 10pt;
-    margin-bottom: 14pt;
+    table-layout: fixed !important;
+    border-collapse: collapse !important;
+    margin-top: 6pt !important;
+    margin-bottom: 8pt !important;
     margin-left: auto;
     margin-right: auto;
     font-family: 'Times New Roman', Times, serif;
@@ -842,16 +900,21 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
     page-break-inside: avoid;
     mso-table-lspace: 0pt;
     mso-table-rspace: 0pt;
+    mso-table-anchor-vertical: paragraph;
+    mso-padding-alt: 0pt 0pt 0pt 0pt;
   }
   thead {
     display: table-header-group; /* repeat headers across pages */
   }
   tr {
     page-break-inside: avoid !important;
+    height: auto !important;
+    min-height: 0pt !important;
+    mso-height-rule: auto !important;
   }
   th, td {
     border: 0.5pt solid #7f7f7f; /* Thin clean boundaries */
-    padding: 3.5pt 5.5pt;
+    padding: 1pt 2.5pt !important;
     text-align: left;
     vertical-align: middle;
     mso-vertical-align-alt: middle;
@@ -861,14 +924,19 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
     word-break: break-word;
     word-wrap: break-word;
     overflow-wrap: break-word;
-    line-height: 1.15;
-    mso-line-height-rule: exactly;
-    mso-padding-alt: 3.5pt 5.5pt 3.5pt 5.5pt;
+    line-height: 1.0 !important;
+    mso-line-height-rule: exactly !important;
+    mso-padding-top-alt: 10twips !important;
+    mso-padding-bottom-alt: 10twips !important;
+    mso-padding-left-alt: 20twips !important;
+    mso-padding-right-alt: 20twips !important;
+    height: auto !important;
+    min-height: 0pt !important;
   }
   table th p, table td p {
-    margin: 0 !important;
-    padding: 0 !important;
-    line-height: 1.15 !important;
+    margin: 0pt !important;
+    padding: 0pt !important;
+    line-height: 1.0 !important;
     mso-line-height-rule: exactly !important;
     mso-margin-top-alt: 0pt !important;
     mso-margin-bottom-alt: 0pt !important;

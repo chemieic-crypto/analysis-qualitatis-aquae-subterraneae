@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { DataHeaders } from "../types";
+import { DataHeaders, ShapefileLayer } from "../types";
 import { PARAM_CONFIG } from "../data/config";
 import { 
   TableProperties, 
@@ -16,9 +16,28 @@ import {
   AlertTriangle,
   Award,
   Search,
-  AlertCircle
+  AlertCircle,
+  BarChart3,
+  PieChart,
+  Layers,
+  Info
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
+import { downloadExcelJSWorkbook } from "../utils/excelFormatter";
+import {
+  generateMonsoonDualOgiveSVG,
+  generateMonsoonBoxPlotSVG,
+  generateMonsoonAveragePlotSVG,
+  generateMonsoonViolinPlotSVG,
+  generateMonsoonDonutChartSVG,
+  generateMonsoonExceedanceBarSVG,
+  generateMonsoonChoroplethMapSVG,
+  generateSideBySideIonicBiPlotSVG,
+  generateMonsoonShiftVectorBiPlotSVG,
+  getBiplotXY,
+  IonicBiplotType
+} from "../utils/monsoonDiagrams";
 
 export const formatAdvanced = (value: any, decimals: number = 2): string => {
   if (value === null || value === undefined || value === "" || isNaN(Number(value))) return "-";
@@ -35,6 +54,7 @@ interface MonsoonImpactViewProps {
   headerMap: Record<string, string>;
   selectedState: string;
   selectedDistrict: string;
+  sharedLayers?: ShapefileLayer[];
 }
 
 // --- STATISTICAL HELPERS ---
@@ -218,10 +238,31 @@ export default function MonsoonImpactView({
   headerMap,
   selectedState: globalSelectedState,
   selectedDistrict: globalSelectedDistrict,
+  sharedLayers
 }: MonsoonImpactViewProps) {
   
   // --- SUB TAB CONTROL ---
-  const [activeTab, setActiveTab] = useState<"general" | "perm" | "contamination" | "stats" | "availability" | "detailed" | "methodology">("general");
+  const [activeTab, setActiveTab] = useState<"general" | "diagrams" | "perm" | "contamination" | "stats" | "availability" | "detailed" | "methodology">("general");
+  const [selectedDiagramFilter, setSelectedDiagramFilter] = useState<string>("all");
+  const [choroplethGranularity, setChoroplethGranularity] = useState<"district" | "state">("district");
+  const [choroplethOrientation, setChoroplethOrientation] = useState<"portrait" | "landscape">("portrait");
+  const [choroplethBgColor, setChoroplethBgColor] = useState<string>("#ffffff");
+  const [showChoroplethDataPoints, setShowChoroplethDataPoints] = useState<boolean>(true);
+  const [selectedIonicBiplot, setSelectedIonicBiplot] = useState<IonicBiplotType>("na-cl");
+  const [biplotViewMode, setBiplotViewMode] = useState<"side-by-side" | "shift-vector">("side-by-side");
+
+  const downloadSVG = useCallback((svgContent: string, fileName: string) => {
+    if (!svgContent) return;
+    const blob = new Blob([svgContent], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, []);
   
   // --- PARAMETER SELECTORS ---
   const [basePeriod, setBasePeriod] = useState("");
@@ -239,6 +280,26 @@ export default function MonsoonImpactView({
   // --- WELL-WISE DATA AVAILABILITY STATES ---
   const [availWellSearch, setAvailWellSearch] = useState("");
   const [availWellPage, setAvailWellPage] = useState(1);
+
+  const effectiveSelectedState = useMemo(() => {
+    return localState !== "All" ? localState : (globalSelectedState || "All");
+  }, [localState, globalSelectedState]);
+
+  const effectiveSelectedDistrict = useMemo(() => {
+    return localDistrict !== "All" ? localDistrict : (globalSelectedDistrict || "All");
+  }, [localDistrict, globalSelectedDistrict]);
+
+  const districtStateMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    rawData.forEach(row => {
+      const s = row[headers.state || "State"] || row["State"] || row["state"];
+      const d = row[headers.district || "District"] || row["District"] || row["district"];
+      if (s && d) {
+        map[String(d).trim().toLowerCase()] = String(s).trim();
+      }
+    });
+    return map;
+  }, [rawData, headers]);
 
   const effectiveAggLevel = useMemo(() => {
     if ((localDistrict && localDistrict !== "All") || globalSelectedDistrict) {
@@ -651,6 +712,19 @@ export default function MonsoonImpactView({
       shiftedUnsafeToSafe
     };
   }, [generalSummaryData]);
+
+  const pairedListWithVals = useMemo(() => {
+    if (!pairedResult.pairedList.length || !activeParam) return [];
+    return pairedResult.pairedList.map(loc => {
+      const preVal = getParamVal(loc.baseRow, activeParam);
+      const postVal = getParamVal(loc.compRow, activeParam);
+      return {
+        ...loc,
+        preVal,
+        postVal
+      };
+    }).filter(p => !isNaN(p.preVal) && !isNaN(p.postVal));
+  }, [pairedResult.pairedList, activeParam, getParamVal]);
 
   // --- PERMISSIBLE LIMITS TRENDS ---
   const permSummaryData = useMemo(() => {
@@ -1133,10 +1207,21 @@ export default function MonsoonImpactView({
   }, [detailedMatrixData, activeParam]);
 
   // --- SINGLE TAB EXPORT EXCEL ---
-  const handleExportActiveTab = () => {
+  const handleExportActiveTab = async () => {
     if (!pairedResult.pairedList.length) return;
 
-    const wb = XLSX.utils.book_new();
+    const wb = new ExcelJS.Workbook();
+
+    const addJsonSheet = (sheetName: string, jsonRows: any[]) => {
+      const ws = wb.addWorksheet(sheetName);
+      if (jsonRows.length > 0) {
+        const headers = Object.keys(jsonRows[0]);
+        ws.addRow(headers);
+        jsonRows.forEach(row => {
+          ws.addRow(headers.map(h => row[h]));
+        });
+      }
+    };
 
     if (activeTab === "general") {
       const dataToExport = generalSummaryData.map((d, index) => ({
@@ -1152,8 +1237,7 @@ export default function MonsoonImpactView({
         "Shifted Safe to Unsafe": d.shiftedSafeToUnsafe,
         "Shifted Unsafe to Safe": d.shiftedUnsafeToSafe
       }));
-      const ws = XLSX.utils.json_to_sheet(dataToExport);
-      XLSX.utils.book_append_sheet(wb, ws, "General Summary");
+      addJsonSheet("General Summary", dataToExport);
     } 
     else if (activeTab === "perm") {
       const dataToExport = permSummaryData.map((d, index) => ({
@@ -1167,8 +1251,7 @@ export default function MonsoonImpactView({
         "Deteriorated & Exceeding": d.deterioratedExceed,
         "Unchanged & Exceeding": d.unchangedExceed
       }));
-      const ws = XLSX.utils.json_to_sheet(dataToExport);
-      XLSX.utils.book_append_sheet(wb, ws, "Permissible Limits");
+      addJsonSheet("Permissible Limits", dataToExport);
     }
     else if (activeTab === "contamination") {
       const dataToExport = contaminationReportData.map((d, index) => ({
@@ -1185,11 +1268,10 @@ export default function MonsoonImpactView({
         "Remediated / Cleaned": d.remediated,
         "Remediated (%)": ((d.remediated / d.analyzed) * 100).toFixed(2) + "%"
       }));
-      const ws = XLSX.utils.json_to_sheet(dataToExport);
-      XLSX.utils.book_append_sheet(wb, ws, "Contamination Report");
+      addJsonSheet("Contamination Report", dataToExport);
     }
     else if (activeTab === "stats") {
-      const dataToExport = statisticalTestsData.map((s, index) => ({
+      const dataToExport = statisticalTestsData.map((s) => ({
         "Parameter": s.param,
         "Valid Pairs (n)": s.n,
         "Mean Base": parseFloat(s.meanPre.toFixed(2)),
@@ -1202,8 +1284,7 @@ export default function MonsoonImpactView({
         "Wilcoxon W-Stat": parseFloat(s.wilcoxon.w.toFixed(1)),
         "Wilcoxon P-Value": parseFloat(s.wilcoxon.p.toFixed(4))
       }));
-      const ws = XLSX.utils.json_to_sheet(dataToExport);
-      XLSX.utils.book_append_sheet(wb, ws, "Hypothesis Testing");
+      addJsonSheet("Hypothesis Testing", dataToExport);
     }
     else if (activeTab === "availability") {
       const dataToExport = Object.entries(dataAvailabilityData as Record<string, any>).map(([p, s], index) => ({
@@ -1214,8 +1295,7 @@ export default function MonsoonImpactView({
         "Valid Compare Records": s.compValid,
         "Valid Paired Records": s.pairedValid
       }));
-      const ws = XLSX.utils.json_to_sheet(dataToExport);
-      XLSX.utils.book_append_sheet(wb, ws, "Data Availability");
+      addJsonSheet("Data Availability", dataToExport);
     }
     else if (activeTab === "detailed") {
       const dataToExport = detailedMatrixData.map(d => {
@@ -1238,18 +1318,28 @@ export default function MonsoonImpactView({
 
         return rowObj;
       });
-      const ws = XLSX.utils.json_to_sheet(dataToExport);
-      XLSX.utils.book_append_sheet(wb, ws, "Detailed Matrix");
+      addJsonSheet("Detailed Matrix", dataToExport);
     }
 
-    XLSX.writeFile(wb, `Monsoon_Impact_${activeTab}_${Date.now()}.xlsx`);
+    await downloadExcelJSWorkbook(wb, `Monsoon_Impact_${activeTab}_${Date.now()}.xlsx`);
   };
 
   // --- MULTI-TAB MASTER REPORT EXPORT ---
-  const handleExportAllParameters = () => {
+  const handleExportAllParameters = async () => {
     if (!pairedResult.pairedList.length) return;
 
-    const wb = XLSX.utils.book_new();
+    const wb = new ExcelJS.Workbook();
+
+    const addJsonSheet = (sheetName: string, jsonRows: any[]) => {
+      const ws = wb.addWorksheet(sheetName);
+      if (jsonRows.length > 0) {
+        const headers = Object.keys(jsonRows[0]);
+        ws.addRow(headers);
+        jsonRows.forEach(row => {
+          ws.addRow(headers.map(h => row[h]));
+        });
+      }
+    };
 
     // 1. General Summary Matrix
     const generalRows = generalSummaryData.map((d, index) => ({
@@ -1265,7 +1355,7 @@ export default function MonsoonImpactView({
       "Shifted Safe to Unsafe": d.shiftedSafeToUnsafe,
       "Shifted Unsafe to Safe": d.shiftedUnsafeToSafe
     }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(generalRows), "General Summary");
+    addJsonSheet("General Summary", generalRows);
 
     // 2. Contamination Report
     const contRows = contaminationReportData.map((d, index) => ({
@@ -1282,7 +1372,7 @@ export default function MonsoonImpactView({
       "Remediated / Cleaned": d.remediated,
       "Remediated (%)": ((d.remediated / d.analyzed) * 100).toFixed(1) + "%"
     }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(contRows), "Contamination Report");
+    addJsonSheet("Contamination Report", contRows);
 
     // 3. Statistical Testing
     const statRows = statisticalTestsData.map((s) => ({
@@ -1298,7 +1388,7 @@ export default function MonsoonImpactView({
       "Wilcoxon W-Stat": parseFloat(s.wilcoxon.w.toFixed(1)),
       "Wilcoxon P-Value": parseFloat(s.wilcoxon.p.toFixed(4))
     }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(statRows), "Statistical Tests");
+    addJsonSheet("Statistical Tests", statRows);
 
     // 4. Detailed Base Matrix
     const detailedRows = detailedMatrixData.map(d => {
@@ -1319,9 +1409,9 @@ export default function MonsoonImpactView({
       });
       return rowObj;
     });
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detailedRows), "Detailed Matrix");
+    addJsonSheet("Detailed Matrix", detailedRows);
 
-    XLSX.writeFile(wb, `GWQ_Complete_Monsoon_Report_${Date.now()}.xlsx`);
+    await downloadExcelJSWorkbook(wb, `GWQ_Complete_Monsoon_Report_${Date.now()}.xlsx`);
   };
 
   // Check if year or season columns have been mapped successfully
@@ -1529,6 +1619,7 @@ export default function MonsoonImpactView({
           <div className="flex flex-wrap gap-x-3 gap-y-3 select-none">
             {[
               { id: "general", label: "General Summary", icon: TrendingUp, color: "blue" },
+              { id: "diagrams", label: "Impact Diagrams & Maps", icon: BarChart3, color: "purple" },
               { id: "perm", label: "Permissible Limits", icon: AlertTriangle, color: "rose" },
               { id: "contamination", label: "Contamination Report", icon: Award, color: "amber" },
               { id: "stats", label: "Hypothesis Testing", icon: Activity, color: "indigo" },
@@ -1789,6 +1880,916 @@ export default function MonsoonImpactView({
                 <p className="text-[10px] text-slate-500 font-medium italic">
                   *Interpretation threshold configured at {getParamConfig(activeParam)?.b2} {getParamConfig(activeParam)?.unit || ""} for Safe vs. Unsafe limits. Significant trend variations (&gt;20%) were detected at {(generalSummaryTotals.improved + generalSummaryTotals.deteriorated)} locations.
                 </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* --- Tab Panel: Impact Diagrams & Maps --- */}
+        {activeTab === "diagrams" && (
+          <div className="p-5 space-y-6 bg-slate-50/50">
+            {/* Context Banner */}
+            <div className="bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 text-white p-5 rounded-2xl shadow-md flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-purple-300 font-black text-xs uppercase tracking-wider">
+                  <BarChart3 className="w-4 h-4 text-purple-400" />
+                  Matched Locations Visualization & GIS Gallery
+                </div>
+                <h3 className="text-lg font-extrabold text-white">
+                  Monsoon Hydrochemical Impact Diagrams ({getParamConfig(activeParam)?.name || activeParam})
+                </h3>
+                <p className="text-xs text-slate-300 max-w-3xl leading-relaxed">
+                  Showing 8 high-resolution statistical diagrams, bi-plots, distribution curves, boxplots, violin charts, and GIS spatial maps generated for <strong className="text-emerald-300">{generalSummaryTotals.analyzed} matched locations</strong> comparing Base Period (<strong className="text-purple-200">{basePeriod}</strong>) vs Compare Period (<strong className="text-purple-200">{compPeriod}</strong>).
+                </p>
+              </div>
+
+              {/* Parameter & Filter Selectors */}
+              <div className="flex flex-wrap items-center gap-3 bg-white/10 p-3 rounded-xl backdrop-blur-md border border-white/15 shrink-0">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-purple-200 uppercase tracking-wider">Select Parameter</label>
+                  <select
+                    value={activeParam}
+                    onChange={(e) => setActiveParam(e.target.value)}
+                    className="bg-slate-900 text-white font-black text-xs px-3 py-1.5 rounded-lg border border-purple-400/30 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                  >
+                    {availableParams.map((p) => (
+                      <option key={p} value={p}>
+                        {p} - {getParamConfig(p)?.name || p}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-purple-200 uppercase tracking-wider">Diagram Category</label>
+                  <select
+                    value={selectedDiagramFilter}
+                    onChange={(e) => setSelectedDiagramFilter(e.target.value)}
+                    className="bg-slate-900 text-white font-black text-xs px-3 py-1.5 rounded-lg border border-purple-400/30 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                  >
+                    <option value="all">All Diagrams & GIS Maps (Gallery)</option>
+                    <option value="spatial">1. GIS Choropleth Monsoon Impact Map (State/District-Wise)</option>
+                    <option value="ogive">2. Side-by-Side Cumulative Frequency (Ogive) Curves</option>
+                    <option value="box">3. Pre vs Post Box & Whisker Plot</option>
+                    <option value="violin">4. Kernel Density Violin Plot</option>
+                    <option value="avg">5. Mean Concentration Bar Chart</option>
+                    <option value="exceedance">6. Exceedance Rate Comparison (%)</option>
+                    <option value="donut">7. Impact Status Distribution Donut Chart</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* --- IONIC BI-PLOT SELECTION CARDS (Match User Specs) --- */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                <div>
+                  <div className="flex items-center gap-2 text-indigo-600 font-black text-xs uppercase tracking-wider">
+                    <Layers className="w-4 h-4" />
+                    Hydrochemical Ionic Bi-Plots (Matched Locations)
+                  </div>
+                  <h4 className="text-base font-extrabold text-slate-800">
+                    Hydrochemical Process & Ionic Dissolution Bi-Plot Gallery
+                  </h4>
+                  <p className="text-xs text-slate-500">
+                    Select a milliequivalent ion pair bi-plot to evaluate hydrochemical facies shifts, weathering mechanisms, and salinity controls across matched sampling locations.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold shrink-0">
+                  <button
+                    onClick={() => setBiplotViewMode("side-by-side")}
+                    className={`px-3 py-1.5 rounded-lg transition-all ${biplotViewMode === "side-by-side" ? "bg-purple-900 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
+                  >
+                    Side-by-Side Plots (Pre vs Post)
+                  </button>
+                  <button
+                    onClick={() => setBiplotViewMode("shift-vector")}
+                    className={`px-3 py-1.5 rounded-lg transition-all ${biplotViewMode === "shift-vector" ? "bg-purple-900 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
+                  >
+                    Shift Vectors (Pre → Post)
+                  </button>
+                </div>
+              </div>
+
+              {/* 4 Bi-Plot Option Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Card 1: Na vs Cl */}
+                <button
+                  onClick={() => setSelectedIonicBiplot("na-cl")}
+                  className={`text-left p-4 rounded-xl border-2 transition-all flex flex-col justify-between space-y-3 cursor-pointer ${
+                    selectedIonicBiplot === "na-cl"
+                      ? "border-purple-600 bg-purple-50/40 shadow-md ring-2 ring-purple-500/20"
+                      : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/50"
+                  }`}
+                >
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-purple-600">
+                      BI-PLOT OPTION
+                    </span>
+                    <h5 className="font-extrabold text-xs text-slate-800 leading-tight uppercase">
+                      Na⁺ VS Cl⁻ MILLIEQUIVALENT
+                    </h5>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      Halite Dissolution & Weathering
+                    </p>
+                  </div>
+                  <div className="pt-2 border-t border-slate-100">
+                    <span className="inline-block px-2 py-0.5 bg-slate-100 text-slate-600 font-mono text-[10px] rounded-md font-bold">
+                      Na⁺ / 22.99 vs Cl⁻ / 35.45
+                    </span>
+                  </div>
+                </button>
+
+                {/* Card 2: Ca vs SO4 */}
+                <button
+                  onClick={() => setSelectedIonicBiplot("ca-so4")}
+                  className={`text-left p-4 rounded-xl border-2 transition-all flex flex-col justify-between space-y-3 cursor-pointer ${
+                    selectedIonicBiplot === "ca-so4"
+                      ? "border-purple-600 bg-purple-50/40 shadow-md ring-2 ring-purple-500/20"
+                      : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/50"
+                  }`}
+                >
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-purple-600">
+                      BI-PLOT OPTION
+                    </span>
+                    <h5 className="font-extrabold text-xs text-slate-800 leading-tight uppercase">
+                      Ca²⁺ VS SO₄²⁻ MILLIEQUIVALENT
+                    </h5>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      Gypsum Dissolution & Sourcing
+                    </p>
+                  </div>
+                  <div className="pt-2 border-t border-slate-100">
+                    <span className="inline-block px-2 py-0.5 bg-slate-100 text-slate-600 font-mono text-[10px] rounded-md font-bold">
+                      Ca²⁺ / 20.04 vs SO₄²⁻ / 48.03
+                    </span>
+                  </div>
+                </button>
+
+                {/* Card 3: EC vs Na/Cl */}
+                <button
+                  onClick={() => setSelectedIonicBiplot("ec-nasratio")}
+                  className={`text-left p-4 rounded-xl border-2 transition-all flex flex-col justify-between space-y-3 cursor-pointer ${
+                    selectedIonicBiplot === "ec-nasratio"
+                      ? "border-purple-600 bg-purple-50/40 shadow-md ring-2 ring-purple-500/20"
+                      : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/50"
+                  }`}
+                >
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-purple-600">
+                      BI-PLOT OPTION
+                    </span>
+                    <h5 className="font-extrabold text-xs text-slate-800 leading-tight uppercase">
+                      EC VS Na⁺/Cl⁻ RATIO
+                    </h5>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      Salinity Sourcing & Evaporation
+                    </p>
+                  </div>
+                  <div className="pt-2 border-t border-slate-100">
+                    <span className="inline-block px-2 py-0.5 bg-slate-100 text-slate-600 font-mono text-[10px] rounded-md font-bold">
+                      EC vs (Na⁺ / Cl⁻) meq ratio
+                    </span>
+                  </div>
+                </button>
+
+                {/* Card 4: Ca+Mg vs HCO3+SO4 */}
+                <button
+                  onClick={() => setSelectedIonicBiplot("cams-hco3so4")}
+                  className={`text-left p-4 rounded-xl border-2 transition-all flex flex-col justify-between space-y-3 cursor-pointer ${
+                    selectedIonicBiplot === "cams-hco3so4"
+                      ? "border-purple-600 bg-purple-50/40 shadow-md ring-2 ring-purple-500/20"
+                      : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/50"
+                  }`}
+                >
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-purple-600">
+                      BI-PLOT OPTION
+                    </span>
+                    <h5 className="font-extrabold text-xs text-slate-800 leading-tight uppercase">
+                      (Ca²⁺+Mg²⁺) VS (HCO₃⁻+SO₄²⁻)
+                    </h5>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      Carbonate Weathering Controls
+                    </p>
+                  </div>
+                  <div className="pt-2 border-t border-slate-100">
+                    <span className="inline-block px-2 py-0.5 bg-slate-100 text-slate-600 font-mono text-[10px] rounded-md font-bold">
+                      (Ca²⁺+Mg²⁺) vs (HCO₃⁻+CO₃²⁻+SO₄²⁻)
+                    </span>
+                  </div>
+                </button>
+              </div>
+
+              {/* Render Selected Bi-Plot SVG & Chemistry Insights */}
+              {(() => {
+                const biplotSvg = biplotViewMode === "side-by-side"
+                  ? generateSideBySideIonicBiPlotSVG(pairedResult.pairedList, selectedIonicBiplot, basePeriod, compPeriod)
+                  : generateMonsoonShiftVectorBiPlotSVG(pairedResult.pairedList, selectedIonicBiplot, basePeriod, compPeriod);
+
+                // Compute Chemistry Stats matching Image 2
+                const computeBiplotStats = (pairedList: any[], type: IonicBiplotType, rowKey?: "baseRow" | "compRow") => {
+                  const pts: { x: number; y: number }[] = [];
+                  pairedList.forEach((item) => {
+                    if (!rowKey || rowKey === "baseRow") {
+                      const preXY = getBiplotXY(item.baseRow, type);
+                      if (preXY) pts.push(preXY);
+                    }
+                    if (!rowKey || rowKey === "compRow") {
+                      const postXY = getBiplotXY(item.compRow, type);
+                      if (postXY) pts.push(postXY);
+                    }
+                  });
+
+                  if (!pts.length) {
+                    return {
+                      count: 0,
+                      r: 0,
+                      corrText: "NO DATA AVAILABLE",
+                      abovePct: 0,
+                      belowPct: 0,
+                      aboveLabel: "Above Equiline",
+                      belowLabel: "On / Below Equiline",
+                      interpretation: "No chemical ion data available for this bi-plot."
+                    };
+                  }
+
+                  const n = pts.length;
+                  const meanX = pts.reduce((a, b) => a + b.x, 0) / n;
+                  const meanY = pts.reduce((a, b) => a + b.y, 0) / n;
+
+                  let num = 0;
+                  let denX = 0;
+                  let denY = 0;
+                  let aboveCount = 0;
+                  let belowCount = 0;
+
+                  pts.forEach((p) => {
+                    const dx = p.x - meanX;
+                    const dy = p.y - meanY;
+                    num += dx * dy;
+                    denX += dx * dx;
+                    denY += dy * dy;
+
+                    if (type === "ec-nasratio") {
+                      if (p.y > 1.0) aboveCount++;
+                      else belowCount++;
+                    } else {
+                      if (p.y > p.x) aboveCount++;
+                      else belowCount++;
+                    }
+                  });
+
+                  const den = Math.sqrt(denX * denY);
+                  const r = den > 0 ? num / den : 0;
+
+                  let corrText = "NEGLIGIBLE CORRELATION";
+                  const absR = Math.abs(r);
+                  if (absR >= 0.8) corrText = r > 0 ? "VERY STRONG POSITIVE CORRELATION (+)" : "VERY STRONG NEGATIVE CORRELATION (-)";
+                  else if (absR >= 0.6) corrText = r > 0 ? "STRONG POSITIVE CORRELATION (+)" : "STRONG NEGATIVE CORRELATION (-)";
+                  else if (absR >= 0.4) corrText = r > 0 ? "MODERATE POSITIVE CORRELATION (+)" : "MODERATE NEGATIVE CORRELATION (-)";
+                  else if (absR >= 0.2) corrText = r > 0 ? "WEAK POSITIVE CORRELATION (+)" : "WEAK NEGATIVE CORRELATION (-)";
+
+                  const abovePct = (aboveCount / n) * 100;
+                  const belowPct = (belowCount / n) * 100;
+
+                  let aboveLabel = "";
+                  let belowLabel = "";
+                  let interpretation = "";
+
+                  if (type === "na-cl") {
+                    aboveLabel = "NA⁺ > CL⁻ (SILICATE WEATHERING / ION EXCHANGE)";
+                    belowLabel = "NA⁺ ≤ CL⁻ (HALITE / MARINE / ANTHROPOGENIC)";
+                    interpretation = "A 1:1 Na⁺:Cl⁻ relationship suggests halite dissolution as the primary source. Samples above the line indicate silicate weathering or ion exchange. Samples below the line point to reverse ion exchange or anthropogenic/marine chloride inputs.";
+                  } else if (type === "ca-so4") {
+                    aboveLabel = "CA²⁺ > SO₄²⁻ (CARBONATE WEATHERING / REVERSE EXCHANGE)";
+                    belowLabel = "CA²⁺ ≤ SO₄²⁻ (GYPSUM DISSOLUTION / AGRICULTURAL INPUTS)";
+                    interpretation = "Samples on the 1:1 equiline indicate gypsum/anhydrite dissolution. Excess Ca²⁺ relative to SO₄²⁻ reflects carbonate weathering or excess calcium inputs, while excess SO₄²⁻ indicates agricultural runoff or industrial sulfate inputs.";
+                  } else if (type === "ec-nasratio") {
+                    aboveLabel = "NA⁺/CL⁻ > 1.0 (SILICATE WEATHERING / ANTHROPOGENIC INPUTS)";
+                    belowLabel = "NA⁺/CL⁻ ≤ 1.0 (HALITE DISSOLUTION / EVAPORATION / SALINE)";
+                    interpretation = "EC vs Na⁺/Cl⁻ ratio illustrates salinity sourcing and concentration via evaporation. Ratios near 1.0 reflect halite dissolution, while elevated EC with decreasing ratios indicates progressive evaporation and coastal/saline influences.";
+                  } else {
+                    aboveLabel = "(CA²⁺+MG²⁺) > (HCO₃⁻+SO₄²⁻) (REVERSE ION EXCHANGE)";
+                    belowLabel = "(CA²⁺+MG²⁺) ≤ (HCO₃⁻+SO₄²⁻) (CARBONATE WEATHERING / BASE EXCHANGE)";
+                    interpretation = "Points falling along the 1:1 line indicate calcite, dolomite, and gypsum dissolution. Points above the line suggest excess divalent cations from reverse ion exchange, while points below reflect silicate weathering and normal ion exchange.";
+                  }
+
+                  return {
+                    count: n,
+                    r,
+                    corrText,
+                    abovePct,
+                    belowPct,
+                    aboveLabel,
+                    belowLabel,
+                    interpretation
+                  };
+                };
+
+                const stats = computeBiplotStats(pairedResult.pairedList, selectedIonicBiplot);
+
+                return (
+                  <div className="space-y-4">
+                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-1 bg-purple-900 text-white text-xs font-black rounded-lg">
+                            {biplotViewMode === "side-by-side" ? "SIDE-BY-SIDE DUAL PANEL" : "SHIFT VECTORS"}
+                          </span>
+                          <h4 className="font-extrabold text-slate-800 text-xs sm:text-sm">
+                            Matched Locations Bi-Plot ({selectedIonicBiplot.toUpperCase()})
+                          </h4>
+                        </div>
+                        <button
+                          onClick={() => downloadSVG(biplotSvg, `Ionic_BiPlot_${selectedIonicBiplot}_${biplotViewMode}.svg`)}
+                          className="px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 font-bold text-xs rounded-lg flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5" /> Download Bi-Plot SVG
+                        </button>
+                      </div>
+
+                      <div
+                        className="flex justify-center bg-white p-2 rounded-xl border border-slate-200 overflow-x-auto shadow-xs"
+                        dangerouslySetInnerHTML={{ __html: biplotSvg }}
+                      />
+                    </div>
+
+                    {/* CHEMISTRY INSIGHTS & STATS CARDS (SEPARATED FOR PRE-MONSOON & POST-MONSOON) */}
+                    {(() => {
+                      const preStats = computeBiplotStats(pairedResult.pairedList, selectedIonicBiplot, "baseRow");
+                      const postStats = computeBiplotStats(pairedResult.pairedList, selectedIonicBiplot, "compRow");
+
+                      return (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          {/* PRE-MONSOON CHEMISTRY INSIGHTS & STATS */}
+                          <div className="bg-slate-50/90 border border-blue-200/80 rounded-2xl p-5 space-y-4 shadow-2xs">
+                            <div className="flex items-center justify-between border-b border-blue-100 pb-3">
+                              <div className="flex items-center gap-2.5">
+                                <div className="p-2 bg-blue-100 rounded-xl text-blue-700">
+                                  <Info className="w-5 h-5" />
+                                </div>
+                                <div>
+                                  <h4 className="text-sm font-black text-blue-950 uppercase tracking-wide">
+                                    PRE-MONSOON CHEMISTRY INSIGHTS & STATS
+                                  </h4>
+                                  <p className="text-[10px] font-black uppercase tracking-wider text-blue-600">
+                                    BASE PERIOD AQUIFER PROCESSES ({basePeriod})
+                                  </p>
+                                </div>
+                              </div>
+                              <span className="px-2.5 py-1 bg-blue-100 text-blue-800 text-[11px] font-black rounded-lg">
+                                PRE-MONSOON
+                              </span>
+                            </div>
+
+                            {/* Stats Block: Plotted Samples & Pearson's r */}
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="bg-white border border-slate-200 rounded-xl p-3.5 text-center shadow-2xs">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">
+                                  PLOTTED SAMPLES
+                                </span>
+                                <span className="text-2xl sm:text-3xl font-black text-slate-900">
+                                  {preStats.count}
+                                </span>
+                              </div>
+
+                              <div className="bg-white border border-slate-200 rounded-xl p-3.5 text-center shadow-2xs">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">
+                                  PEARSON'S R
+                                </span>
+                                <span className="text-2xl sm:text-3xl font-black text-slate-900">
+                                  {preStats.r.toFixed(3)}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Correlation Classification */}
+                            <div className="text-xs font-bold text-slate-500">
+                              CORRELATION: <span className="font-black text-blue-900">{preStats.corrText}</span>
+                            </div>
+
+                            {/* Equiline Sourcing Analysis */}
+                            <div className="space-y-3 pt-1">
+                              <h5 className="text-[10.5px] font-black uppercase tracking-wider text-slate-500">
+                                EQUILINE (1:1) SOURCING ANALYSIS ({basePeriod}):
+                              </h5>
+
+                              <div className="space-y-2.5 text-xs">
+                                <div>
+                                  <div className="flex justify-between font-bold text-slate-700 mb-1">
+                                    <span className="text-[11px]">{preStats.aboveLabel}</span>
+                                    <span className="font-mono text-slate-900 font-black">{preStats.abovePct.toFixed(2)}%</span>
+                                  </div>
+                                  <div className="w-full bg-slate-200/80 h-2.5 rounded-full overflow-hidden">
+                                    <div
+                                      className="bg-blue-600 h-full rounded-full transition-all duration-500"
+                                      style={{ width: `${Math.max(2, preStats.abovePct)}%` }}
+                                    />
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <div className="flex justify-between font-bold text-slate-700 mb-1">
+                                    <span className="text-[11px]">{preStats.belowLabel}</span>
+                                    <span className="font-mono text-slate-900 font-black">{preStats.belowPct.toFixed(2)}%</span>
+                                  </div>
+                                  <div className="w-full bg-slate-200/80 h-2.5 rounded-full overflow-hidden">
+                                    <div
+                                      className="bg-amber-500 h-full rounded-full transition-all duration-500"
+                                      style={{ width: `${Math.max(2, preStats.belowPct)}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Hydrologic Interpretation Box */}
+                            <div className="bg-blue-50 border border-blue-100 rounded-xl p-3.5 text-xs text-slate-700 leading-relaxed font-medium">
+                              <span className="font-extrabold text-blue-950">Pre-Monsoon Hydrologic Interpretation:</span> {preStats.interpretation}
+                            </div>
+                          </div>
+
+                          {/* POST-MONSOON CHEMISTRY INSIGHTS & STATS */}
+                          <div className="bg-slate-50/90 border border-amber-200/80 rounded-2xl p-5 space-y-4 shadow-2xs">
+                            <div className="flex items-center justify-between border-b border-amber-100 pb-3">
+                              <div className="flex items-center gap-2.5">
+                                <div className="p-2 bg-amber-100 rounded-xl text-amber-700">
+                                  <Info className="w-5 h-5" />
+                                </div>
+                                <div>
+                                  <h4 className="text-sm font-black text-amber-950 uppercase tracking-wide">
+                                    POST-MONSOON CHEMISTRY INSIGHTS & STATS
+                                  </h4>
+                                  <p className="text-[10px] font-black uppercase tracking-wider text-amber-600">
+                                    COMPARE PERIOD AQUIFER PROCESSES ({compPeriod})
+                                  </p>
+                                </div>
+                              </div>
+                              <span className="px-2.5 py-1 bg-amber-100 text-amber-800 text-[11px] font-black rounded-lg">
+                                POST-MONSOON
+                              </span>
+                            </div>
+
+                            {/* Stats Block: Plotted Samples & Pearson's r */}
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="bg-white border border-slate-200 rounded-xl p-3.5 text-center shadow-2xs">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">
+                                  PLOTTED SAMPLES
+                                </span>
+                                <span className="text-2xl sm:text-3xl font-black text-slate-900">
+                                  {postStats.count}
+                                </span>
+                              </div>
+
+                              <div className="bg-white border border-slate-200 rounded-xl p-3.5 text-center shadow-2xs">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">
+                                  PEARSON'S R
+                                </span>
+                                <span className="text-2xl sm:text-3xl font-black text-slate-900">
+                                  {postStats.r.toFixed(3)}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Correlation Classification */}
+                            <div className="text-xs font-bold text-slate-500">
+                              CORRELATION: <span className="font-black text-amber-900">{postStats.corrText}</span>
+                            </div>
+
+                            {/* Equiline Sourcing Analysis */}
+                            <div className="space-y-3 pt-1">
+                              <h5 className="text-[10.5px] font-black uppercase tracking-wider text-slate-500">
+                                EQUILINE (1:1) SOURCING ANALYSIS ({compPeriod}):
+                              </h5>
+
+                              <div className="space-y-2.5 text-xs">
+                                <div>
+                                  <div className="flex justify-between font-bold text-slate-700 mb-1">
+                                    <span className="text-[11px]">{postStats.aboveLabel}</span>
+                                    <span className="font-mono text-slate-900 font-black">{postStats.abovePct.toFixed(2)}%</span>
+                                  </div>
+                                  <div className="w-full bg-slate-200/80 h-2.5 rounded-full overflow-hidden">
+                                    <div
+                                      className="bg-amber-600 h-full rounded-full transition-all duration-500"
+                                      style={{ width: `${Math.max(2, postStats.abovePct)}%` }}
+                                    />
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <div className="flex justify-between font-bold text-slate-700 mb-1">
+                                    <span className="text-[11px]">{postStats.belowLabel}</span>
+                                    <span className="font-mono text-slate-900 font-black">{postStats.belowPct.toFixed(2)}%</span>
+                                  </div>
+                                  <div className="w-full bg-slate-200/80 h-2.5 rounded-full overflow-hidden">
+                                    <div
+                                      className="bg-indigo-500 h-full rounded-full transition-all duration-500"
+                                      style={{ width: `${Math.max(2, postStats.belowPct)}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Hydrologic Interpretation Box */}
+                            <div className="bg-amber-50/80 border border-amber-100 rounded-xl p-3.5 text-xs text-slate-700 leading-relaxed font-medium">
+                              <span className="font-extrabold text-amber-950">Post-Monsoon Hydrologic Interpretation:</span> {postStats.interpretation}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Render Diagram Gallery Cards */}
+            {!pairedResult.pairedList.length ? (
+              <div className="bg-white p-12 text-center rounded-2xl border border-slate-200 text-slate-500 font-bold space-y-2">
+                <AlertCircle className="w-10 h-10 text-amber-500 mx-auto" />
+                <p>No paired/matched locations found for the selected base & comparison periods.</p>
+                <p className="text-xs text-slate-400">Please adjust your base period, compare period, or filter criteria.</p>
+              </div>
+            ) : (
+              <div className="space-y-8">
+                {/* 1. GIS Choropleth Map */}
+                {(selectedDiagramFilter === "all" || selectedDiagramFilter === "spatial") && (() => {
+                  const svg = generateMonsoonChoroplethMapSVG(
+                    pairedListWithVals,
+                    activeParam,
+                    getParamConfig(activeParam)?.unit || "",
+                    activeParam,
+                    choroplethGranularity,
+                    basePeriod,
+                    compPeriod,
+                    sharedLayers,
+                    choroplethOrientation,
+                    choroplethBgColor,
+                    effectiveSelectedState,
+                    effectiveSelectedDistrict,
+                    districtStateMap,
+                    showChoroplethDataPoints
+                  );
+                  return (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between border-b border-slate-100 pb-3 gap-3">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-1 bg-purple-100 text-purple-800 text-xs font-black rounded-lg">1</span>
+                          <div>
+                            <h4 className="font-extrabold text-slate-800 text-sm">
+                              GIS Choropleth Map of Monsoon Hydrochemical Impact ({activeParam})
+                            </h4>
+                            <p className="text-[11px] text-slate-500 font-medium">
+                              Portrait or Landscape GIS Choropleth layout with customizable background color & sample data point overlay settings
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2.5">
+                          {/* Data Points Toggle */}
+                          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase px-1">Data Points:</span>
+                            <button
+                              onClick={() => setShowChoroplethDataPoints(true)}
+                              className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all ${
+                                showChoroplethDataPoints
+                                  ? "bg-purple-700 text-white shadow-xs"
+                                  : "text-slate-600 hover:bg-slate-200"
+                              }`}
+                              title="Show sample locations on map"
+                            >
+                              Show
+                            </button>
+                            <button
+                              onClick={() => setShowChoroplethDataPoints(false)}
+                              className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all ${
+                                !showChoroplethDataPoints
+                                  ? "bg-purple-700 text-white shadow-xs"
+                                  : "text-slate-600 hover:bg-slate-200"
+                              }`}
+                              title="Hide sample locations on map"
+                            >
+                              Hide
+                            </button>
+                          </div>
+
+                          {/* Granularity Scale */}
+                          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase px-1">Scale:</span>
+                            <button
+                              onClick={() => setChoroplethGranularity("district")}
+                              className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all ${
+                                choroplethGranularity === "district"
+                                  ? "bg-purple-700 text-white shadow-sm"
+                                  : "text-slate-600 hover:bg-slate-200"
+                              }`}
+                            >
+                              District-Wise
+                            </button>
+                            <button
+                              onClick={() => setChoroplethGranularity("state")}
+                              className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all ${
+                                choroplethGranularity === "state"
+                                  ? "bg-purple-700 text-white shadow-sm"
+                                  : "text-slate-600 hover:bg-slate-200"
+                              }`}
+                            >
+                              State-Wise
+                            </button>
+                          </div>
+
+                          {/* Orientation Control */}
+                          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase px-1">Type:</span>
+                            <button
+                              onClick={() => setChoroplethOrientation("portrait")}
+                              className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all ${
+                                choroplethOrientation === "portrait"
+                                  ? "bg-blue-700 text-white shadow-sm"
+                                  : "text-slate-600 hover:bg-slate-200"
+                              }`}
+                            >
+                              Portrait
+                            </button>
+                            <button
+                              onClick={() => setChoroplethOrientation("landscape")}
+                              className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all ${
+                                choroplethOrientation === "landscape"
+                                  ? "bg-blue-700 text-white shadow-sm"
+                                  : "text-slate-600 hover:bg-slate-200"
+                              }`}
+                            >
+                              Landscape
+                            </button>
+                          </div>
+
+                          {/* Background Color Picker & Presets */}
+                          <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg border border-slate-200">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase px-1">Bg Color:</span>
+                            <input
+                              type="color"
+                              value={choroplethBgColor}
+                              onChange={(e) => setChoroplethBgColor(e.target.value)}
+                              className="w-6 h-6 rounded cursor-pointer border border-slate-300 p-0"
+                              title="Custom Background Color"
+                            />
+                            {/* Quick Presets */}
+                            <button
+                              onClick={() => setChoroplethBgColor("#ffffff")}
+                              className={`w-5 h-5 rounded-full border ${choroplethBgColor === "#ffffff" ? "ring-2 ring-blue-500" : "border-slate-300"} bg-white`}
+                              title="White"
+                            />
+                            <button
+                              onClick={() => setChoroplethBgColor("#f8fafc")}
+                              className={`w-5 h-5 rounded-full border ${choroplethBgColor === "#f8fafc" ? "ring-2 ring-blue-500" : "border-slate-300"} bg-slate-50`}
+                              title="Light Slate"
+                            />
+                            <button
+                              onClick={() => setChoroplethBgColor("#f0fdf4")}
+                              className={`w-5 h-5 rounded-full border ${choroplethBgColor === "#f0fdf4" ? "ring-2 ring-blue-500" : "border-slate-300"} bg-emerald-50`}
+                              title="Light Emerald"
+                            />
+                            <button
+                              onClick={() => setChoroplethBgColor("#0f172a")}
+                              className={`w-5 h-5 rounded-full border ${choroplethBgColor === "#0f172a" ? "ring-2 ring-blue-500" : "border-slate-300"} bg-slate-900`}
+                              title="Dark Slate"
+                            />
+                            <button
+                              onClick={() => setChoroplethBgColor("transparent")}
+                              className={`px-1.5 py-0.5 text-[10px] rounded border font-extrabold ${choroplethBgColor === "transparent" ? "bg-purple-700 text-white border-purple-700" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"}`}
+                              title="Transparent Canvas"
+                            >
+                              Transp
+                            </button>
+                          </div>
+
+                          {/* Download Button */}
+                          <button
+                            onClick={() => downloadSVG(svg, `GIS_Choropleth_Map_${choroplethOrientation}_${choroplethGranularity}_${activeParam}.svg`)}
+                            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg flex items-center gap-1.5 transition-all"
+                          >
+                            <Download className="w-3.5 h-3.5" /> Download SVG
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-center bg-slate-50/50 p-3 rounded-xl border border-slate-100 overflow-x-auto" dangerouslySetInnerHTML={{ __html: svg }} />
+                      <p className="text-xs text-center text-slate-500 font-medium italic">
+                        State or District-level choropleth visualization displaying net concentration shift (% change) between {basePeriod} and {compPeriod} in {choroplethOrientation} mode.
+                      </p>
+                    </div>
+                  );
+                })()}
+
+                {/* 2. Side-by-Side Dual Ogive Curves */}
+                {(selectedDiagramFilter === "all" || selectedDiagramFilter === "ogive") && (() => {
+                  const preVals = pairedListWithVals.map(p => p.preVal);
+                  const postVals = pairedListWithVals.map(p => p.postVal);
+                  const svg = generateMonsoonDualOgiveSVG(
+                    preVals,
+                    postVals,
+                    activeParam,
+                    getParamConfig(activeParam)?.unit || "",
+                    basePeriod,
+                    compPeriod
+                  );
+                  return (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-1 bg-blue-100 text-blue-800 text-xs font-black rounded-lg">2</span>
+                          <h4 className="font-extrabold text-slate-800 text-sm">
+                            Side-by-Side Cumulative Frequency (Ogive) Curves ({activeParam})
+                          </h4>
+                        </div>
+                        <button
+                          onClick={() => downloadSVG(svg, `Side_By_Side_Ogive_Curves_${activeParam}.svg`)}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg flex items-center gap-1.5 transition-all"
+                        >
+                          <Download className="w-3.5 h-3.5" /> Download SVG
+                        </button>
+                      </div>
+                      <div className="flex justify-center bg-slate-50/50 p-2 rounded-xl border border-slate-100 overflow-x-auto" dangerouslySetInnerHTML={{ __html: svg }} />
+                      <p className="text-xs text-center text-slate-500 font-medium italic">
+                        Individual Pre-Monsoon ({basePeriod}) and Post-Monsoon ({compPeriod}) cumulative frequency S-curves with percentile statistics (P25, Median P50, P75, P90).
+                      </p>
+                    </div>
+                  );
+                })()}
+
+                {/* 3. Pre vs Post Box & Whisker Plot */}
+                {(selectedDiagramFilter === "all" || selectedDiagramFilter === "box") && (() => {
+                  const preVals = pairedListWithVals.map(p => p.preVal);
+                  const postVals = pairedListWithVals.map(p => p.postVal);
+                  const svg = generateMonsoonBoxPlotSVG(
+                    preVals,
+                    postVals,
+                    activeParam,
+                    getParamConfig(activeParam)?.unit || ""
+                  );
+                  return (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-1 bg-amber-100 text-amber-800 text-xs font-black rounded-lg">3</span>
+                          <h4 className="font-extrabold text-slate-800 text-sm">
+                            Pre vs Post Monsoon Box & Whisker Comparison ({activeParam})
+                          </h4>
+                        </div>
+                        <button
+                          onClick={() => downloadSVG(svg, `Box_Plot_${activeParam}.svg`)}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg flex items-center gap-1.5 transition-all"
+                        >
+                          <Download className="w-3.5 h-3.5" /> Download SVG
+                        </button>
+                      </div>
+                      <div className="flex justify-center bg-slate-50/50 p-2 rounded-xl border border-slate-100 overflow-x-auto" dangerouslySetInnerHTML={{ __html: svg }} />
+                      <p className="text-xs text-center text-slate-500 font-medium italic">
+                        5-number statistical summary (Min, Q1, Median, Mean, Q3, Max) contrasting pre-monsoon vs post-monsoon distribution spread.
+                      </p>
+                    </div>
+                  );
+                })()}
+
+                {/* 4. Kernel Density Violin Plot */}
+                {(selectedDiagramFilter === "all" || selectedDiagramFilter === "violin") && (() => {
+                  const preVals = pairedListWithVals.map(p => p.preVal);
+                  const postVals = pairedListWithVals.map(p => p.postVal);
+                  const svg = generateMonsoonViolinPlotSVG(
+                    preVals,
+                    postVals,
+                    activeParam,
+                    getParamConfig(activeParam)?.unit || ""
+                  );
+                  return (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 text-xs font-black rounded-lg">4</span>
+                          <h4 className="font-extrabold text-slate-800 text-sm">
+                            Pre vs Post Monsoon Kernel Density Violin Plot ({activeParam})
+                          </h4>
+                        </div>
+                        <button
+                          onClick={() => downloadSVG(svg, `Violin_Plot_${activeParam}.svg`)}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg flex items-center gap-1.5 transition-all"
+                        >
+                          <Download className="w-3.5 h-3.5" /> Download SVG
+                        </button>
+                      </div>
+                      <div className="flex justify-center bg-slate-50/50 p-2 rounded-xl border border-slate-100 overflow-x-auto" dangerouslySetInnerHTML={{ __html: svg }} />
+                      <p className="text-xs text-center text-slate-500 font-medium italic">
+                        Continuous kernel density probability distribution visualising concentration multimodal clustering and tail spread.
+                      </p>
+                    </div>
+                  );
+                })()}
+
+                {/* 5. Mean Concentration Comparison Bar Chart */}
+                {(selectedDiagramFilter === "all" || selectedDiagramFilter === "avg") && (() => {
+                  const groupList = generalSummaryData.map(g => ({ name: g.name }));
+                  const svg = generateMonsoonAveragePlotSVG(
+                    groupList,
+                    pairedListWithVals,
+                    activeParam,
+                    getParamConfig(activeParam)?.unit || ""
+                  );
+                  return (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-1 bg-rose-100 text-rose-800 text-xs font-black rounded-lg">5</span>
+                          <h4 className="font-extrabold text-slate-800 text-sm">
+                            Average Concentration Comparison Bar Chart ({activeParam})
+                          </h4>
+                        </div>
+                        <button
+                          onClick={() => downloadSVG(svg, `Average_BarChart_${activeParam}.svg`)}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg flex items-center gap-1.5 transition-all"
+                        >
+                          <Download className="w-3.5 h-3.5" /> Download SVG
+                        </button>
+                      </div>
+                      <div className="flex justify-center bg-slate-50/50 p-2 rounded-xl border border-slate-100 overflow-x-auto" dangerouslySetInnerHTML={{ __html: svg }} />
+                      <p className="text-xs text-center text-slate-500 font-medium italic">
+                        Sub-region and overall mean concentration contrast highlighting dilution or enrichment trends across seasons.
+                      </p>
+                    </div>
+                  );
+                })()}
+
+                {/* 6. Pre vs Post Exceedance Rate Comparison Bar Chart */}
+                {(selectedDiagramFilter === "all" || selectedDiagramFilter === "exceedance") && (() => {
+                  const groupList = generalSummaryData.map(g => ({ name: g.name }));
+                  const svg = generateMonsoonExceedanceBarSVG(
+                    groupList,
+                    pairedListWithVals,
+                    activeParam,
+                    getParamConfig(activeParam)?.unit || "",
+                    activeParam
+                  );
+                  return (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-1 bg-purple-100 text-purple-800 text-xs font-black rounded-lg">6</span>
+                          <h4 className="font-extrabold text-slate-800 text-sm">
+                            Pre vs Post Monsoon Exceedance Rate Comparison Bar Chart (%) ({activeParam})
+                          </h4>
+                        </div>
+                        <button
+                          onClick={() => downloadSVG(svg, `Exceedance_BarChart_${activeParam}.svg`)}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg flex items-center gap-1.5 transition-all"
+                        >
+                          <Download className="w-3.5 h-3.5" /> Download SVG
+                        </button>
+                      </div>
+                      <div className="flex justify-center bg-slate-50/50 p-2 rounded-xl border border-slate-100 overflow-x-auto" dangerouslySetInnerHTML={{ __html: svg }} />
+                      <p className="text-xs text-center text-slate-500 font-medium italic">
+                        Percentage of matched sampling locations exceeding IS 10500 / BIS standard permissible limits before and after monsoon.
+                      </p>
+                    </div>
+                  );
+                })()}
+
+                {/* 7. Monsoon Impact Status Donut Chart */}
+                {(selectedDiagramFilter === "all" || selectedDiagramFilter === "donut") && (() => {
+                  const svg = generateMonsoonDonutChartSVG(
+                    generalSummaryTotals.analyzed,
+                    generalSummaryTotals.improved,
+                    generalSummaryTotals.deteriorated,
+                    generalSummaryTotals.unchanged,
+                    generalSummaryTotals.shiftedSafeToUnsafe,
+                    generalSummaryTotals.shiftedUnsafeToSafe,
+                    activeParam
+                  );
+                  return (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-1 bg-teal-100 text-teal-800 text-xs font-black rounded-lg">7</span>
+                          <h4 className="font-extrabold text-slate-800 text-sm">
+                            Monsoon Impact Status Distribution Donut Chart ({activeParam})
+                          </h4>
+                        </div>
+                        <button
+                          onClick={() => downloadSVG(svg, `Donut_Chart_${activeParam}.svg`)}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg flex items-center gap-1.5 transition-all"
+                        >
+                          <Download className="w-3.5 h-3.5" /> Download SVG
+                        </button>
+                      </div>
+                      <div className="flex justify-center bg-slate-50/50 p-2 rounded-xl border border-slate-100 overflow-x-auto" dangerouslySetInnerHTML={{ __html: svg }} />
+                      <p className="text-xs text-center text-slate-500 font-medium italic">
+                        Proportional categorization of groundwater quality trend outcomes (Improved, Deteriorated, Unchanged, Safe→Unsafe, Unsafe→Safe).
+                      </p>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>

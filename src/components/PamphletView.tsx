@@ -963,109 +963,7 @@ export default function PamphletView({
         return "#475569"; // Slate
       };
 
-      const generateGibbsDiagramHTML = (type: "cation" | "anion", title: string, samples: any[]): string => {
-        const width = 280;
-        const height = 360;
-        const padding = { left: 45, right: 15, top: 25, bottom: 40 };
 
-        const getX = (ratio: number) => {
-          const w = width - padding.left - padding.right;
-          return padding.left + ratio * w;
-        };
-        const getY = (tds: number) => {
-          const h = height - padding.top - padding.bottom;
-          const logMin = 1; // Log10 of 10
-          const logMax = 4.5; // Log10 of ~31620
-          const logVal = Math.log10(Math.max(10, tds || 10));
-          return padding.top + h - ((logVal - logMin) / (logMax - logMin)) * h;
-        };
-
-        // Parallelogram shape as in GibbsDiagrams.tsx:
-        const envelopePath = `M ${getX(0.1)} ${getY(5000)} L ${getX(0.9)} ${getY(10000)} L ${getX(0.9)} ${getY(1000)} L ${getX(0.1)} ${getY(10)} L ${getX(0.1)} ${getY(5000)} Z`;
-
-        const gridY = [10, 100, 1000, 10000];
-        const gridX = [0, 0.2, 0.4, 0.6, 0.8, 1.0];
-
-        let gridLinesSvg = "";
-        gridY.forEach(yVal => {
-          const y = getY(yVal);
-          gridLinesSvg += `
-            <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="#cbd5e1" stroke-width="0.5" stroke-dasharray="2,2" />
-            <text x="${padding.left - 6}" y="${y + 3}" font-size="7.5" fill="#475569" text-anchor="end" font-weight="bold">${yVal}</text>
-          `;
-        });
-
-        gridX.forEach(xVal => {
-          const x = getX(xVal);
-          gridLinesSvg += `
-            <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${height - padding.bottom}" stroke="#cbd5e1" stroke-width="0.5" stroke-dasharray="2,2" />
-            <text x="${x}" y="${height - padding.bottom + 12}" font-size="7.5" fill="#475569" text-anchor="middle" font-weight="bold">${xVal.toFixed(1)}</text>
-          `;
-        });
-
-        const labelRain = `<text x="${getX(0.15)}" y="${getY(20)}" font-size="8.5" font-weight="bold" fill="#64748b" text-anchor="start" opacity="0.8">Precipitation</text>`;
-        const labelWeathering = `<text x="${getX(0.5)}" y="${getY(500)}" font-size="8.5" font-weight="bold" fill="#64748b" text-anchor="middle" opacity="0.8">Rock</text>`;
-        const labelEvaporation = `<text x="${getX(0.85)}" y="${getY(8000)}" font-size="8.5" font-weight="bold" fill="#64748b" text-anchor="end" opacity="0.8">Evaporation</text>`;
-
-        let pointsSvg = "";
-        samples.forEach(s => {
-          const hasGibbs = s.hasGibbs;
-          const r = type === "cation" ? (s.gibbsCation ?? s.gibbsCationVal) : (s.gibbsAnion ?? s.gibbsAnionVal);
-          const t = s.tdsVal ?? s.tds;
-          if (!hasGibbs || r === null || t === null || isNaN(r) || isNaN(t) || t <= 0) return;
-
-          const cx = getX(r);
-          const cy = getY(t);
-          const groupVal = hasAquiferCol ? (s.aquifer || "-") : (s.block || "-");
-          const blockId = getBlockId(groupVal);
-
-          pointsSvg += `
-            <circle cx="${cx}" cy="${cy}" r="3.0" fill="url(#bubble-${blockId})" filter="url(#bubble-shadow)" stroke="#ffffff" stroke-width="0.3" />
-          `;
-        });
-
-        const svg = `
-          <svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 1.5px solid #cbd5e1; border-radius: 16px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05); font-family: 'Times New Roman', Times, serif;" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <filter id="3d-emboss" x="-20%" y="-20%" width="140%" height="140%">
-                <feGaussianBlur in="SourceAlpha" stdDeviation="0.6" result="blur" />
-                <feSpecularLighting in="blur" surfaceScale="2" specularConstant="1.2" specularExponent="16" lighting-color="#ffffff" result="spec">
-                  <feDistantLight azimuth="225" elevation="45" />
-                </feSpecularLighting>
-                <feComposite in="spec" in2="SourceAlpha" operator="in" result="specOut" />
-                <feComposite in="SourceGraphic" in2="specOut" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="lit" />
-              </filter>
-              <filter id="bubble-shadow" x="-30%" y="-30%" width="160%" height="160%">
-                <feDropShadow dx="0.5" dy="1.0" stdDeviation="0.6" flood-opacity="0.3" />
-              </filter>
-              ${getDefsMarkup()}
-            </defs>
-            <text x="${width / 2}" y="15" font-size="9" font-weight="900" fill="#1e3a8a" text-anchor="middle" style="letter-spacing: 0.1em;" filter="url(#3d-emboss)">${title.toUpperCase()}</text>
-            
-            <!-- Y-Axis Label -->
-            <text x="12" y="${height / 2}" font-size="8" font-weight="900" fill="#64748b" transform="rotate(-90 12 ${height / 2})" text-anchor="middle" style="letter-spacing: 0.1em;">TDS (MG/L)</text>
-            
-            <!-- X-Axis Label -->
-            <text x="${width / 2}" y="${height - 12}" font-size="8" font-weight="900" fill="#64748b" text-anchor="middle" style="letter-spacing: 0.1em;">${type === "cation" ? "NA+ / (NA+ + CA2+)" : "CL- / (CL- + HCO3-)"}</text>
-            
-            <!-- Envelope -->
-            <path d="${envelopePath}" fill="#000000" fill-opacity="0.02" stroke="#000000" stroke-opacity="0.08" stroke-dasharray="4" stroke-width="1.5" />
-            
-            <!-- Grid and Labels -->
-            ${gridLinesSvg}
-            ${labelRain}
-            ${labelWeathering}
-            ${labelEvaporation}
-            
-            <!-- Axis Borders -->
-            <rect x="${padding.left}" y="${padding.top}" width="${width - padding.left - padding.right}" height="${height - padding.top - padding.bottom}" fill="none" stroke="#94a3b8" stroke-width="1.5" />
-            
-            <!-- Plotted Points -->
-            ${pointsSvg}
-          </svg>
-        `;
-        return svg;
-      };
 
       const generateUsslDiagramHTML = (samples: any[]): string => {
         const width = 450;
@@ -1550,27 +1448,7 @@ export default function PamphletView({
               <p style="margin-bottom: 16px;">${textPara4}</p>
             </div>
 
-            <!-- Gibbs Diagrams (Water-Rock Interaction Mechanism) -->
-            ${totalValidFacies > 0 ? `
-            <div style="margin-top: 35px; margin-bottom: 35px; page-break-inside: avoid;">
-              <h4 style="font-weight: 900; color: #1e3a8a; font-size: 16px; border-bottom: 1.5px solid #e2e8f0; padding-bottom: 5px; margin-bottom: 15px;">Gibbs Diagram (Water-Rock Interaction Mechanism)</h4>
-              <p style="color: #475569; font-size: 14px; line-height: 1.5; margin-bottom: 20px; text-align: justify;">
-                The Gibbs diagrams represent the relationship between water chemistry and aquifer lithology. They plot TDS against Na/(Na+Ca) or Cl/(Cl+HCO3) to determine whether the chemistry of groundwater is governed by <strong>Precipitation Dominance</strong>, <strong>Rock-Weathering Dominance</strong>, or <strong>Evaporation Dominance</strong>.
-              </p>
-              <div style="display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; margin: 25px 0;">
-                <div style="flex: 1; min-width: 260px; max-width: 300px; text-align: center;">
-                  ${generateGibbsDiagramHTML("cation", "Gibbs Cation Diagram", validFaciesSamples)}
-                </div>
-                <div style="flex: 1; min-width: 260px; max-width: 300px; text-align: center;">
-                  ${generateGibbsDiagramHTML("anion", "Gibbs Anion Diagram", validFaciesSamples)}
-                </div>
-              </div>
-              ${generateBlockLegendHTML()}
-              <p style="text-align: center; font-style: italic; font-size: 11px; margin-top: 6px; color: #475569; font-weight: bold; margin-bottom: 30px;">
-                Figure 5: Gibbs Cation and Anion Diagrams showing Geochemical Mechanisms in ${regionName}
-              </p>
-            </div>
-            ` : ""}
+
 
             <!-- Compliances Chart -->
             <div style="background-color: transparent; border-radius: 16px; padding: 20px; display: block; margin: 0 auto 30px auto; max-width: 100%; border: none;">

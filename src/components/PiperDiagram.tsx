@@ -158,12 +158,12 @@ export const PiperDiagram = React.memo(({
     e.stopPropagation();
     let clientX = 0;
     let clientY = 0;
-    if ("touches" in e) {
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
+    if ("touches" in e && (e as TouchEvent).touches && (e as TouchEvent).touches.length > 0) {
+      clientX = (e as TouchEvent).touches[0].clientX;
+      clientY = (e as TouchEvent).touches[0].clientY;
     } else {
-      clientX = e.clientX;
-      clientY = e.clientY;
+      clientX = (e as MouseEvent).clientX || 0;
+      clientY = (e as MouseEvent).clientY || 0;
     }
 
     cropDraggingRef.current = {
@@ -179,12 +179,15 @@ export const PiperDiagram = React.memo(({
       
       let curX = 0;
       let curY = 0;
-      if ("touches" in moveEvt) {
-        curX = moveEvt.touches[0].clientX;
-        curY = moveEvt.touches[0].clientY;
+      if ("touches" in moveEvt && (moveEvt as TouchEvent).touches && (moveEvt as TouchEvent).touches.length > 0) {
+        curX = (moveEvt as TouchEvent).touches[0].clientX;
+        curY = (moveEvt as TouchEvent).touches[0].clientY;
+      } else if ("changedTouches" in moveEvt && (moveEvt as TouchEvent).changedTouches && (moveEvt as TouchEvent).changedTouches.length > 0) {
+        curX = (moveEvt as TouchEvent).changedTouches[0].clientX;
+        curY = (moveEvt as TouchEvent).changedTouches[0].clientY;
       } else {
-        curX = moveEvt.clientX;
-        curY = moveEvt.clientY;
+        curX = (moveEvt as MouseEvent).clientX || 0;
+        curY = (moveEvt as MouseEvent).clientY || 0;
       }
 
       const dx = curX - drag.startX;

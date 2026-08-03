@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import * as XLSX from "xlsx";
 import ExcelJS from "exceljs";
+import { downloadExcelJSWorkbook } from "../utils/excelFormatter";
 import Highcharts from "highcharts";
 import { PARAM_CONFIG } from "../data/config";
 import { DataHeaders } from "../types";
@@ -973,27 +974,8 @@ export default function PcaAnalysisView({
         ]);
       });
 
-      // Format first row as Header
-      const headerRow = ws.getRow(1);
-      headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-      headerRow.eachCell((cell) => {
-        cell.fill = {
-          type: "pattern",
-          pattern: "solid",
-          fgColor: { argb: "4F46E5" }
-        };
-      });
-
-      const buffer = await wb.xlsx.writeBuffer();
-      const blob = new Blob([buffer], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-      });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = `PCA_Scores_Analysis_${Date.now()}.xlsx`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      // Format and download workbook
+      await downloadExcelJSWorkbook(wb, `PCA_Scores_Analysis_${Date.now()}.xlsx`);
       showToast("PCA coordinates exported to Excel successfully!", "success");
     } catch (err: any) {
       showToast("Export failed: " + err.message, "error");
@@ -1039,7 +1021,7 @@ export default function PcaAnalysisView({
   };
 
   // Generate generic template
-  const downloadTemplate = () => {
+  const downloadTemplate = async () => {
     const columns = [
       "Sample_ID",
       "State",
@@ -1063,9 +1045,10 @@ export default function PcaAnalysisView({
       "As",
       "U"
     ];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([columns]), "PCA_Template");
-    XLSX.writeFile(wb, "PCA_Groundwater_Template.xlsx");
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("PCA_Template");
+    ws.addRow(columns);
+    await downloadExcelJSWorkbook(wb, "PCA_Groundwater_Template.xlsx");
     showToast("Template downloaded successfully!", "success");
   };
 

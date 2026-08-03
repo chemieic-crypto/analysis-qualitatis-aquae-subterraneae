@@ -18,6 +18,8 @@ import {
   Filter
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
+import { downloadExcelJSWorkbook } from "../utils/excelFormatter";
 
 function toProperCase(str: string): string {
   if (!str) return "N/A";
@@ -317,21 +319,32 @@ export default function RankingStatsView({
       const geoVal = String(row[geoKey] || "").trim();
       if (!geoVal || geoVal === "undefined") return;
 
+      const stVal = String(row[headers.state || "State"] || "N/A").trim();
+      const dtVal = String(row[headers.district || "District"] || "N/A").trim();
+      const blkVal = String(row[headers.block || "Block"] || "N/A").trim();
+
       const v = getParamVal(row, activeParam);
       if (isNaN(v)) return;
 
-      if (!aggregationMap[geoVal]) {
-        aggregationMap[geoVal] = {
+      let mapKey = geoVal;
+      if (geoKey === headers.district) {
+        mapKey = `${stVal}___${geoVal}`;
+      } else if (geoKey === headers.block) {
+        mapKey = `${stVal}___${dtVal}___${geoVal}`;
+      }
+
+      if (!aggregationMap[mapKey]) {
+        aggregationMap[mapKey] = {
           name: geoVal,
           total: 0,
           fail: 0,
-          state: String(row[headers.state || "State"] || "N/A").trim(),
-          district: String(row[headers.district || "District"] || "N/A").trim(),
-          block: String(row[headers.block || "Block"] || "N/A").trim()
+          state: stVal,
+          district: dtVal,
+          block: blkVal
         };
       }
 
-      aggregationMap[geoVal].total++;
+      aggregationMap[mapKey].total++;
 
       // Exceedance threshold evaluation
       const hasExceedance = activeParam === "pH" 
@@ -374,16 +387,18 @@ export default function RankingStatsView({
   }, [rawData, activeParam, headerMap, headers, minBlockSamples, rankBy, topN]);
 
   // Trigger Excel download specifically for the rankings
-  const handleExportRankings = () => {
+  const handleExportRankings = async () => {
     if (!rawData.length || availableParams.length === 0) return;
 
-    const wb = XLSX.utils.book_new();
+    const wb = new ExcelJS.Workbook();
 
     // Helper to format/append styled worksheets
     const appendWorksheet = (dataArray: any[], sheetName: string) => {
       if (dataArray.length === 0) return;
-      const ws = XLSX.utils.json_to_sheet(dataArray);
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+      const ws = wb.addWorksheet(sheetName);
+      const headers = Object.keys(dataArray[0]);
+      ws.addRow(headers);
+      dataArray.forEach(row => ws.addRow(headers.map(h => row[h])));
     };
 
     // 1. National Summary Export
@@ -466,7 +481,7 @@ export default function RankingStatsView({
       appendWorksheet(blkRankExport, "BLOCK RANKINGS");
     }
 
-    XLSX.writeFile(wb, `Groundwater_Ranking_Stats_${activeParam}_${Date.now()}.xlsx`);
+    await downloadExcelJSWorkbook(wb, `Groundwater_Ranking_Stats_${activeParam}_${Date.now()}.xlsx`);
   };
 
   const getSubTabHeaderColor = (tab: SubTab) => {
