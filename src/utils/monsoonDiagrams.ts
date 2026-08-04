@@ -890,7 +890,17 @@ export const generateMonsoonChoroplethMapSVG = (
   districtStateMap?: Record<string, string>,
   showDataPoints: boolean = true
 ): string => {
-  if (!pairedList.length) return "";
+  const isPortrait = orientation === "portrait";
+  const width = isPortrait ? 680 : 960;
+  const height = isPortrait ? 880 : 540;
+
+  if (!pairedList.length) {
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} 220" style="width: 100%; height: auto; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; font-family: sans-serif;">
+      <rect width="100%" height="100%" fill="#f8fafc" rx="12" />
+      <text x="${width / 2}" y="100" text-anchor="middle" font-size="14px" font-weight="bold" fill="#1e293b">No Matched Paired Sampling Locations Found</text>
+      <text x="${width / 2}" y="125" text-anchor="middle" font-size="11px" font-weight="medium" fill="#64748b">Please select valid Base and Compare periods or adjust your region filter criteria.</text>
+    </svg>`;
+  }
 
   // Group paired items by region (State or District)
   const regionMap: Record<string, {
@@ -901,6 +911,8 @@ export const generateMonsoonChoroplethMapSVG = (
     detCount: number;
     impCount: number;
     unChgCount: number;
+    lats: number[];
+    lngs: number[];
   }> = {};
 
   pairedList.forEach((item) => {
@@ -918,13 +930,24 @@ export const generateMonsoonChoroplethMapSVG = (
         itemsCount: 0,
         detCount: 0,
         impCount: 0,
-        unChgCount: 0
+        unChgCount: 0,
+        lats: [],
+        lngs: []
       };
     }
 
     regionMap[regionKey].preVals.push(item.preVal);
     regionMap[regionKey].postVals.push(item.postVal);
     regionMap[regionKey].itemsCount++;
+
+    const latRaw = item.lat ?? (item as any).latitude ?? (item as any).baseRow?.Latitude ?? (item as any).baseRow?.latitude;
+    const lonRaw = item.lng ?? (item as any).longitude ?? (item as any).baseRow?.Longitude ?? (item as any).baseRow?.longitude;
+    const lat = typeof latRaw === "number" ? latRaw : parseFloat(String(latRaw || ""));
+    const lon = typeof lonRaw === "number" ? lonRaw : parseFloat(String(lonRaw || ""));
+    if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0 && Number.isFinite(lat) && Number.isFinite(lon)) {
+      regionMap[regionKey].lats.push(lat);
+      regionMap[regionKey].lngs.push(lon);
+    }
 
     const pct = item.preVal === 0 ? (item.postVal === 0 ? 0 : 100) : ((item.postVal - item.preVal) / item.preVal) * 100;
     if (pct > 20) regionMap[regionKey].detCount++;
@@ -945,24 +968,26 @@ export const generateMonsoonChoroplethMapSVG = (
     else if (pctChange >= -20) { color = "#16a34a"; category = "Moderate Improvement (-5% to -20%)"; }
     else { color = "#15803d"; category = "Significant Improvement (<-20%)"; }
 
+    const meanLat = r.lats.length ? r.lats.reduce((a, b) => a + b, 0) / r.lats.length : undefined;
+    const meanLng = r.lngs.length ? r.lngs.reduce((a, b) => a + b, 0) / r.lngs.length : undefined;
+
     return {
       ...r,
       preMean,
       postMean,
       pctChange,
       color,
-      category
+      category,
+      meanLat,
+      meanLng
     };
   });
 
   // Sort regions by % change descending (highest deterioration first)
   regions.sort((a, b) => b.pctChange - a.pctChange);
 
-  const isPortrait = orientation === "portrait";
-  const width = isPortrait ? 680 : 960;
-  const height = isPortrait ? 700 : 520;
   const mapW = isPortrait ? 640 : 680;
-  const mapH = isPortrait ? 500 : 430;
+  const mapH = isPortrait ? 660 : 430;
   const padLeft = 20;
   const padTop = 55;
 
@@ -975,11 +1000,11 @@ export const generateMonsoonChoroplethMapSVG = (
   const frameStroke = isDarkBg ? "#334155" : "#cbd5e1";
 
   // Filter shapefile features matching selected state/district
-  let shapeFeatures: any[] = [];
+  let rawShapeFeatures: any[] = [];
   let layerStrokeColor = "#1e293b";
   let layerStrokeWidth = 1.1;
-  let layerFillColor = "#cbd5e1";
-  let layerFillOpacity = 0.68;
+  let layerFillColor = "#e2e8f0";
+  let layerFillOpacity = 0.5;
 
   if (sharedLayers && sharedLayers.length > 0) {
     const targetLayer = sharedLayers.find((l) => {
@@ -995,212 +1020,266 @@ export const generateMonsoonChoroplethMapSVG = (
       if (targetLayer.fillColor) layerFillColor = targetLayer.fillColor;
       if (typeof targetLayer.fillOpacity === "number") layerFillOpacity = targetLayer.fillOpacity;
 
-      let rawFeatures: any[] = [];
       if (targetLayer.geoJson.type === "FeatureCollection" && Array.isArray(targetLayer.geoJson.features)) {
-        rawFeatures = targetLayer.geoJson.features;
+        rawShapeFeatures = targetLayer.geoJson.features;
       } else if (targetLayer.geoJson.type === "Feature") {
-        rawFeatures = [targetLayer.geoJson];
+        rawShapeFeatures = [targetLayer.geoJson];
       }
 
       if ((selectedState && !isStateAll(selectedState)) || (selectedDistrict && !isDistrictAll(selectedDistrict))) {
-        shapeFeatures = rawFeatures.filter((f) =>
+        const filtered = rawShapeFeatures.filter((f) =>
           featureMatchesSelection(f, selectedState, selectedDistrict, districtStateMap)
         );
-        if (shapeFeatures.length === 0) shapeFeatures = rawFeatures;
-      } else {
-        shapeFeatures = rawFeatures;
+        if (filtered.length > 0) rawShapeFeatures = filtered;
       }
     }
   }
 
-  // Fallback if shapefile layers are not provided or empty: use INDIA_BOUNDARY
-  if (shapeFeatures.length === 0) {
-    shapeFeatures = [INDIA_BOUNDARY];
-  }
+  // Count how many features in rawShapeFeatures match at least one region
+  let matchedFeaturesCount = 0;
+  rawShapeFeatures.forEach((f) => {
+    if (!f.geometry) return;
+    const fName = getGeoFeatureName(f.properties, granularity);
+    const fNorm = norm(fName);
+    let matchedRegion = regions.find((r) => {
+      const rNorm = norm(r.name);
+      return rNorm === fNorm || (rNorm && fNorm && (fNorm.includes(rNorm) || rNorm.includes(fNorm)));
+    });
+    if (!matchedRegion && districtStateMap && fName) {
+      const mappedSt = districtStateMap[fName.toLowerCase()] || districtStateMap[fNorm] || districtStateMap[fName];
+      if (mappedSt) {
+        const mNorm = norm(mappedSt);
+        matchedRegion = regions.find((r) => {
+          const rNorm = norm(r.name);
+          return rNorm === mNorm || (rNorm && mNorm && (mNorm.includes(rNorm) || rNorm.includes(mNorm)));
+        });
+      }
+    }
+    if (!matchedRegion && fNorm) {
+      let bestScore = 0;
+      let bestR: any = null;
+      regions.forEach((r) => {
+        const rNorm = norm(r.name);
+        if (!rNorm) return;
+        const sim = similarityRatio(fNorm, rNorm);
+        if (sim > bestScore && sim >= 0.65) {
+          bestScore = sim;
+          bestR = r;
+        }
+      });
+      if (bestR) matchedRegion = bestR;
+    }
+    if (matchedRegion) matchedFeaturesCount++;
+  });
 
+  const shapeFeatures = rawShapeFeatures.length > 0 ? rawShapeFeatures : [INDIA_BOUNDARY];
   let mapCanvasHTML = "";
 
-  if (shapeFeatures.length > 0) {
-    // Render Real Shapefile Boundary Polygons for selected state/districts
-    let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity;
+  // Render Base Vector Geometry Bounds
+  let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity;
 
-    // Helper to scan coordinates for bounding box
-    const scanCoords = (coords: any) => {
-      if (!Array.isArray(coords)) return;
-      if (typeof coords[0] === "number" && typeof coords[1] === "number") {
-        const lon = coords[0];
-        const lat = coords[1];
-        if (!isNaN(lon) && !isNaN(lat)) {
-          if (lon < minLon) minLon = lon;
-          if (lon > maxLon) maxLon = lon;
-          if (lat < minLat) minLat = lat;
-          if (lat > maxLat) maxLat = lat;
-        }
-      } else {
-        coords.forEach((sub) => scanCoords(sub));
-      }
-    };
-
-    // Scan coordinates of shape features to compute map boundary box
-    shapeFeatures.forEach((f) => {
-      if (f.geometry && f.geometry.coordinates) {
-        scanCoords(f.geometry.coordinates);
-      }
-    });
-
-    // Also include matching pairedList points in bounds if valid lat/lng exist
-    pairedList.forEach((pt: any) => {
-      const latRaw = pt.lat ?? pt.latitude ?? pt.baseRow?.Latitude ?? pt.baseRow?.latitude;
-      const lonRaw = pt.lng ?? pt.longitude ?? pt.baseRow?.Longitude ?? pt.baseRow?.longitude;
-      const lat = typeof latRaw === "number" ? latRaw : parseFloat(String(latRaw || ""));
-      const lon = typeof lonRaw === "number" ? lonRaw : parseFloat(String(lonRaw || ""));
-      if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0 && Number.isFinite(lat) && Number.isFinite(lon)) {
+  const scanCoords = (coords: any) => {
+    if (!Array.isArray(coords)) return;
+    if (typeof coords[0] === "number" && typeof coords[1] === "number") {
+      const lon = coords[0];
+      const lat = coords[1];
+      if (!isNaN(lon) && !isNaN(lat)) {
         if (lon < minLon) minLon = lon;
         if (lon > maxLon) maxLon = lon;
         if (lat < minLat) minLat = lat;
         if (lat > maxLat) maxLat = lat;
       }
+    } else {
+      coords.forEach((sub) => scanCoords(sub));
+    }
+  };
+
+  shapeFeatures.forEach((f) => {
+    if (f.geometry && f.geometry.coordinates) {
+      scanCoords(f.geometry.coordinates);
+    }
+  });
+
+  pairedList.forEach((pt: any) => {
+    const latRaw = pt.lat ?? pt.latitude ?? pt.baseRow?.Latitude ?? pt.baseRow?.latitude;
+    const lonRaw = pt.lng ?? pt.longitude ?? pt.baseRow?.Longitude ?? pt.baseRow?.longitude;
+    const lat = typeof latRaw === "number" ? latRaw : parseFloat(String(latRaw || ""));
+    const lon = typeof lonRaw === "number" ? lonRaw : parseFloat(String(lonRaw || ""));
+    if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0 && Number.isFinite(lat) && Number.isFinite(lon)) {
+      if (lon < minLon) minLon = lon;
+      if (lon > maxLon) maxLon = lon;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    }
+  });
+
+  if (minLon === Infinity || maxLon === -Infinity) {
+    minLon = 68.0; maxLon = 97.0; minLat = 8.0; maxLat = 37.0;
+  }
+
+  const lonSpan = Math.max(0.1, maxLon - minLon);
+  const latSpan = Math.max(0.1, maxLat - minLat);
+  minLon -= lonSpan * 0.08;
+  maxLon += lonSpan * 0.08;
+  minLat -= latSpan * 0.08;
+  maxLat += latSpan * 0.08;
+
+  const midLon = (minLon + maxLon) / 2;
+  const midLat = (minLat + maxLat) / 2;
+  const cosLat = Math.cos((midLat * Math.PI) / 180) || 0.92;
+
+  const spanXDeg = Math.max(0.001, (maxLon - minLon) * cosLat);
+  const spanYDeg = Math.max(0.001, maxLat - minLat);
+
+  // Uniform scale to preserve true geographic shape without stretching or compressing
+  const scaleX = mapW / spanXDeg;
+  const scaleY = mapH / spanYDeg;
+  const fitScale = Math.min(scaleX, scaleY) || 1;
+
+  const mapCenterX = padLeft + mapW / 2;
+  const mapCenterY = padTop + mapH / 2;
+
+  const project = (lon: number, lat: number): [number, number] => {
+    const x = mapCenterX + (lon - midLon) * cosLat * fitScale;
+    const y = mapCenterY - (lat - midLat) * fitScale;
+    return [x, y];
+  };
+
+  let shapePathsHTML = "";
+  let labelsHTML = "";
+
+  shapeFeatures.forEach((f) => {
+    if (!f.geometry) return;
+    const fName = getGeoFeatureName(f.properties, granularity);
+    const fNorm = norm(fName);
+
+    let matchedRegion = regions.find((r) => {
+      const rNorm = norm(r.name);
+      return rNorm === fNorm || (rNorm && fNorm && (fNorm.includes(rNorm) || rNorm.includes(fNorm)));
     });
 
-    if (minLon === Infinity || maxLon === -Infinity) {
-      minLon = 68.0; maxLon = 97.0; minLat = 8.0; maxLat = 37.0;
-    }
-
-    // Add 8% padding to geographic bounds for clean zoom
-    const lonSpan = Math.max(0.1, maxLon - minLon);
-    const latSpan = Math.max(0.1, maxLat - minLat);
-    minLon -= lonSpan * 0.08;
-    maxLon += lonSpan * 0.08;
-    minLat -= latSpan * 0.08;
-    maxLat += latSpan * 0.08;
-
-    const project = (lon: number, lat: number): [number, number] => {
-      const x = padLeft + ((lon - minLon) / (maxLon - minLon)) * mapW;
-      const y = padTop + mapH - ((lat - minLat) / (maxLat - minLat)) * mapH;
-      return [x, y];
-    };
-
-    let shapePathsHTML = "";
-    let labelsHTML = "";
-
-    shapeFeatures.forEach((f) => {
-      if (!f.geometry) return;
-      const fName = getGeoFeatureName(f.properties, granularity);
-      const fNorm = norm(fName);
-
-      // 1. Exact or Substring Normalized Match
-      let matchedRegion = regions.find((r) => {
-        const rNorm = norm(r.name);
-        return rNorm === fNorm || (rNorm && fNorm && (fNorm.includes(rNorm) || rNorm.includes(fNorm)));
-      });
-
-      // 2. District State Map Lookup Match
-      if (!matchedRegion && districtStateMap && fName) {
-        const mappedSt = districtStateMap[fName.toLowerCase()] || districtStateMap[fNorm] || districtStateMap[fName];
-        if (mappedSt) {
-          const mNorm = norm(mappedSt);
-          matchedRegion = regions.find((r) => {
-            const rNorm = norm(r.name);
-            return rNorm === mNorm || (rNorm && mNorm && (mNorm.includes(rNorm) || rNorm.includes(mNorm)));
-          });
-        }
-      }
-
-      // 3. Fuzzy Levenshtein Match
-      if (!matchedRegion && fNorm) {
-        let bestScore = 0;
-        let bestR: any = null;
-        regions.forEach((r) => {
+    if (!matchedRegion && districtStateMap && fName) {
+      const mappedSt = districtStateMap[fName.toLowerCase()] || districtStateMap[fNorm] || districtStateMap[fName];
+      if (mappedSt) {
+        const mNorm = norm(mappedSt);
+        matchedRegion = regions.find((r) => {
           const rNorm = norm(r.name);
-          if (!rNorm) return;
-          const sim = similarityRatio(fNorm, rNorm);
-          if (sim > bestScore && sim >= 0.65) {
-            bestScore = sim;
-            bestR = r;
-          }
+          return rNorm === mNorm || (rNorm && mNorm && (mNorm.includes(rNorm) || rNorm.includes(mNorm)));
         });
-        if (bestR) matchedRegion = bestR;
       }
-
-      // 4. Spatial Point-in-Polygon Check
-      if (!matchedRegion && f.geometry) {
-        for (const r of regions) {
-          const regionPoints = pairedList.filter((pt: any) => {
-            const rKey = granularity === "state" ? (pt.state || "") : (pt.district || pt.state || "");
-            return rKey.trim().toLowerCase() === r.name.toLowerCase();
-          });
-          const insidePt = regionPoints.find((pt: any) => {
-            const latRaw = pt.lat ?? pt.latitude ?? pt.baseRow?.Latitude ?? pt.baseRow?.latitude;
-            const lonRaw = pt.lng ?? pt.longitude ?? pt.baseRow?.Longitude ?? pt.baseRow?.longitude;
-            const lat = typeof latRaw === "number" ? latRaw : parseFloat(String(latRaw || ""));
-            const lon = typeof lonRaw === "number" ? lonRaw : parseFloat(String(lonRaw || ""));
-            return !isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0 && isPointInFeature(lon, lat, f);
-          });
-          if (insidePt) {
-            matchedRegion = r;
-            break;
-          }
-        }
-      }
-
-      // 5. Fallback if single region present
-      if (!matchedRegion && regions.length === 1) {
-        matchedRegion = regions[0];
-      }
-
-      const fillColor = matchedRegion ? matchedRegion.color : layerFillColor;
-      const fillOpacity = matchedRegion ? layerFillOpacity : Math.max(0.2, layerFillOpacity * 0.5);
-
-      const { path, bbox } = convertGeoJsonCoordsToSvgPath(f.geometry.coordinates, f.geometry.type, project);
-
-      if (path) {
-        shapePathsHTML += `<path d="${path}" fill="${fillColor}" fill-opacity="${fillOpacity}" stroke="${layerStrokeColor}" stroke-width="${layerStrokeWidth}" stroke-linejoin="round" />`;
-
-        if (matchedRegion && bbox[0] < Infinity) {
-          const cx = (bbox[0] + bbox[1]) / 2;
-          const cy = (bbox[2] + bbox[3]) / 2;
-          const sign = matchedRegion.pctChange > 0 ? "+" : "";
-          labelsHTML += `
-            <g transform="translate(${cx.toFixed(1)}, ${cy.toFixed(1)})">
-              <text x="0" y="-2" text-anchor="middle" font-size="8.5px" font-weight="bold" fill="#0f172a" stroke="#ffffff" stroke-width="2.2" paint-order="stroke fill">${matchedRegion.name}</text>
-              <text x="0" y="7" text-anchor="middle" font-size="8px" font-weight="extrabold" fill="${matchedRegion.color}" stroke="#ffffff" stroke-width="1.8" paint-order="stroke fill">${sign}${matchedRegion.pctChange.toFixed(1)}%</text>
-            </g>
-          `;
-        }
-      }
-    });
-
-    // Overlay well points as 3D Glossy Bubbles (if showDataPoints is enabled)
-    let pointsHTML = "";
-    if (showDataPoints) {
-      pairedList.forEach((pt: any) => {
-        const latRaw = pt.lat ?? pt.latitude ?? pt.baseRow?.Latitude ?? pt.baseRow?.latitude;
-        const lonRaw = pt.lng ?? pt.longitude ?? pt.baseRow?.Longitude ?? pt.baseRow?.longitude;
-        const lat = typeof latRaw === "number" ? latRaw : parseFloat(String(latRaw || ""));
-        const lon = typeof lonRaw === "number" ? lonRaw : parseFloat(String(lonRaw || ""));
-        if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
-          const [px, py] = project(lon, lat);
-          const pct = pt.preVal === 0 ? (pt.postVal === 0 ? 0 : 100) : ((pt.postVal - pt.preVal) / pt.preVal) * 100;
-          let gradId = "bubble3d-yellow";
-          let r = 3.6;
-          if (pct > 20) { gradId = "bubble3d-red"; r = 4.4; }
-          else if (pct > 5) { gradId = "bubble3d-orange"; r = 3.8; }
-          else if (pct < -20) { gradId = "bubble3d-darkgreen"; r = 4.4; }
-          else if (pct < -5) { gradId = "bubble3d-green"; r = 3.8; }
-
-          pointsHTML += `
-            <g transform="translate(${px.toFixed(1)}, ${py.toFixed(1)})">
-              <circle cx="0" cy="0" r="${r.toFixed(1)}" fill="url(#${gradId})" stroke="#ffffff" stroke-width="0.7" filter="url(#bubble-drop-shadow)" />
-              <circle cx="-${(r * 0.3).toFixed(1)}" cy="-${(r * 0.3).toFixed(1)}" r="${(r * 0.28).toFixed(1)}" fill="#ffffff" fill-opacity="0.85" />
-            </g>
-          `;
-        }
-      });
     }
 
+    if (!matchedRegion && fNorm) {
+      let bestScore = 0;
+      let bestR: any = null;
+      regions.forEach((r) => {
+        const rNorm = norm(r.name);
+        if (!rNorm) return;
+        const sim = similarityRatio(fNorm, rNorm);
+        if (sim > bestScore && sim >= 0.65) {
+          bestScore = sim;
+          bestR = r;
+        }
+      });
+      if (bestR) matchedRegion = bestR;
+    }
+
+    if (!matchedRegion && f.geometry && rawShapeFeatures.length > 1) {
+      for (const r of regions) {
+        const regionPoints = pairedList.filter((pt: any) => {
+          const rKey = granularity === "state" ? (pt.state || "") : (pt.district || pt.state || "");
+          return rKey.trim().toLowerCase() === r.name.toLowerCase();
+        });
+        const insidePt = regionPoints.find((pt: any) => {
+          const latRaw = pt.lat ?? pt.latitude ?? pt.baseRow?.Latitude ?? pt.baseRow?.latitude;
+          const lonRaw = pt.lng ?? pt.longitude ?? pt.baseRow?.Longitude ?? pt.baseRow?.longitude;
+          const lat = typeof latRaw === "number" ? latRaw : parseFloat(String(latRaw || ""));
+          const lon = typeof lonRaw === "number" ? lonRaw : parseFloat(String(lonRaw || ""));
+          return !isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0 && isPointInFeature(lon, lat, f);
+        });
+        if (insidePt) {
+          matchedRegion = r;
+          break;
+        }
+      }
+    }
+
+    if (!matchedRegion && regions.length === 1) {
+      matchedRegion = regions[0];
+    }
+
+    const fillColor = matchedRegion ? matchedRegion.color : layerFillColor;
+    const fillOpacity = matchedRegion ? 0.78 : Math.max(0.15, layerFillOpacity * 0.4);
+
+    const { path, bbox } = convertGeoJsonCoordsToSvgPath(f.geometry.coordinates, f.geometry.type, project);
+
+    if (path) {
+      const strokeColor = layerStrokeColor || (isDarkBg ? "#f8fafc" : "#0f172a");
+      const strokeWidth = layerStrokeWidth || 1.2;
+      shapePathsHTML += `<path d="${path}" fill="${fillColor}" fill-opacity="${fillOpacity}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linejoin="round" />`;
+
+      if (matchedRegion && bbox[0] < Infinity) {
+        const cx = (bbox[0] + bbox[1]) / 2;
+        const cy = (bbox[2] + bbox[3]) / 2;
+        const sign = matchedRegion.pctChange > 0 ? "+" : "";
+        labelsHTML += `
+          <g transform="translate(${cx.toFixed(1)}, ${cy.toFixed(1)})">
+            <text x="0" y="-2" text-anchor="middle" font-size="8.5px" font-weight="bold" fill="#0f172a" stroke="#ffffff" stroke-width="2.5" paint-order="stroke fill">${matchedRegion.name}</text>
+            <text x="0" y="7" text-anchor="middle" font-size="8px" font-weight="extrabold" fill="#0f172a" stroke="#ffffff" stroke-width="2.5" paint-order="stroke fill">${sign}${matchedRegion.pctChange.toFixed(1)}%</text>
+          </g>
+        `;
+      }
+    }
+  });
+
+  // Overlay well points as 3D Glossy Bubbles (if showDataPoints is enabled)
+  let pointsHTML = "";
+  if (showDataPoints) {
+    pairedList.forEach((pt: any) => {
+      const latRaw = pt.lat ?? pt.latitude ?? pt.baseRow?.Latitude ?? pt.baseRow?.latitude;
+      const lonRaw = pt.lng ?? pt.longitude ?? pt.baseRow?.Longitude ?? pt.baseRow?.longitude;
+      const lat = typeof latRaw === "number" ? latRaw : parseFloat(String(latRaw || ""));
+      const lon = typeof lonRaw === "number" ? lonRaw : parseFloat(String(lonRaw || ""));
+      if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
+        const [px, py] = project(lon, lat);
+        const pct = pt.preVal === 0 ? (pt.postVal === 0 ? 0 : 100) : ((pt.postVal - pt.preVal) / pt.preVal) * 100;
+        let gradId = "bubble3d-yellow";
+        let r = 3.6;
+        if (pct > 20) { gradId = "bubble3d-red"; r = 4.4; }
+        else if (pct > 5) { gradId = "bubble3d-orange"; r = 3.8; }
+        else if (pct < -20) { gradId = "bubble3d-darkgreen"; r = 4.4; }
+        else if (pct < -5) { gradId = "bubble3d-green"; r = 3.8; }
+
+        pointsHTML += `
+          <g transform="translate(${px.toFixed(1)}, ${py.toFixed(1)})">
+            <circle cx="0" cy="0" r="${r.toFixed(1)}" fill="url(#${gradId})" stroke="#ffffff" stroke-width="0.7" filter="url(#bubble-drop-shadow)" />
+            <circle cx="-${(r * 0.3).toFixed(1)}" cy="-${(r * 0.3).toFixed(1)}" r="${(r * 0.28).toFixed(1)}" fill="#ffffff" fill-opacity="0.85" />
+          </g>
+        `;
+      }
+    });
+  }
+
+  // Region Centroid Badges if lat/lng are present
+  let centroidBadgesHTML = "";
+  regions.forEach((reg) => {
+    if (reg.meanLat !== undefined && reg.meanLng !== undefined) {
+      const [cx, cy] = project(reg.meanLng, reg.meanLat);
+      const sign = reg.pctChange > 0 ? "+" : "";
+      centroidBadgesHTML += `
+        <g transform="translate(${cx.toFixed(1)}, ${cy.toFixed(1)})">
+          <circle cx="0" cy="0" r="14" fill="${reg.color}" fill-opacity="0.85" stroke="#ffffff" stroke-width="1.8" filter="url(#bubble-drop-shadow)" />
+          <text x="0" y="3" text-anchor="middle" font-size="7.5px" font-weight="extrabold" fill="#ffffff">${sign}${reg.pctChange.toFixed(0)}%</text>
+          <text x="0" y="-18" text-anchor="middle" font-size="8px" font-weight="extrabold" fill="#0f172a" stroke="#ffffff" stroke-width="2" paint-order="stroke fill">${reg.name}</text>
+        </g>
+      `;
+    }
+  });
+
+  if (matchedFeaturesCount > 0) {
     mapCanvasHTML = `${shapePathsHTML}${labelsHTML}${pointsHTML}`;
   } else {
-    // Fallback: Render regional choropleth tiles on grid map canvas when shapefile layer is not loaded
+    // Render Hybrid Canvas: Map Outline Frame on Left/Top + Choropleth Region Cards Grid
     const cols = isPortrait ? Math.min(3, Math.max(2, Math.ceil(Math.sqrt(regions.length)))) : Math.min(4, Math.max(2, Math.ceil(Math.sqrt(regions.length))));
     const rows = Math.ceil(regions.length / cols);
 
@@ -1239,7 +1318,7 @@ export const generateMonsoonChoroplethMapSVG = (
       `;
     });
 
-    mapCanvasHTML = tilesHTML;
+    mapCanvasHTML = `${shapePathsHTML}${centroidBadgesHTML}${pointsHTML}<g>${tilesHTML}</g>`;
   }
 
   const detRegionsCount = regions.filter((r) => r.pctChange > 5).length;

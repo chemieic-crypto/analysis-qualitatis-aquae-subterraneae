@@ -352,7 +352,7 @@ export default function RankingStatsView({
         : (v > config.b2);
 
       if (hasExceedance) {
-        aggregationMap[geoVal].fail++;
+        aggregationMap[mapKey].fail++;
       }
     });
 

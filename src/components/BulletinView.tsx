@@ -4123,8 +4123,22 @@ export default function BulletinView({
         const mapW = width - padLeft - padRight;
         const mapH = height - padTop - padBottom;
 
-        const getX = (lngVal: number) => padLeft + ((lngVal - minLng) / (maxLng - minLng)) * mapW;
-        const getY = (latVal: number) => padTop + mapH - ((latVal - minLat) / (maxLat - minLat)) * mapH;
+        const midLng = (minLng + maxLng) / 2;
+        const midLat = (minLat + maxLat) / 2;
+        const cosLat = Math.cos((midLat * Math.PI) / 180) || 0.92;
+
+        const spanXDeg = Math.max(0.001, (maxLng - minLng) * cosLat);
+        const spanYDeg = Math.max(0.001, maxLat - minLat);
+
+        const scaleX = mapW / spanXDeg;
+        const scaleY = mapH / spanYDeg;
+        const fitScale = Math.min(scaleX, scaleY) || 1;
+
+        const mapCenterX = padLeft + mapW / 2;
+        const mapCenterY = padTop + mapH / 2;
+
+        const getX = (lngVal: number) => mapCenterX + (lngVal - midLng) * cosLat * fitScale;
+        const getY = (latVal: number) => mapCenterY - (latVal - midLat) * fitScale;
 
         let gridHTML = "";
         const latSteps = 4;

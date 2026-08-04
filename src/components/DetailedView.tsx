@@ -79,6 +79,36 @@ function getExceedanceLimitStr(configKey: string, config: any): string {
   return `(>${config?.b2}${unitStr})`;
 }
 
+// Helper to clean state, district, or block location string by stripping redundant state/district suffix or prefix
+function cleanLocationName(loc: string, stateName?: string, districtName?: string): string {
+  if (!loc) return "";
+  let clean = String(loc).trim();
+
+  // If loc contains triple underscore '___' from grouping keys, extract the last segment
+  if (clean.includes("___")) {
+    const parts = clean.split("___");
+    clean = parts[parts.length - 1] || clean;
+  }
+
+  // Remove attached state suffix or prefix (e.g. PATNA_BIHAR -> PATNA or BIHAR_PATNA -> PATNA)
+  if (stateName && String(stateName).trim()) {
+    const st = String(stateName).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    clean = clean
+      .replace(new RegExp(`(_|\\s)+${st}$`, "i"), "")
+      .replace(new RegExp(`^${st}(_|\\s)+`, "i"), "");
+  }
+
+  // Remove attached district suffix or prefix (e.g. AMARPUR_PATNA -> AMARPUR)
+  if (districtName && String(districtName).trim()) {
+    const dt = String(districtName).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    clean = clean
+      .replace(new RegExp(`(_|\\s)+${dt}$`, "i"), "")
+      .replace(new RegExp(`^${dt}(_|\\s)+`, "i"), "");
+  }
+
+  return clean.trim();
+}
+
 interface DetailedViewProps {
   rawData: any[];
   headers: DataHeaders;
@@ -604,7 +634,7 @@ export default function DetailedView({
     });
 
     return {
-      categories: categoriesList,
+      categories: categoriesList.map((cat) => cleanLocationName(cat, selectedState, selectedDistrict)),
       series: seriesList
     };
   }, [rawData, allRawData, groupScope, exceedanceFilter, activeParam, selectedState, selectedDistrict, reportingLevel, headers, headerMap, activeConfig, uniquePeriods, multiSelectMode, selectedStatesList, selectedDistrictsList]);
@@ -1462,7 +1492,7 @@ export default function DetailedView({
       if (!locName || locName === "Unknown") return;
 
       let key = locName;
-      let displayName = locName;
+      let displayName = cleanLocationName(locName, rowSt, rowDt);
       if (reportingLevel === "District") {
         key = rowSt ? `${rowSt}___${locName}` : locName;
       } else if (reportingLevel === "Block") {
@@ -1991,11 +2021,24 @@ export default function DetailedView({
           pStats[period] = calculatePeriodStats(periodVals);
         });
 
+        const cleanState = cleanLocationName(data.state);
+        const cleanDistrict = cleanLocationName(data.district, data.state);
+        const cleanBlock = cleanLocationName(data.block, data.state, data.district);
+
+        let displayName = "";
+        if (reportingLevel === "State") {
+          displayName = cleanState || cleanLocationName(gName);
+        } else if (reportingLevel === "District") {
+          displayName = cleanDistrict || cleanLocationName(gName, data.state);
+        } else {
+          displayName = cleanBlock || cleanLocationName(gName, data.state, data.district);
+        }
+
         return {
-          name: gName,
-          state: data.state,
-          district: data.district,
-          block: data.block,
+          name: displayName,
+          state: cleanState,
+          district: cleanDistrict,
+          block: cleanBlock,
           ...overall,
           periodStats: pStats,
         };
@@ -2466,7 +2509,7 @@ export default function DetailedView({
     `;
 
     uniquePeriods.forEach((period) => {
-      const colsCount = isSar ? 11 : (activeConfigKey === "pH" || activeConfig.b1 === activeConfig.b2 ? 7 : 9);
+      const colsCount = isSar ? 12 : (activeConfigKey === "pH" || activeConfig.b1 === activeConfig.b2 ? 8 : 10);
       html += `
         <th colspan="${colsCount}" style="border: 1px solid #c7d2fe; padding: 6px; font-weight: bold; background-color: #e0e7ff; color: #4338ca; text-transform: uppercase;">
           ${period}
@@ -3753,7 +3796,7 @@ export default function DetailedView({
                       {reportingLevel === "State" ? "State Name" : reportingLevel === "District" ? "District Name" : "Block / Tehsil"}
                     </th>
                     {uniquePeriods.map((period) => {
-                      const colsCount = activeParam === "SAR" ? 11 : (activeConfigKey === "pH" || activeConfig.b1 === activeConfig.b2 ? 7 : 9);
+                      const colsCount = activeParam === "SAR" ? 12 : (activeConfigKey === "pH" || activeConfig.b1 === activeConfig.b2 ? 8 : 10);
                       return (
                         <th key={period} colSpan={colsCount} className="p-3 border font-black text-center text-indigo-700 bg-indigo-50 border-indigo-150 uppercase tracking-wider font-extrabold">
                           {period}

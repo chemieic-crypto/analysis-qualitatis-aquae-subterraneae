@@ -267,8 +267,18 @@ export default function GisChoroplethMap({
 }: GisChoroplethMapProps) {
   // Local shapefile layers fallback state if parent doesn't provide setLayers
   const [localLayers, setLocalLayers] = useState<ShapefileLayer[]>([]);
-  const effectiveLayers = layers !== undefined ? layers : localLayers;
-  const setEffectiveLayers = setLayers || setLocalLayers;
+
+  useEffect(() => {
+    if (layers !== undefined && layers.length > 0) {
+      setLocalLayers(layers);
+    }
+  }, [layers]);
+
+  const effectiveLayers = (layers !== undefined && setLayers) ? layers : localLayers;
+  const setEffectiveLayers = (newLayersOrFn: any) => {
+    if (setLayers) setLayers(newLayersOrFn);
+    setLocalLayers(newLayersOrFn);
+  };
 
   // Local toast message state
   const [localToast, setLocalToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
@@ -368,11 +378,15 @@ export default function GisChoroplethMap({
   const [transparentBackground, setTransparentBackground] = useState(false);
   const [showCompass, setShowCompass] = useState(true);
   const [showScaleBar, setShowScaleBar] = useState(true);
-  const [showGridLines, setShowGridLines] = useState(true);
+  const [showGridLines, setShowGridLines] = useState(false);
   const [showIndiaBoundary, setShowIndiaBoundary] = useState(false);
   const [layoutMode, setLayoutMode] = useState<"default" | "a4-portrait" | "a4-landscape">("default");
   const [showMapBorder, setShowMapBorder] = useState(true);
   const [show3DBubbles, setShow3DBubbles] = useState(false);
+  const [globalStrokeColor, setGlobalStrokeColor] = useState<string>("#0f172a");
+  const [globalStrokeWidth, setGlobalStrokeWidth] = useState<number>(1.5);
+  const [globalFillColor, setGlobalFillColor] = useState<string>("#3b82f6");
+  const [globalFillOpacity, setGlobalFillOpacity] = useState<number>(30);
   
   // Advanced Features
   
@@ -1885,8 +1899,8 @@ export default function GisChoroplethMap({
       if (primaryLayer && primaryLayer.geoJson) {
         try {
           ctx.save();
-          const strokeColor = primaryLayer.strokeColor || "#475569";
-          const strokeWidth = primaryLayer.strokeWidth || 1.0;
+          const strokeColor = primaryLayer.strokeColor || globalStrokeColor || "#0f172a";
+          const strokeWidth = typeof primaryLayer.strokeWidth === "number" ? primaryLayer.strokeWidth : globalStrokeWidth;
           const features = getMatchingFeaturesForLayer(primaryLayer);
 
           features.forEach((f: any) => {
@@ -1929,8 +1943,8 @@ export default function GisChoroplethMap({
                 ctx.fill();
 
                 if (primaryLayer.showStroke !== false) {
-                  ctx.strokeStyle = matchedGroup ? "#1e293b" : strokeColor;
-                  ctx.lineWidth = matchedGroup ? 1.0 : strokeWidth;
+                  ctx.strokeStyle = primaryLayer.strokeColor || strokeColor;
+                  ctx.lineWidth = typeof primaryLayer.strokeWidth === "number" ? primaryLayer.strokeWidth : strokeWidth;
                   ctx.stroke();
                 }
               };
@@ -2036,20 +2050,22 @@ export default function GisChoroplethMap({
         }
       }
 
-      // 2. Draw Secondary Layers (Boundary Outlines ONLY)
+      // 2. Draw Secondary Layers (Boundary Fill & Outlines)
       secondaryLayers.forEach((secLayer) => {
         try {
           if (!secLayer || !secLayer.geoJson) return;
           ctx.save();
-          const strokeColor = secLayer.strokeColor || "#334155";
-          const strokeWidth = secLayer.strokeWidth || 1.8;
+          const strokeColor = secLayer.strokeColor || globalStrokeColor || "#334155";
+          const strokeWidth = typeof secLayer.strokeWidth === "number" ? secLayer.strokeWidth : globalStrokeWidth;
+          const fillColor = secLayer.fillColor || globalFillColor;
+          const fillOpacity = typeof secLayer.fillOpacity === "number" ? secLayer.fillOpacity / 100 : (globalFillOpacity / 100);
           const features = getMatchingFeaturesForLayer(secLayer);
 
           features.forEach((f: any) => {
             try {
               if (!f || !f.geometry) return;
 
-              const drawPolygonRingOutline = (ring: any[]) => {
+              const drawPolygonRingStyled = (ring: any[]) => {
                 if (!ring || !Array.isArray(ring) || ring.length === 0) return;
                 ctx.beginPath();
                 ring.forEach((pt: any, idx: number) => {
@@ -2061,6 +2077,15 @@ export default function GisChoroplethMap({
                   else ctx.lineTo(sx, sy);
                 });
                 ctx.closePath();
+
+                if (fillColor && secLayer.showFill !== false && fillOpacity > 0) {
+                  ctx.save();
+                  ctx.fillStyle = fillColor;
+                  ctx.globalAlpha = fillOpacity;
+                  ctx.fill();
+                  ctx.restore();
+                }
+
                 if (secLayer.showStroke !== false) {
                   ctx.strokeStyle = strokeColor;
                   ctx.lineWidth = strokeWidth;
@@ -2068,20 +2093,20 @@ export default function GisChoroplethMap({
                 }
               };
 
-              const drawGeomOutline = (geom: any) => {
+              const drawGeomStyled = (geom: any) => {
                 if (!geom) return;
                 if (geom.type === "Polygon") {
-                  geom.coordinates.forEach((ring: any[]) => drawPolygonRingOutline(ring));
+                  geom.coordinates.forEach((ring: any[]) => drawPolygonRingStyled(ring));
                 } else if (geom.type === "MultiPolygon") {
                   geom.coordinates.forEach((poly: any[][]) => {
-                    poly.forEach((ring: any[]) => drawPolygonRingOutline(ring));
+                    poly.forEach((ring: any[]) => drawPolygonRingStyled(ring));
                   });
                 } else if (geom.type === "GeometryCollection") {
-                  geom.geometries?.forEach((g: any) => drawGeomOutline(g));
+                  geom.geometries?.forEach((g: any) => drawGeomStyled(g));
                 }
               };
 
-              drawGeomOutline(f.geometry);
+              drawGeomStyled(f.geometry);
             } catch (err) {
               console.error("Error rendering secondaryLayer outline:", err);
             }
@@ -2224,8 +2249,8 @@ export default function GisChoroplethMap({
           try {
             if (!layer || !layer.geoJson) return;
             ctx.save();
-            const strokeColor = layer.strokeColor || "#3b82f6";
-            const strokeWidth = layer.strokeWidth || 1.5;
+            const strokeColor = layer.strokeColor || globalStrokeColor || "#0f172a";
+            const strokeWidth = typeof layer.strokeWidth === "number" ? layer.strokeWidth : globalStrokeWidth;
             
             const drawPolygonRing = (ring: any[]) => {
               if (!ring || !Array.isArray(ring) || ring.length === 0) return;
@@ -2284,11 +2309,13 @@ export default function GisChoroplethMap({
       }
     }
 
-    // Highlight the selected administrative region if any is active (with a thicker border or different stroke color)
-    if (hasLayers && (selectedState || selectedDistrict)) {
+    // Optional highlight for a specifically selected single district (uses layer's customized stroke settings)
+    if (hasLayers && selectedDistrict && selectedDistrict.toUpperCase() !== "ALL" && selectedDistrict.trim() !== "") {
       activeLayers.forEach((layer) => {
         try {
           if (!layer || !layer.geoJson) return;
+          const strokeColor = layer.strokeColor || globalStrokeColor || "#0f172a";
+          const strokeWidth = (typeof layer.strokeWidth === "number" ? layer.strokeWidth : globalStrokeWidth) + 0.8;
           const features = layer.geoJson.features || (layer.geoJson.type === "Feature" ? [layer.geoJson] : []);
           features.forEach((f: any) => {
             try {
@@ -2309,17 +2336,12 @@ export default function GisChoroplethMap({
                 });
                 ctx.closePath();
 
-
-
-                // First pass: thicker outer border for deep contrast and separation
                 ctx.save();
-                ctx.strokeStyle = "#1e293b";
-                ctx.lineWidth = 5;
+                ctx.strokeStyle = strokeColor;
+                ctx.lineWidth = strokeWidth;
                 ctx.lineJoin = "round";
                 ctx.stroke();
                 ctx.restore();
-
-
               };
 
               const drawGeomHighlight = (geom: any) => {
@@ -3537,57 +3559,118 @@ export default function GisChoroplethMap({
                         </button>
                       </div>
 
-                      {layer.visible && propKeys.length > 0 && (
-                        <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-slate-100">
-                          <div>
-                            <span className="text-[8px] font-bold uppercase text-slate-400 block mb-0.5">Label Attribute</span>
-                            <select
-                              value={layer.labelKey || ""}
-                              onChange={(e) => {
-                                const newKey = e.target.value;
-                                setEffectiveLayers((prev) =>
-                                  prev.map((l) => (l.id === layer.id ? { ...l, labelKey: newKey } : l))
-                                );
-                              }}
-                              className="w-full text-[9px] font-bold bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-slate-700"
-                            >
-                              <option value="">Auto-Detect</option>
-                              {propKeys.map((k) => (
-                                <option key={k} value={k}>
-                                  {k}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="flex items-center gap-1.5 self-end justify-end">
-                            <label className="flex flex-col items-center cursor-pointer">
-                              <span className="text-[8px] font-bold uppercase text-slate-400 mb-0.5">Stroke</span>
-                              <input
-                                type="color"
-                                value={layer.strokeColor || "#0f172a"}
+                      {layer.visible && (
+                        <div className="pt-1.5 border-t border-slate-100 space-y-2">
+                          {propKeys.length > 0 && (
+                            <div>
+                              <span className="text-[8px] font-bold uppercase text-slate-400 block mb-0.5">Label Attribute</span>
+                              <select
+                                value={layer.labelKey || ""}
                                 onChange={(e) => {
-                                  const color = e.target.value;
+                                  const newKey = e.target.value;
                                   setEffectiveLayers((prev) =>
-                                    prev.map((l) => (l.id === layer.id ? { ...l, strokeColor: color } : l))
+                                    prev.map((l) => (l.id === layer.id ? { ...l, labelKey: newKey } : l))
                                   );
                                 }}
-                                className="w-5 h-5 rounded border border-slate-200 cursor-pointer p-0"
-                              />
-                            </label>
-                            <label className="flex flex-col items-center cursor-pointer">
-                              <span className="text-[8px] font-bold uppercase text-slate-400 mb-0.5">Fill</span>
-                              <input
-                                type="color"
-                                value={layer.fillColor || "#3b82f6"}
-                                onChange={(e) => {
-                                  const color = e.target.value;
-                                  setEffectiveLayers((prev) =>
-                                    prev.map((l) => (l.id === layer.id ? { ...l, fillColor: color } : l))
-                                  );
-                                }}
-                                className="w-5 h-5 rounded border border-slate-200 cursor-pointer p-0"
-                              />
-                            </label>
+                                className="w-full text-[9px] font-bold bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-slate-700"
+                              >
+                                <option value="">Auto-Detect</option>
+                                {propKeys.map((k) => (
+                                  <option key={k} value={k}>
+                                    {k}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
+                          {/* Individual Layer Stroke & Fill Customization */}
+                          <div className="bg-slate-50/80 p-2 rounded-lg border border-slate-200/60 space-y-1.5 text-[10px]">
+                            <div className="grid grid-cols-2 gap-2 items-center">
+                              {/* Stroke Color */}
+                              <div className="flex items-center justify-between bg-white px-1.5 py-1 rounded border border-slate-200">
+                                <span className="text-[9px] font-bold text-slate-600">Line Color</span>
+                                <input
+                                  type="color"
+                                  value={layer.strokeColor || globalStrokeColor || "#0f172a"}
+                                  onChange={(e) => {
+                                    const color = e.target.value;
+                                    setEffectiveLayers((prev) =>
+                                      prev.map((l) => (l.id === layer.id ? { ...l, strokeColor: color } : l))
+                                    );
+                                  }}
+                                  className="w-5 h-5 rounded border border-slate-200 cursor-pointer p-0 shrink-0"
+                                  title="Line Color"
+                                />
+                              </div>
+
+                              {/* Stroke Thickness */}
+                              <div className="flex items-center justify-between bg-white px-1.5 py-1 rounded border border-slate-200">
+                                <span className="text-[9px] font-bold text-slate-600">Thickness</span>
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="range"
+                                    min="0.2"
+                                    max="6"
+                                    step="0.1"
+                                    value={typeof layer.strokeWidth === "number" ? layer.strokeWidth : globalStrokeWidth}
+                                    onChange={(e) => {
+                                      const val = parseFloat(e.target.value) || 1.5;
+                                      setEffectiveLayers((prev) =>
+                                        prev.map((l) => (l.id === layer.id ? { ...l, strokeWidth: val } : l))
+                                      );
+                                    }}
+                                    className="w-10 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                                    title="Thickness"
+                                  />
+                                  <span className="text-[8.5px] font-mono font-bold text-slate-600 w-5 text-right">
+                                    {(typeof layer.strokeWidth === "number" ? layer.strokeWidth : globalStrokeWidth).toFixed(1)}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Fill Color */}
+                              <div className="flex items-center justify-between bg-white px-1.5 py-1 rounded border border-slate-200">
+                                <span className="text-[9px] font-bold text-slate-600">Fill Color</span>
+                                <input
+                                  type="color"
+                                  value={layer.fillColor || globalFillColor || "#3b82f6"}
+                                  onChange={(e) => {
+                                    const color = e.target.value;
+                                    setEffectiveLayers((prev) =>
+                                      prev.map((l) => (l.id === layer.id ? { ...l, fillColor: color } : l))
+                                    );
+                                  }}
+                                  className="w-5 h-5 rounded border border-slate-200 cursor-pointer p-0 shrink-0"
+                                  title="Fill Color"
+                                />
+                              </div>
+
+                              {/* Fill Opacity */}
+                              <div className="flex items-center justify-between bg-white px-1.5 py-1 rounded border border-slate-200">
+                                <span className="text-[9px] font-bold text-slate-600">Fill Opacity</span>
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="range"
+                                    min="0"
+                                    max="100"
+                                    step="5"
+                                    value={typeof layer.fillOpacity === "number" ? layer.fillOpacity : globalFillOpacity}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value, 10);
+                                      setEffectiveLayers((prev) =>
+                                        prev.map((l) => (l.id === layer.id ? { ...l, fillOpacity: val } : l))
+                                      );
+                                    }}
+                                    className="w-10 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                                    title="Fill Opacity"
+                                  />
+                                  <span className="text-[8.5px] font-mono font-bold text-slate-600 w-5 text-right">
+                                    {typeof layer.fillOpacity === "number" ? layer.fillOpacity : globalFillOpacity}%
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       )}
@@ -3630,6 +3713,91 @@ export default function GisChoroplethMap({
                   <span className="text-[9px] text-slate-400">Interpolate data point values across coordinates and clip the rendering to polygon bounds.</span>
                 </div>
               </label>
+            </div>
+          </div>
+
+          {/* Bulk Shapefile Boundary & Fill Customizer */}
+          <div className="bg-slate-50/50 p-2.5 rounded-xl border border-slate-200/50 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-[9px] font-black uppercase text-indigo-950 tracking-wider block">
+                All Shapefiles Global Styling
+              </label>
+              <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                Bulk Override
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex items-center justify-between bg-white p-1.5 rounded-lg border border-slate-200">
+                <span className="text-[10px] font-bold text-slate-700">Line Color</span>
+                <input
+                  type="color"
+                  value={globalStrokeColor}
+                  onChange={(e) => {
+                    const color = e.target.value;
+                    setGlobalStrokeColor(color);
+                    setEffectiveLayers((prev) => prev.map((l) => ({ ...l, strokeColor: color })));
+                  }}
+                  className="w-6 h-6 rounded border border-slate-200 cursor-pointer p-0"
+                />
+              </div>
+
+              <div className="flex items-center justify-between bg-white p-1.5 rounded-lg border border-slate-200">
+                <span className="text-[10px] font-bold text-slate-700">Thickness</span>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="range"
+                    min="0.2"
+                    max="6"
+                    step="0.1"
+                    value={globalStrokeWidth}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value) || 1.5;
+                      setGlobalStrokeWidth(val);
+                      setEffectiveLayers((prev) => prev.map((l) => ({ ...l, strokeWidth: val })));
+                    }}
+                    className="w-12 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                  />
+                  <span className="text-[10px] font-mono font-bold text-slate-600 w-6 text-right">
+                    {globalStrokeWidth.toFixed(1)}px
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between bg-white p-1.5 rounded-lg border border-slate-200">
+                <span className="text-[10px] font-bold text-slate-700">Fill Color</span>
+                <input
+                  type="color"
+                  value={globalFillColor}
+                  onChange={(e) => {
+                    const color = e.target.value;
+                    setGlobalFillColor(color);
+                    setEffectiveLayers((prev) => prev.map((l) => ({ ...l, fillColor: color })));
+                  }}
+                  className="w-6 h-6 rounded border border-slate-200 cursor-pointer p-0"
+                />
+              </div>
+
+              <div className="flex items-center justify-between bg-white p-1.5 rounded-lg border border-slate-200">
+                <span className="text-[10px] font-bold text-slate-700">Fill Opacity</span>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="5"
+                    value={globalFillOpacity}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      setGlobalFillOpacity(val);
+                      setEffectiveLayers((prev) => prev.map((l) => ({ ...l, fillOpacity: val })));
+                    }}
+                    className="w-12 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                  />
+                  <span className="text-[10px] font-mono font-bold text-slate-600 w-6 text-right">
+                    {globalFillOpacity}%
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
 
