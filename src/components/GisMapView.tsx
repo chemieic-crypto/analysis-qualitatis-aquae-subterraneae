@@ -104,13 +104,13 @@ const DEFAULT_AQUIFER_COLORS: Record<string, string> = {
 };
 
 const getDpr = (): number => {
-  if (typeof window === "undefined") return 2.0;
+  if (typeof window === "undefined") return 3.0;
   const isMobile = window.innerWidth < 768 || (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0);
-  const baseDpr = window.devicePixelRatio || 1.5;
+  const baseDpr = window.devicePixelRatio || 2.0;
   if (isMobile) {
-    return Math.min(baseDpr, 2.0);
+    return Math.max(baseDpr, 2.0);
   }
-  return Math.min(baseDpr * 1.25, 3.0);
+  return Math.max(baseDpr * 1.5, 3.5);
 };
 
 const getInitialColorMapping = (geojson: any, attribute: string): Record<string, string> => {

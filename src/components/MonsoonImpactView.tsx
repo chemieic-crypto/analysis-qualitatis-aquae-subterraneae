@@ -247,7 +247,7 @@ export default function MonsoonImpactView({
   const [choroplethGranularity, setChoroplethGranularity] = useState<"district" | "state">("district");
   const [choroplethOrientation, setChoroplethOrientation] = useState<"portrait" | "landscape">("portrait");
   const [choroplethBgColor, setChoroplethBgColor] = useState<string>("#ffffff");
-  const [showChoroplethDataPoints, setShowChoroplethDataPoints] = useState<boolean>(true);
+  const [showChoroplethDataPoints, setShowChoroplethDataPoints] = useState<boolean>(false);
   const [selectedIonicBiplot, setSelectedIonicBiplot] = useState<IonicBiplotType>("na-cl");
   const [biplotViewMode, setBiplotViewMode] = useState<"side-by-side" | "shift-vector">("side-by-side");
 
@@ -324,37 +324,95 @@ export default function MonsoonImpactView({
     }
   }, [localState]);
 
+  // Helper to extract row period string robustly
+  const getRowPeriod = useCallback((row: any) => {
+    if (!row) return "";
+    let y = headers.year && row[headers.year] !== undefined ? String(row[headers.year]).trim() : "";
+    let s = headers.season && row[headers.season] !== undefined ? String(row[headers.season]).trim() : "";
+
+    // Search for year if missing
+    if (!y) {
+      Object.keys(row).forEach(k => {
+        if (!y && /(year|^yr$|date|sampling_year|time_year|year_of_sampling)/i.test(k.trim())) {
+          const val = String(row[k] || "").trim();
+          if (val) y = val;
+        }
+      });
+    }
+
+    // Search for season if missing
+    if (!s) {
+      Object.keys(row).forEach(k => {
+        if (!s && /(season|monsoon|period|sampling_period|monsoon_season|sampling_season|time_of_sampling)/i.test(k.trim())) {
+          const val = String(row[k] || "").trim();
+          if (val) s = val;
+        }
+      });
+    }
+
+    if (y && s) {
+      if (s.toLowerCase().includes(y.toLowerCase())) {
+        return s;
+      }
+      return `${y} | ${s}`;
+    }
+    if (y) return y;
+    if (s) return s;
+
+    let fallbackVal = "";
+    Object.keys(row).forEach(k => {
+      if (!fallbackVal && /season|monsoon|period|year|date/i.test(k)) {
+        const val = String(row[k] || "").trim();
+        if (val) fallbackVal = val;
+      }
+    });
+
+    return fallbackVal || "Single Period";
+  }, [headers.year, headers.season]);
+
   // Extract uniquely available periods based on year and season columns
   const allPeriods = useMemo(() => {
     if (!rawData.length) return [];
     const periods = new Set<string>();
     rawData.forEach(row => {
-      const y = headers.year ? String(row[headers.year] || "").trim() : "";
-      const s = headers.season ? String(row[headers.season] || "").trim() : "";
-      if (y && s) {
-        periods.add(`${y} | ${s}`);
-      } else if (y) {
-        periods.add(y);
-      } else if (s) {
-        periods.add(s);
-      }
+      const p = getRowPeriod(row);
+      if (p) periods.add(p);
     });
     return Array.from(periods).sort();
-  }, [rawData, headers.year, headers.season]);
+  }, [rawData, getRowPeriod]);
+
+  // Smart change handlers to prevent comparing identical periods when 2+ periods exist
+  const handleBasePeriodChange = (selected: string) => {
+    setBasePeriod(selected);
+    if (allPeriods.length >= 2 && selected === compPeriod) {
+      const other = allPeriods.find(p => p !== selected);
+      if (other) setCompPeriod(other);
+    }
+  };
+
+  const handleCompPeriodChange = (selected: string) => {
+    setCompPeriod(selected);
+    if (allPeriods.length >= 2 && selected === basePeriod) {
+      const other = allPeriods.find(p => p !== selected);
+      if (other) setBasePeriod(other);
+    }
+  };
 
   // Pre-guess default Pre/Post monsoon comparisons
   useEffect(() => {
+    if (!allPeriods.length) return;
+
     if (allPeriods.length >= 2) {
-      const pre = allPeriods.find(p => p.toLowerCase().includes("pre"));
-      const post = allPeriods.find(p => p.toLowerCase().includes("post"));
-      if (pre && post) {
+      const pre = allPeriods.find(p => /pre/i.test(p));
+      const post = allPeriods.find(p => /post/i.test(p));
+      if (pre && post && pre !== post) {
         setBasePeriod(pre);
         setCompPeriod(post);
       } else {
         setBasePeriod(allPeriods[0]);
-        setCompPeriod(allPeriods[1]);
+        setCompPeriod(allPeriods[1] || allPeriods[allPeriods.length - 1]);
       }
-    } else if (allPeriods.length === 1) {
+    } else {
       setBasePeriod(allPeriods[0]);
       setCompPeriod(allPeriods[0]);
     }
@@ -410,9 +468,31 @@ export default function MonsoonImpactView({
     setLocalBlock("All");
   }, [localDistrict]);
 
+  // Helper function to derive consistent location matching key
+  const getMatchingKey = useCallback((row: any, fallbackIdx: number = 0) => {
+    const wellIdVal = headers.wellId && row[headers.wellId] ? String(row[headers.wellId]).trim().toUpperCase() : "";
+    
+    const stateVal = String(row[headers.state || "State"] || row["State"] || row["state"] || "").trim().toUpperCase();
+    const distVal = String(row[headers.district || "District"] || row["District"] || row["district"] || "").trim().toUpperCase();
+    const blockVal = String(row[headers.block || "Block"] || row["Block"] || row["block"] || "").trim().toUpperCase();
+    const locVal = String(row[headers.location || "Location"] || row["Location"] || row["location"] || "").trim().toUpperCase();
+
+    const compositeLocKey = [stateVal, distVal, blockVal, locVal].filter(Boolean).join("|");
+
+    if (pairingLogic === "well_id") {
+      if (wellIdVal) return wellIdVal;
+      if (compositeLocKey) return compositeLocKey;
+    } else {
+      if (compositeLocKey) return compositeLocKey;
+      if (wellIdVal) return wellIdVal;
+    }
+
+    return `STATION_${fallbackIdx}`;
+  }, [headers, pairingLogic]);
+
   // --- CORE MATCHING ENGINE ---
   const pairedResult = useMemo(() => {
-    if (!rawData.length || !basePeriod || !compPeriod || (!headers.year && !headers.season)) {
+    if (!rawData.length) {
       return { uBaseCnt: 0, uCompCnt: 0, pairedList: [], unpairedCnt: 0 };
     }
 
@@ -445,31 +525,25 @@ export default function MonsoonImpactView({
     let uBaseCnt = 0;
     let uCompCnt = 0;
 
-    filtered.forEach(row => {
-      const y = headers.year ? String(row[headers.year] || "").trim() : "";
-      const s = headers.season ? String(row[headers.season] || "").trim() : "";
-      const period = (y && s) ? `${y} | ${s}` : (y || s);
+    const isDistinctPeriods = basePeriod && compPeriod && basePeriod !== compPeriod && allPeriods.length > 1;
 
-      // Generate exact matching key
-      let key = "";
-      if (pairingLogic === "well_id" && headers.wellId && row[headers.wellId]) {
-        key = String(row[headers.wellId]).trim().toUpperCase();
+    filtered.forEach((row, idx) => {
+      const period = getRowPeriod(row);
+      const key = getMatchingKey(row, idx);
+
+      if (isDistinctPeriods) {
+        if (period === basePeriod) {
+          baseRecordsMap[key] = row;
+          uBaseCnt++;
+        }
+        if (period === compPeriod) {
+          compRecordsMap[key] = row;
+          uCompCnt++;
+        }
       } else {
-        const stateVal = String(row[headers.state || "State"] || "").trim();
-        const distVal = String(row[headers.district || "District"] || "").trim();
-        const blockVal = String(row[headers.block || "Block"] || "").trim();
-        const locVal = String(row[headers.location || "Location"] || "").trim();
-        key = `${stateVal}|${distVal}|${blockVal}|${locVal}`.toUpperCase();
-      }
-
-      if (!key) return;
-
-      if (period === basePeriod) {
         baseRecordsMap[key] = row;
-        uBaseCnt++;
-      }
-      if (period === compPeriod) {
         compRecordsMap[key] = row;
+        uBaseCnt++;
         uCompCnt++;
       }
     });
@@ -509,7 +583,7 @@ export default function MonsoonImpactView({
     });
 
     return { uBaseCnt, uCompCnt, pairedList, unpairedCnt };
-  }, [rawData, basePeriod, compPeriod, pairingLogic, headers, globalSelectedState, globalSelectedDistrict, localState, localDistrict, localBlock]);
+  }, [rawData, basePeriod, compPeriod, pairingLogic, headers, globalSelectedState, globalSelectedDistrict, localState, localDistrict, localBlock, allPeriods, getMatchingKey]);
 
   // --- HELPER VALUE PARSER ---
   const parseVal = useCallback((row: any, paramName: string) => {
@@ -1009,30 +1083,23 @@ export default function MonsoonImpactView({
       filtered = filtered.filter(row => String(row[headers.block || ""] || "").trim() === localBlock);
     }
 
-    filtered.forEach(row => {
-      const y = headers.year ? String(row[headers.year] || "").trim() : "";
-      const s = headers.season ? String(row[headers.season] || "").trim() : "";
-      const period = (y && s) ? `${y} | ${s}` : (y || s);
+    const isDistinctPeriods = basePeriod && compPeriod && basePeriod !== compPeriod && allPeriods.length > 1;
 
-      let key = "";
-      if (pairingLogic === "well_id" && headers.wellId && row[headers.wellId]) {
-        key = String(row[headers.wellId]).trim().toUpperCase();
-      } else {
-        const stateVal = String(row[headers.state || "State"] || "").trim();
-        const distVal = String(row[headers.district || "District"] || "").trim();
-        const blockVal = String(row[headers.block || "Block"] || "").trim();
-        const locVal = String(row[headers.location || "Location"] || "").trim();
-        key = `${stateVal}|${distVal}|${blockVal}|${locVal}`.toUpperCase();
-      }
-
-      if (!key) return;
+    filtered.forEach((row, idx) => {
+      const period = getRowPeriod(row);
+      const key = getMatchingKey(row, idx);
 
       if (!locMap[key]) {
         locMap[key] = { baseRow: null, compRow: null };
       }
 
-      if (period === basePeriod) locMap[key].baseRow = row;
-      if (period === compPeriod) locMap[key].compRow = row;
+      if (isDistinctPeriods) {
+        if (period === basePeriod) locMap[key].baseRow = row;
+        if (period === compPeriod) locMap[key].compRow = row;
+      } else {
+        locMap[key].baseRow = row;
+        locMap[key].compRow = row;
+      }
     });
 
     Object.values(locMap).forEach(loc => {
@@ -1054,7 +1121,7 @@ export default function MonsoonImpactView({
 
   // --- WELL-WISE DATA AVAILABILITY DATA ---
   const wellAvailabilityData = useMemo(() => {
-    if (!rawData.length || !headers.year || !headers.season) return [];
+    if (!rawData.length) return [];
 
     const locMap: Record<string, {
       wellId: string;
@@ -1084,30 +1151,15 @@ export default function MonsoonImpactView({
       filtered = filtered.filter(row => String(row[headers.block || ""] || "").trim() === localBlock);
     }
 
-    filtered.forEach(row => {
-      const y = headers.year ? String(row[headers.year] || "").trim() : "";
-      const s = headers.season ? String(row[headers.season] || "").trim() : "";
-      const period = (y && s) ? `${y} | ${s}` : (y || s);
+    const isDistinctPeriods = basePeriod && compPeriod && basePeriod !== compPeriod && allPeriods.length > 1;
 
-      let key = "";
-      let wellId = "Unknown";
-      
-      if (headers.wellId && row[headers.wellId]) {
-        wellId = String(row[headers.wellId]).trim();
-        key = wellId.toUpperCase();
-      } else {
-        const stateVal = String(row[headers.state || "State"] || "").trim();
-        const distVal = String(row[headers.district || "District"] || "").trim();
-        const blockVal = String(row[headers.block || "Block"] || "").trim();
-        const locVal = String(row[headers.location || "Location"] || "").trim();
-        key = `${stateVal}|${distVal}|${blockVal}|${locVal}`.toUpperCase();
-      }
-
-      if (!key) return;
+    filtered.forEach((row, idx) => {
+      const period = getRowPeriod(row);
+      const key = getMatchingKey(row, idx);
 
       if (!locMap[key]) {
         locMap[key] = {
-          wellId: headers.wellId ? String(row[headers.wellId] || "Unknown").trim() : "Unknown",
+          wellId: headers.wellId && row[headers.wellId] ? String(row[headers.wellId]).trim() : "Unknown",
           state: String(row[headers.state || "State"] || "Unknown").trim(),
           district: String(row[headers.district || "District"] || "Unknown").trim(),
           block: String(row[headers.block || "Block"] || "Unknown").trim(),
@@ -1118,8 +1170,13 @@ export default function MonsoonImpactView({
         };
       }
 
-      if (period === basePeriod) locMap[key].hasBase = true;
-      if (period === compPeriod) locMap[key].hasComp = true;
+      if (isDistinctPeriods) {
+        if (period === basePeriod) locMap[key].hasBase = true;
+        if (period === compPeriod) locMap[key].hasComp = true;
+      } else {
+        locMap[key].hasBase = true;
+        locMap[key].hasComp = true;
+      }
     });
 
     Object.values(locMap).forEach(item => {
@@ -1415,7 +1472,7 @@ export default function MonsoonImpactView({
   };
 
   // Check if year or season columns have been mapped successfully
-  const isPeriodMappingMissing = !headers.year && !headers.season;
+  const isPeriodMappingMissing = !headers.year && !headers.season && allPeriods.length === 0;
 
   if (isPeriodMappingMissing) {
     return (
@@ -1453,7 +1510,7 @@ export default function MonsoonImpactView({
             <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-0.5">Base Period</label>
             <select
               value={basePeriod}
-              onChange={(e) => setBasePeriod(e.target.value)}
+              onChange={(e) => handleBasePeriodChange(e.target.value)}
               className="w-full text-xs p-2 rounded-lg bg-white border border-slate-300 font-bold text-slate-700 cursor-pointer"
             >
               {allPeriods.map((p, idx) => (
@@ -1464,11 +1521,22 @@ export default function MonsoonImpactView({
 
           {/* Compare Period selector */}
           <div className="flex flex-col gap-1.5 bg-white p-2.5 rounded-xl border border-slate-200 shadow-inner">
-            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-0.5">Compare Period</label>
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-0.5">Compare Period</label>
+              {basePeriod === compPeriod && (
+                <span className="text-[9px] font-black text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
+                  {allPeriods.length < 2 ? "Single Period" : "Same Period"}
+                </span>
+              )}
+            </div>
             <select
               value={compPeriod}
-              onChange={(e) => setCompPeriod(e.target.value)}
-              className="w-full text-xs p-2 rounded-lg bg-white border border-slate-300 font-bold text-slate-700 cursor-pointer"
+              onChange={(e) => handleCompPeriodChange(e.target.value)}
+              className={`w-full text-xs p-2 rounded-lg bg-white border font-bold text-slate-700 cursor-pointer ${
+                basePeriod === compPeriod
+                  ? "border-amber-400 ring-2 ring-amber-200"
+                  : "border-slate-300"
+              }`}
             >
               {allPeriods.map((p, idx) => (
                 <option key={idx} value={p}>{p}</option>
@@ -1576,6 +1644,24 @@ export default function MonsoonImpactView({
           </div>
 
         </div>
+
+        {basePeriod === compPeriod && (
+          <div className="mt-4 bg-amber-50/90 border border-amber-300 rounded-2xl p-4 flex items-start gap-3 shadow-xs">
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="text-xs space-y-1">
+              <h5 className="font-extrabold text-amber-900">
+                {allPeriods.length < 2
+                  ? "Single Period Dataset Detected"
+                  : "Identical Periods Selected"}
+              </h5>
+              <p className="text-amber-800 leading-relaxed font-semibold">
+                {allPeriods.length < 2
+                  ? `Your uploaded file contains only 1 sampling period (${basePeriod}). Comparing a period against itself results in 0% delta/shift. To calculate seasonal Monsoon Impact (Pre-Monsoon vs Post-Monsoon), upload a dataset with both Pre-Monsoon and Post-Monsoon data.`
+                  : `Base Period and Compare Period are both set to "${basePeriod}". Select two distinct periods in the dropdowns above to calculate seasonal hydrochemical delta changes and shift vectors.`}
+              </p>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* --- DASHBOARD METRICS kpi PANEL --- */}
@@ -2407,12 +2493,45 @@ export default function MonsoonImpactView({
               })()}
             </div>
 
+            {/* Informative Season Dataset Notice Banner */}
+            {(allPeriods.length < 2 || pairedResult.pairedList.length === 0 || basePeriod === compPeriod) && (
+              <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-5 text-amber-950 space-y-2.5 shadow-sm">
+                <div className="flex items-center gap-2.5">
+                  <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+                  <h4 className="font-extrabold text-sm text-amber-900 uppercase tracking-wide">
+                    {allPeriods.length < 2 || basePeriod === compPeriod
+                      ? "Single Season / Base Period Analysis Mode Active"
+                      : "Monsoon Location Matching Notice"}
+                  </h4>
+                </div>
+                <p className="text-xs font-semibold leading-relaxed text-amber-900">
+                  {allPeriods.length < 2 ? (
+                    <>
+                      Single season dataset detected (<strong>{allPeriods[0] || "Pre-Monsoon"}</strong>). All <strong>{pairedResult.pairedList.length} sampling stations</strong> are matched and rendered for spatial quality maps, parameter distributions, and ionic plots.
+                    </>
+                  ) : pairedResult.pairedList.length === 0 ? (
+                    <>
+                      No matching sampling locations were found between <strong>{basePeriod}</strong> and <strong>{compPeriod}</strong> using the selected pairing key (<strong>{pairingLogic === "well_id" ? "Well ID" : "State + District + Block + Location Name"}</strong>).
+                    </>
+                  ) : (
+                    <>
+                      Base Period (<strong>{basePeriod}</strong>) and Comparison Period (<strong>{compPeriod}</strong>) are set to the same season. All <strong>{pairedResult.pairedList.length} stations</strong> are matched using <strong>{pairingLogic === "well_id" ? "Well ID (with Location Name fallback)" : "State + District + Block + Location Name"}</strong>.
+                    </>
+                  )}
+                  {allPeriods.length >= 2 && basePeriod !== compPeriod ? "" : " To analyze seasonal shifts (Pre-Monsoon vs Post-Monsoon delta vectors), ensure your uploaded dataset contains data for both seasons with matching Well IDs or Station Location names."}
+                </p>
+                <div className="text-[11px] font-bold text-amber-800 bg-amber-100/80 px-3 py-1.5 rounded-lg border border-amber-200/80 inline-block">
+                  💡 Location Matching: Locations are matched based on <strong>Well ID</strong> (or <strong>State + District + Block + Location Name</strong>) across sampling seasons.
+                </div>
+              </div>
+            )}
+
             {/* Render Diagram Gallery Cards */}
             {!pairedResult.pairedList.length ? (
               <div className="bg-white p-12 text-center rounded-2xl border border-slate-200 text-slate-500 font-bold space-y-2">
                 <AlertCircle className="w-10 h-10 text-amber-500 mx-auto" />
                 <p>No paired/matched locations found for the selected base & comparison periods.</p>
-                <p className="text-xs text-slate-400">Please adjust your base period, compare period, or filter criteria.</p>
+                <p className="text-xs text-slate-400">Please upload a dataset with at least two seasons/years or adjust your pairing logic (Well ID vs Location Name).</p>
               </div>
             ) : (
               <div className="space-y-8">

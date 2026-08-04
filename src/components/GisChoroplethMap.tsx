@@ -395,9 +395,9 @@ export default function GisChoroplethMap({
   const [selectedBoundaryLayerId, setSelectedBoundaryLayerId] = useState<string>("auto");
   const pixelRatio = typeof window !== "undefined"
     ? ((window.innerWidth < 768 || (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0))
-        ? Math.min(window.devicePixelRatio || 1.5, 2.0)
-        : Math.min(window.devicePixelRatio || 2, 2.5))
-    : 2.0;
+        ? Math.max(window.devicePixelRatio || 2, 2.0)
+        : Math.max((window.devicePixelRatio || 2) * 1.5, 3.2))
+    : 3.0;
   const [mapTheme, setMapTheme] = useState<"light" | "dark" | "blueprint">("light");
 
   const handleExportImage = () => {
