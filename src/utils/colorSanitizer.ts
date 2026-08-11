@@ -194,6 +194,13 @@ export const replaceOklabAndOklchNested = (str: string): string => {
       i++;
     }
   }
+
+  if (result.toLowerCase().includes("oklab") || result.toLowerCase().includes("oklch")) {
+    result = result
+      .replace(/oklab\s*\([^)]+\)/gi, "rgb(128, 128, 128)")
+      .replace(/oklch\s*\([^)]+\)/gi, "rgb(128, 128, 128)");
+  }
+
   return result;
 };
 
@@ -432,6 +439,13 @@ export const safeHtml2canvas = async (
       if (cropOverlay) {
         cropOverlay.remove();
       }
+    } catch (err) {}
+
+    try {
+      const exportHideElements = clonedDoc.querySelectorAll('[data-export-hide="true"], .export-hide');
+      exportHideElements.forEach((el) => {
+        (el as HTMLElement).style.display = "none";
+      });
     } catch (err) {}
 
     // Monkeypatch getComputedStyle in the cloned iframe's window as well

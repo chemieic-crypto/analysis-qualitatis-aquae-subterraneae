@@ -60,6 +60,36 @@ export function isDistrictAll(district?: string): boolean {
 }
 
 /**
+ * Converts text string to Title / Proper Case (e.g. "ELECTRICAL CONDUCTIVITY" -> "Electrical Conductivity").
+ */
+export function toProperCase(str: string): string {
+  if (!str) return "";
+  const lower = str.trim().toLowerCase();
+  if (lower === "all" || lower === "all states" || lower === "all india" || lower === "national") {
+    return "All India";
+  }
+  if (lower === "all districts") return "All Districts";
+  if (lower === "all seasons") return "All Seasons";
+  if (lower === "all years") return "All Years";
+
+  return str
+    .split(/\s+/)
+    .map((word) => {
+      // Keep acronyms like (EC), (TDS), pH, NO3, BIS, IS, UT, etc. intact or format clean words
+      if (/^\(?[A-Z0-9]{2,}\)?$/.test(word) && !/^[A-Z]+$/.test(word.toLowerCase())) {
+        return word;
+      }
+      const cleanWord = word.toLowerCase();
+      if (["of", "in", "and", "or", "the", "for", "by", "at", "to", "vs"].includes(cleanWord)) {
+        return cleanWord;
+      }
+      return cleanWord.charAt(0).toUpperCase() + cleanWord.slice(1);
+    })
+    .join(" ")
+    .replace(/^./, (c) => c.toUpperCase());
+}
+
+/**
  * Determines whether a GeoJSON feature matches the selected state and district filters.
  */
 export function featureMatchesSelection(

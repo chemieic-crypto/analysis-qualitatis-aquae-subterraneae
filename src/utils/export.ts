@@ -575,21 +575,29 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
     }
   });
 
-  // Post-process all tables to make them simple MS Word tables with ultra-compact formatting
+  // Post-process ALL tables to make them simple MS Word tables with publication-quality formatting
   const tables = Array.from(div.getElementsByTagName("table"));
   tables.forEach((table) => {
     // Remove col and colgroup - rely on explicit cell width styles
     const cols = Array.from(table.querySelectorAll("col, colgroup"));
     cols.forEach((c) => c.parentNode?.removeChild(c));
 
-    // Force standard border and padding attributes for Word compatibility
-    table.setAttribute("border", "1");
-    table.setAttribute("cellpadding", "0"); // Minimum padding
-    table.setAttribute("cellspacing", "0");
-    table.setAttribute("width", "100%");
-    
-    // Force fixed table layout with 100% width, collapse borders, zero extra margin
-    table.setAttribute("style", "width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 6pt; margin-bottom: 8pt; mso-table-lspace: 0pt; mso-table-rspace: 0pt; mso-table-anchor-vertical: paragraph; mso-padding-alt: 0pt 0pt 0pt 0pt;");
+    const isLayoutTable = table.classList.contains("layout-table") || table.getAttribute("border") === "0";
+
+    if (isLayoutTable) {
+      table.setAttribute("border", "0");
+      table.setAttribute("cellpadding", "0");
+      table.setAttribute("cellspacing", "0");
+      table.setAttribute("width", "100%");
+      table.setAttribute("style", "width: 100%; border-collapse: collapse; margin-top: 8pt; margin-bottom: 12pt; border: none; mso-table-lspace: 0pt; mso-table-rspace: 0pt;");
+    } else {
+      // Data table styling
+      table.setAttribute("border", "1");
+      table.setAttribute("cellpadding", "0");
+      table.setAttribute("cellspacing", "0");
+      table.setAttribute("width", "100%");
+      table.setAttribute("style", "width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 8pt; margin-bottom: 12pt; mso-table-lspace: 0pt; mso-table-rspace: 0pt; mso-table-anchor-vertical: paragraph;");
+    }
 
     const rows = Array.from(table.getElementsByTagName("tr"));
 
@@ -614,7 +622,6 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
       const bgMatch = currentStyle.match(/background-color\s*:\s*([^;]+)/i);
       const bgColor = bgMatch ? bgMatch[1] : "";
       
-      // Auto row height as requested (do not force a minimum height)
       let rowStyle = `height: auto; min-height: 0pt; mso-height-rule: auto; vertical-align: middle;`;
       
       if (bgColor) {
@@ -650,21 +657,25 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
         
         const isTh = cell.tagName.toLowerCase() === "th";
         const isBold = isTh || /font-weight\s*:\s*bold/i.test(cellStyle);
-        const fontSize = "10pt";
+        const fontSize = isTh ? "10pt" : "9.5pt";
         
         // Propagate the corresponding column width from the header
         const explicitWidth = colWidths[colIndex] || "";
-        if (explicitWidth) {
+        if (explicitWidth && !isLayoutTable) {
           cleanedCellStyle += ` width: ${explicitWidth};`;
           cell.setAttribute("width", explicitWidth.replace("%", ""));
         }
         
-        // Compact cell padding & margins (top, bottom, left, right set to minimum)
-        const cellPadding = "1pt 2.5pt";
-        const topBottomTwips = "10twips";
-        const leftRightTwips = "20twips";
+        if (isLayoutTable) {
+          cleanedCellStyle += ` border: none !important; padding: 4pt; vertical-align: top; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; line-height: 1.35;`;
+        } else {
+          // Publication quality cell padding & twips
+          const cellPadding = "4.5pt 6pt";
+          const topBottomTwips = "85twips";
+          const leftRightTwips = "120twips";
 
-        cleanedCellStyle += ` font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; padding: ${cellPadding}; mso-padding-top-alt: ${topBottomTwips}; mso-padding-bottom-alt: ${topBottomTwips}; mso-padding-left-alt: ${leftRightTwips}; mso-padding-right-alt: ${leftRightTwips}; ${isBold ? "font-weight: bold;" : ""} line-height: 1.0 !important; mso-line-height-rule: exactly !important; vertical-align: middle; mso-vertical-align-alt: middle; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; white-space: normal !important; margin: 0pt !important; margin-top: 0pt !important; margin-bottom: 0pt !important; mso-margin-top-alt: 0pt !important; mso-margin-bottom-alt: 0pt !important; height: auto; min-height: 0pt;`;
+          cleanedCellStyle += ` font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; padding: ${cellPadding}; mso-padding-top-alt: ${topBottomTwips}; mso-padding-bottom-alt: ${topBottomTwips}; mso-padding-left-alt: ${leftRightTwips}; mso-padding-right-alt: ${leftRightTwips}; ${isBold ? "font-weight: bold;" : ""} line-height: 1.25 !important; mso-line-height-rule: at-least !important; vertical-align: middle; mso-vertical-align-alt: middle; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; white-space: normal !important; margin: 0pt !important; height: auto; min-height: 0pt;`;
+        }
         
         // Align headers centered by default, data aligned according to existing style or left
         if (isTh) {
@@ -686,19 +697,18 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
           }
         });
 
-        // Strip any paragraph spacing within table cells to strictly follow single-spacing (1.0) and 0 pt before/after margins
+        // Strip any paragraph spacing within table cells
         const cellParagraphs = Array.from(cell.getElementsByTagName("p"));
         const alignVal = isTh ? "center" : (/text-align\s*:\s*center/i.test(cellStyle) ? "center" : /text-align\s*:\s*right/i.test(cellStyle) ? "right" : "left");
 
         if (cellParagraphs.length > 0) {
           cellParagraphs.forEach((p) => {
-            p.setAttribute("style", `margin: 0pt !important; margin-top: 0pt !important; margin-bottom: 0pt !important; padding: 0pt !important; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; line-height: 1.0 !important; mso-line-height-rule: exactly !important; mso-margin-top-alt: 0pt !important; mso-margin-bottom-alt: 0pt !important; text-align: ${alignVal};`);
+            p.setAttribute("style", `margin: 0pt !important; margin-top: 0pt !important; margin-bottom: 0pt !important; padding: 0pt !important; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; line-height: 1.25 !important; mso-line-height-rule: at-least !important; mso-margin-top-alt: 0pt !important; mso-margin-bottom-alt: 0pt !important; text-align: ${alignVal};`);
           });
         } else {
-          // Wrap text inside cell in a single <p> to force Word to apply paragraph settings without extra margins
           const originalHTML = cell.innerHTML.trim();
           if (originalHTML) {
-            cell.innerHTML = `<p style="margin: 0pt !important; margin-top: 0pt !important; margin-bottom: 0pt !important; padding: 0pt !important; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; line-height: 1.0 !important; mso-line-height-rule: exactly !important; mso-margin-top-alt: 0pt !important; mso-margin-bottom-alt: 0pt !important; text-align: ${alignVal};">${originalHTML}</p>`;
+            cell.innerHTML = `<p style="margin: 0pt !important; margin-top: 0pt !important; margin-bottom: 0pt !important; padding: 0pt !important; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; line-height: 1.25 !important; mso-line-height-rule: at-least !important; mso-margin-top-alt: 0pt !important; mso-margin-bottom-alt: 0pt !important; text-align: ${alignVal};">${originalHTML}</p>`;
           }
         }
 
@@ -874,7 +884,7 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
   }
   h1, h2, h3, h4 {
     font-family: 'Times New Roman', Times, serif;
-    color: #000000; /* Strict academic monochrome */
+    color: #1e3a8a; /* Professional navy blue header accent */
     margin-top: 18pt;
     margin-bottom: 6pt;
     mso-margin-top-alt: 18pt;
@@ -882,17 +892,17 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
     font-weight: bold;
     page-break-after: avoid;
   }
-  h1 { font-size: 16pt; text-align: center; margin-bottom: 12pt; mso-margin-bottom-alt: 12pt; }
-  h2 { font-size: 14pt; border-bottom: none; padding-bottom: 0; margin-top: 22pt; }
-  h3 { font-size: 12pt; margin-top: 14pt; }
-  h4 { font-size: 11pt; margin-top: 12pt; color: #333333; }
+  h1 { font-size: 18pt; text-align: center; color: #1e3a8a; margin-bottom: 12pt; mso-margin-bottom-alt: 12pt; }
+  h2 { font-size: 15pt; color: #1e3a8a; border-bottom: none; padding-bottom: 0; margin-top: 20pt; }
+  h3 { font-size: 13pt; color: #1e3a8a; margin-top: 14pt; }
+  h4 { font-size: 11.5pt; color: #1e293b; margin-top: 12pt; }
   table {
     width: 100% !important;
     max-width: 100% !important;
     table-layout: fixed !important;
     border-collapse: collapse !important;
-    margin-top: 6pt !important;
-    margin-bottom: 8pt !important;
+    margin-top: 8pt !important;
+    margin-bottom: 12pt !important;
     margin-left: auto;
     margin-right: auto;
     font-family: 'Times New Roman', Times, serif;
@@ -901,7 +911,6 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
     mso-table-lspace: 0pt;
     mso-table-rspace: 0pt;
     mso-table-anchor-vertical: paragraph;
-    mso-padding-alt: 0pt 0pt 0pt 0pt;
   }
   thead {
     display: table-header-group; /* repeat headers across pages */
@@ -913,8 +922,8 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
     mso-height-rule: auto !important;
   }
   th, td {
-    border: 0.5pt solid #7f7f7f; /* Thin clean boundaries */
-    padding: 1pt 2.5pt !important;
+    border: 0.5pt solid #cbd5e1;
+    padding: 4.5pt 6pt !important;
     text-align: left;
     vertical-align: middle;
     mso-vertical-align-alt: middle;
@@ -924,34 +933,37 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
     word-break: break-word;
     word-wrap: break-word;
     overflow-wrap: break-word;
-    line-height: 1.0 !important;
-    mso-line-height-rule: exactly !important;
-    mso-padding-top-alt: 10twips !important;
-    mso-padding-bottom-alt: 10twips !important;
-    mso-padding-left-alt: 20twips !important;
-    mso-padding-right-alt: 20twips !important;
+    line-height: 1.25 !important;
+    mso-line-height-rule: at-least !important;
+    mso-padding-top-alt: 85twips !important;
+    mso-padding-bottom-alt: 85twips !important;
+    mso-padding-left-alt: 120twips !important;
+    mso-padding-right-alt: 120twips !important;
     height: auto !important;
     min-height: 0pt !important;
   }
   table th p, table td p {
     margin: 0pt !important;
     padding: 0pt !important;
-    line-height: 1.0 !important;
-    mso-line-height-rule: exactly !important;
+    line-height: 1.25 !important;
+    mso-line-height-rule: at-least !important;
     mso-margin-top-alt: 0pt !important;
     mso-margin-bottom-alt: 0pt !important;
   }
   th {
     font-size: 10pt;
-    background-color: #f2f2f2;
+    background-color: #1e3a8a !important;
     font-weight: bold;
-    color: #000000;
+    color: #ffffff !important;
     text-align: center;
-    border-top: 1.5pt solid #000000;
-    border-bottom: 1.5pt solid #000000;
+    border: 1pt solid #1e3a8a !important;
+  }
+  th p {
+    color: #ffffff !important;
+    font-weight: bold !important;
   }
   tr:nth-child(even) td {
-    background-color: #fafafa; /* Elegant zebra striping for data rows */
+    background-color: #f8fafc; /* Subtle elegant zebra striping */
   }
   p.MsoFooter, li.MsoFooter, div.MsoFooter {
     margin: 0in;
@@ -983,16 +995,6 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
 </head>
 <body>
   <div class="Section1">
-    <!-- Draft Report Header Banner -->
-    <div style="background-color: #fffaf0; border: 1.5pt solid #dd6b20; padding: 10pt 15pt; text-align: center; margin-bottom: 20pt; border-radius: 4px; page-break-inside: avoid;">
-      <h2 style="color: #dd6b20; margin: 0 0 5px 0 !important; font-size: 14pt; font-family: 'Times New Roman', Times, serif; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; border-bottom: none; padding-bottom: 0; text-align: center;">
-        ⚠️ TECHNICAL PREVIEW & VERIFICATION COPY
-      </h2>
-      <p style="margin: 0 !important; font-size: 10pt; font-family: 'Times New Roman', Times, serif; color: #7b341e; line-height: 1.4; text-align: center;">
-        This Groundwater Quality Report has been compiled in high-resolution technical format. All values, maps, and illustrations are typeset for scientific validation.
-      </p>
-    </div>
-
     ${finalHtml}
 
     <!-- Formal Footer with Dynamic Page Numbering in Word -->

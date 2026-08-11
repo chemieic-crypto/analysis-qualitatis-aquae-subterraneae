@@ -417,8 +417,8 @@ function cropCanvasToContent(canvas: HTMLCanvasElement): HTMLCanvasElement {
     return canvas;
   }
 
-  // Tight crop margin around content, slightly increased to account for step sampling
-  const padding = 12;
+  // Tight crop margin around content, generous padding to avoid clipping text labels
+  const padding = 50;
   minX = Math.max(0, minX - padding);
   minY = Math.max(0, minY - padding);
   maxX = Math.min(w - 1, maxX + padding);
@@ -436,6 +436,10 @@ function cropCanvasToContent(canvas: HTMLCanvasElement): HTMLCanvasElement {
   croppedCanvas.height = croppedH;
   const croppedCtx = croppedCanvas.getContext("2d");
   if (!croppedCtx) return canvas;
+
+  // Fill solid white background for high quality DOCX & PDF exports
+  croppedCtx.fillStyle = "#ffffff";
+  croppedCtx.fillRect(0, 0, croppedW, croppedH);
 
   croppedCtx.drawImage(
     canvas,
@@ -457,7 +461,7 @@ function cropCanvasToContent(canvas: HTMLCanvasElement): HTMLCanvasElement {
  */
 function convertSvgToCroppedPng(base64Svg: string, width: number, height: number): Promise<string> {
   return new Promise((resolve) => {
-    const scale = 6.0; // High resolution 600 DPI scaling for crystal clear vector curves
+    const scale = 4.0; // Ultra high resolution crisp 600 DPI scaling for publication quality vector curves
     const targetW = Math.round(width * scale);
     const targetH = Math.round(height * scale);
 
@@ -496,7 +500,8 @@ function convertSvgToCroppedPng(base64Svg: string, width: number, height: number
           resolve(base64Svg);
           return;
         }
-        ctx.clearRect(0, 0, targetW, targetH);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, targetW, targetH);
         
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
@@ -546,8 +551,8 @@ export async function generateOfflineChartBase64(
           animation: false,
           width: width,   // Render high resolution native vectors
           height: height, // Render high resolution native vectors
-          backgroundColor: options.chart?.backgroundColor || "transparent",
-          plotBackgroundColor: options.chart?.plotBackgroundColor || "transparent",
+          backgroundColor: options.chart?.backgroundColor || "#ffffff",
+          plotBackgroundColor: options.chart?.plotBackgroundColor || "#ffffff",
           style: {
             fontFamily: "'Times New Roman', Times, serif",
             ...(options.chart?.style || {})
@@ -736,36 +741,36 @@ export function buildColumnsChartOptions(title: string, categories: string[], da
 /**
  * Builds standard 3D Pie / Donut chart options.
  */
-export function buildDonutChartOptions(title: string, dataPoints: any[], size = "82%", isDarkTheme = false): Highcharts.Options {
-  const finalSize = size; // Increased donut size by 50%
-  const textColor = isDarkTheme ? "#f8fafc" : "#1e293b";
-  const titleFontSize = "24pt"; // Increased by 100% (doubled from 12pt to 24pt)
-  const labelFontSize = "22pt"; // Increased by 100% (doubled from 11pt to 22pt)
+export function buildDonutChartOptions(title: string, dataPoints: any[], size = "76%", isDarkTheme = false): Highcharts.Options {
+  const finalSize = size;
+  const textColor = isDarkTheme ? "#f8fafc" : "#0f172a";
+  const titleFontSize = "22pt";
+  const labelFontSize = "18pt";
   
   return {
     chart: {
       type: "pie",
       options3d: {
         enabled: true,
-        alpha: 45,  // Balanced dramatic perspective tilt to match attached 3D donut image
+        alpha: 28,  // Smooth 3D tilt perspective
         beta: 0,
-        depth: 60,  // Deeper 3D extrusion height
+        depth: 45,  // Rich 3D glossy thickness
       },
-      backgroundColor: "transparent",
-      plotBackgroundColor: "transparent",
-      spacingTop: 15,
-      spacingBottom: 15,
-      spacingLeft: 10,
-      spacingRight: 10,
+      backgroundColor: "#ffffff",
+      plotBackgroundColor: "#ffffff",
+      spacingTop: 25,
+      spacingBottom: 25,
+      spacingLeft: 20,
+      spacingRight: 20,
       style: {
         fontFamily: "'Times New Roman', Times, serif"
       }
     },
     title: {
       text: title,
-      margin: 15,
+      margin: 20,
       style: { 
-        fontSize: titleFontSize, // 24pt
+        fontSize: titleFontSize,
         fontWeight: "bold", 
         color: textColor, 
         fontFamily: "'Times New Roman', Times, serif" 
@@ -773,32 +778,35 @@ export function buildDonutChartOptions(title: string, dataPoints: any[], size = 
     },
     plotOptions: {
       pie: {
-        innerSize: "46%", // Decreased donut hole size by 20%
-        depth: 60,
-        size: finalSize, // 55% size (30% reduction)
-        borderWidth: 2,   // Crisp boundaries dividing 3D slices beautifully
-        borderColor: isDarkTheme ? "#1e293b" : "#ffffff",
+        innerSize: "48%",
+        depth: 45,
+        size: finalSize,
+        borderWidth: 2,
+        borderColor: "#ffffff",
         allowPointSelect: false,
         cursor: "pointer",
-        slicedOffset: 25,
+        slicedOffset: 20,
         dataLabels: {
           enabled: true,
           useHTML: false,
           formatter: function (this: any) {
-            const color = this.point?.color || this.color || (isDarkTheme ? "#f8fafc" : "#0f172a");
-            return `<span style="color: ${color}; fill: ${color}; font-weight: bold; font-family: 'Times New Roman', Times, serif; font-size: 22pt;">${this.point.name}<br/>${this.point.percentage.toFixed(1)}% (${this.point.y})</span>`;
+            const name = this.point.name || "";
+            const pct = this.point.percentage ? this.point.percentage.toFixed(1) : "0.0";
+            const count = this.point.y !== undefined ? this.point.y : 0;
+            return `<b>${name}</b><br/><b>${pct}%</b> (${count} samples)`;
           },
-          distance: 25,
+          distance: 30,
           crop: false,
           overflow: "allow",
-          connectorWidth: 3,
-          connectorPadding: 8,
+          connectorWidth: 2.5,
+          connectorColor: "#334155",
+          connectorPadding: 6,
           style: { 
             fontFamily: "'Times New Roman', Times, serif",
-            fontSize: labelFontSize, // 22pt
+            fontSize: labelFontSize,
             fontWeight: "bold",
-            fontStyle: "italic",
-            textOutline: "none", 
+            color: isDarkTheme ? "#f8fafc" : "#0f172a",
+            textOutline: "3px #ffffff", // White halo stroke around text for HD publication readability
           },
         },
         showInLegend: false,
@@ -822,6 +830,6 @@ export function buildDonutChartOptions(title: string, dataPoints: any[], size = 
  * High quality wrapper for quick generating parameter donut chart as base64 string
  */
 export async function generateParamDonutChart(title: string, dataPoints: any[], isDarkTheme = false): Promise<string> {
-  const options = buildDonutChartOptions(title, dataPoints, "55%", isDarkTheme);
-  return generateOfflineChartBase64(options, 1800, 1000); // Render at HD resolution (1800x1000) for crystal-clear exports
+  const options = buildDonutChartOptions(title, dataPoints, "76%", isDarkTheme);
+  return generateOfflineChartBase64(options, 1600, 900); // Render at 1600x900 HD resolution for crystal-clear exports
 }

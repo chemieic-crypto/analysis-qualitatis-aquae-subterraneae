@@ -158,12 +158,12 @@ export const PiperDiagram = React.memo(({
     e.stopPropagation();
     let clientX = 0;
     let clientY = 0;
-    if ("touches" in e && (e as TouchEvent).touches && (e as TouchEvent).touches.length > 0) {
-      clientX = (e as TouchEvent).touches[0].clientX;
-      clientY = (e as TouchEvent).touches[0].clientY;
+    if ("touches" in e && (e as React.TouchEvent).touches && (e as React.TouchEvent).touches.length > 0) {
+      clientX = (e as React.TouchEvent).touches[0].clientX;
+      clientY = (e as React.TouchEvent).touches[0].clientY;
     } else {
-      clientX = (e as MouseEvent).clientX || 0;
-      clientY = (e as MouseEvent).clientY || 0;
+      clientX = (e as React.MouseEvent).clientX || 0;
+      clientY = (e as React.MouseEvent).clientY || 0;
     }
 
     cropDraggingRef.current = {
@@ -332,12 +332,17 @@ export const PiperDiagram = React.memo(({
 
       if (ca + mg + nak === 0 || cl + so4 + hco3 === 0) return null;
 
-      const xc = nak + 0.5 * mg;
-      const yc = (mg * SQRT3) / 2;
+      // Cation triangle: Ca²⁺ at lower-left (0,0), Mg²⁺ at lower-right (100,0), Na⁺+K⁺ at top (50, 50√3)
+      const xc = mg + 0.5 * nak;
+      const yc = (nak * SQRT3) / 2;
       const xa = 120 + cl + 0.5 * so4;
       const ya = (so4 * SQRT3) / 2;
-      const xd = 0.5 * (xa + xc) + (ya - yc) / (2 * SQRT3);
-      const yd = SQRT3 * (xd - xc) + yc;
+
+      // Verified Central Diamond Coordinate Transformation:
+      const pCat = ca + mg; // % (Ca²⁺ + Mg²⁺)
+      const pAn = so4 + cl; // % (SO₄²⁻ + Cl⁻)
+      const xd = 110 - 0.5 * pCat + 0.5 * pAn;
+      const yd = 10 * SQRT3 + 0.5 * SQRT3 * pCat + 0.5 * SQRT3 * pAn;
 
       const key = getPointKey(d);
       const color = pointColors[key] || "#3b82f6";
@@ -353,9 +358,15 @@ export const PiperDiagram = React.memo(({
 
       return (
         <g key={i} className="cursor-pointer">
-          <circle cx={tx(xc)} cy={ty(yc)} r={radius} fill={fillValue} fillOpacity="0.95" stroke={is3d ? "rgba(255,255,255,0.4)" : "none"} strokeWidth={is3d ? 0.2 : 0} title={tip} />
-          <circle cx={tx(xa)} cy={ty(ya)} r={radius} fill={fillValue} fillOpacity="0.95" stroke={is3d ? "rgba(255,255,255,0.4)" : "none"} strokeWidth={is3d ? 0.2 : 0} title={tip} />
-          <circle cx={tx(xd)} cy={ty(yd)} r={radius} fill={fillValue} fillOpacity="0.95" stroke={is3d ? "rgba(255,255,255,0.4)" : "none"} strokeWidth={is3d ? 0.2 : 0} title={tip} />
+          <circle cx={tx(xc)} cy={ty(yc)} r={radius} fill={fillValue} fillOpacity="0.95" stroke={is3d ? "rgba(255,255,255,0.4)" : "none"} strokeWidth={is3d ? 0.2 : 0}>
+            <title>{tip}</title>
+          </circle>
+          <circle cx={tx(xa)} cy={ty(ya)} r={radius} fill={fillValue} fillOpacity="0.95" stroke={is3d ? "rgba(255,255,255,0.4)" : "none"} strokeWidth={is3d ? 0.2 : 0}>
+            <title>{tip}</title>
+          </circle>
+          <circle cx={tx(xd)} cy={ty(yd)} r={radius} fill={fillValue} fillOpacity="0.95" stroke={is3d ? "rgba(255,255,255,0.4)" : "none"} strokeWidth={is3d ? 0.2 : 0}>
+            <title>{tip}</title>
+          </circle>
         </g>
       );
     });

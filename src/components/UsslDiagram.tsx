@@ -122,12 +122,12 @@ export const UsslDiagram = React.memo(({
     e.stopPropagation();
     let clientX = 0;
     let clientY = 0;
-    if ("touches" in e && (e as TouchEvent).touches && (e as TouchEvent).touches.length > 0) {
-      clientX = (e as TouchEvent).touches[0].clientX;
-      clientY = (e as TouchEvent).touches[0].clientY;
+    if ("touches" in e && (e as React.TouchEvent).touches && (e as React.TouchEvent).touches.length > 0) {
+      clientX = (e as React.TouchEvent).touches[0].clientX;
+      clientY = (e as React.TouchEvent).touches[0].clientY;
     } else {
-      clientX = (e as MouseEvent).clientX || 0;
-      clientY = (e as MouseEvent).clientY || 0;
+      clientX = (e as React.MouseEvent).clientX || 0;
+      clientY = (e as React.MouseEvent).clientY || 0;
     }
 
     cropDraggingRef.current = {
@@ -289,8 +289,9 @@ export const UsslDiagram = React.memo(({
           stroke={is3d ? "rgba(255,255,255,0.4)" : "none"}
           strokeWidth={is3d ? 0.2 : 0}
           className="transition-all duration-300 hover:opacity-80 cursor-pointer"
-          title={`${d._calc.locName}\nEC: ${d._calc.ecVal}\nSAR: ${d._calc.sar.toFixed(2)}` + (stateStr ? `\nState: ${stateStr}` : "")}
-        />
+        >
+          <title>{`${d._calc.locName}\nEC: ${d._calc.ecVal}\nSAR: ${d._calc.sar.toFixed(2)}` + (stateStr ? `\nState: ${stateStr}` : "")}</title>
+        </circle>
       );
     });
   }, [displayData, pointColors, pointSizes, getPointKey, stateHeader, is3d, bubbleSizeMultiplier]);

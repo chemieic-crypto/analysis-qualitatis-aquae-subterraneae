@@ -6243,12 +6243,17 @@ Although natural geological sources account for the majority of arsenic contamin
 
           if (ca + mg + nak === 0 || cl + so4 + hco3 === 0) return;
 
-          const xc = nak + 0.5 * mg;
-          const yc = (mg * SQRT3) / 2;
+          // Cation triangle: Ca²⁺ at lower-left (0,0), Mg²⁺ at lower-right (100,0), Na⁺+K⁺ at top (50, 50√3)
+          const xc = mg + 0.5 * nak;
+          const yc = (nak * SQRT3) / 2;
           const xa = 120 + cl + 0.5 * so4;
           const ya = (so4 * SQRT3) / 2;
-          const xd = 0.5 * (xa + xc) + (ya - yc) / (2 * SQRT3);
-          const yd = SQRT3 * (xd - xc) + yc;
+
+          // Verified Central Diamond Coordinate Transformation:
+          const pCat = ca + mg; // % (Ca²⁺ + Mg²⁺)
+          const pAn = so4 + cl; // % (SO₄²⁻ + Cl⁻)
+          const xd = 110 - 0.5 * pCat + 0.5 * pAn;
+          const yd = 10 * SQRT3 + 0.5 * SQRT3 * pCat + 0.5 * SQRT3 * pAn;
 
           const color = groupColorMap[d.groupVal || "Other"] || "#94a3b8";
 

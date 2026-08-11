@@ -75,12 +75,12 @@ export const DonutChart = React.memo(({
     e.stopPropagation();
     let clientX = 0;
     let clientY = 0;
-    if ("touches" in e && (e as TouchEvent).touches && (e as TouchEvent).touches.length > 0) {
-      clientX = (e as TouchEvent).touches[0].clientX;
-      clientY = (e as TouchEvent).touches[0].clientY;
+    if ("touches" in e && (e as React.TouchEvent).touches && (e as React.TouchEvent).touches.length > 0) {
+      clientX = (e as React.TouchEvent).touches[0].clientX;
+      clientY = (e as React.TouchEvent).touches[0].clientY;
     } else {
-      clientX = (e as MouseEvent).clientX || 0;
-      clientY = (e as MouseEvent).clientY || 0;
+      clientX = (e as React.MouseEvent).clientX || 0;
+      clientY = (e as React.MouseEvent).clientY || 0;
     }
 
     cropDraggingRef.current = {

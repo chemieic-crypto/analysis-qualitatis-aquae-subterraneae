@@ -21,7 +21,7 @@ import FortnightlyAlertsView from "./components/FortnightlyAlertsView";
 import LimitsManagerView from "./components/LimitsManagerView";
 import AdvancedAnalysisView from "./components/AdvancedAnalysisView";
 import CalculatoriusView from "./components/CalculatoriusView";
-import GisChoroplethMap from "./components/GisChoroplethMap";
+import KpiView from "./components/KpiView";
 import { generateOfflineChartBase64 } from "./utils/chartHelpers";
 import { isStateAll, isDistrictAll, norm } from "./utils/shapefileFilter";
 
@@ -50,7 +50,8 @@ import {
   Clock,
   Calendar,
   Map,
-  Calculator
+  Calculator,
+  Award
 } from "lucide-react";
 
 import Highcharts from "highcharts";
@@ -105,8 +106,8 @@ if (typeof Highcharts === "object") {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<
-    "single" | "master" | "multi" | "bar" | "aisummary" | "bulletin" | "about" | "guidelines" | "ussl" | "ranking" | "monsoon" | "gis" | "choropleth" | "hydrochemistry" | "combination" | "pca" | "fortnightly" | "limits" | "advancedAnalysis" | "calculatorius"
-  >("single");
+    "single" | "master" | "multi" | "bar" | "aisummary" | "bulletin" | "about" | "guidelines" | "ussl" | "ranking" | "monsoon" | "gis" | "hydrochemistry" | "combination" | "pca" | "fortnightly" | "limits" | "advancedAnalysis" | "calculatorius" | "kpi"
+  >("kpi");
 
   // State to trigger dynamic recalculation and re-rendering of all components on parameter limit changes
   const [limitsVersion, setLimitsVersion] = useState(0);
@@ -180,7 +181,7 @@ export default function App() {
   // Shared state to transfer maps directly to Bulletin Report
   const [sharedBulletinMaps, setSharedBulletinMaps] = useState<Record<string, string>>({});
 
-  // Shared Shapefile Layers State
+  // Shared Shapefile Layers State (populated when user uploads shapefiles)
   const [sharedLayers, setSharedLayers] = useState<ShapefileLayer[]>([]);
 
   // Shared Choropleth Classes config (limits, colors, and labels)
@@ -191,71 +192,6 @@ export default function App() {
     { limit: 25, color: "#ef4444", label: "15% - 25%" },
     { limit: 100, color: "#a855f7", label: ">25%" }
   ]);
-
-  useEffect(() => {
-    // Attempt to automatically pre-load default shapefiles (State and Districts) from root
-    const loadDefaultShapefiles = async () => {
-      const filesToTry = [
-        { name: "State Layer", url: "./State.zip" },
-        { name: "Districts Layer", url: "./Districts.zip" },
-        { name: "District Layer", url: "./District.zip" }
-      ];
-
-      for (const item of filesToTry) {
-        try {
-          let response = await fetch(item.url);
-          if (!response.ok) {
-            response = await fetch(item.url.substring(2));
-          }
-          if (!response.ok) continue;
-
-          const ct = response.headers.get("content-type") || "";
-          if (ct.includes("text/html") || ct.includes("application/xhtml+xml")) {
-            continue;
-          }
-
-          const buffer = await response.arrayBuffer();
-          const geojson = (await shp(buffer)) as any;
-          if (!geojson) continue;
-
-          let labelKey = "";
-          const sampleFeatures = geojson.type === "FeatureCollection" ? geojson.features : (Array.isArray(geojson) ? geojson[0]?.features : null);
-          if (sampleFeatures && sampleFeatures.length > 0) {
-            const props = sampleFeatures[0].properties || {};
-            const keys = Object.keys(props);
-            labelKey = keys.find(k => k.toLowerCase().includes("state") || k.toLowerCase().includes("dist") || k.toLowerCase() === "dt_name" || k.toLowerCase() === "dist_name" || k.toLowerCase() === "district_n") || keys[0] || "";
-          }
-
-          const id = `${item.name.toLowerCase().replace(/\s+/g, "_")}_${Date.now()}`;
-          const newLayer: ShapefileLayer = {
-            id,
-            name: item.name,
-            geoJson: geojson,
-            visible: true,
-            strokeColor: item.name.includes("State") ? "#dc2626" : "#2563eb",
-            strokeWidth: item.name.includes("State") ? 2.5 : 1.5,
-            fillColor: item.name.includes("State") ? "#fca5a5" : "#93c5fd",
-            fillOpacity: 10,
-            showLabels: true,
-            labelKey,
-            labelColor: "#1e293b",
-            labelSize: 10,
-            showInLegend: true,
-            showStroke: true,
-          };
-
-          setSharedLayers(prev => {
-            if (prev.some(l => l.name === item.name)) return prev;
-            return [...prev, newLayer];
-          });
-        } catch (err) {
-          console.warn("Could not pre-load " + item.name + ":", err);
-        }
-      }
-    };
-
-    loadDefaultShapefiles();
-  }, []);
 
   // Mapping Modal state overlay
   const [mappingModalOpen, setMappingModalOpen] = useState(false);
@@ -1383,6 +1319,7 @@ export default function App() {
               onChange={(e) => setActiveTab(e.target.value as any)}
               className="w-full glossy-input rounded-2xl p-4 font-black text-slate-700 bg-white cursor-pointer select-none text-sm border-2 border-slate-200 outline-none focus:border-indigo-500 shadow-md transition-all"
             >
+              <option value="kpi">🏆 KPI Analysis</option>
               <option value="single">📊 Detailed Analysis</option>
               <option value="advancedAnalysis">🧪 Advanced Data Analysis</option>
               <option value="ranking">📈 Ranking Stats</option>
@@ -1392,7 +1329,6 @@ export default function App() {
               <option value="hydrochemistry">📋 Hydrochemistry Sheet</option>
               <option value="calculatorius">🧮 Calculatorius</option>
               <option value="gis">🌍 Geospatial Map Module</option>
-              <option value="choropleth">✨ GIS Choropleth Map</option>
               <option value="master">📋 Master Summary Matrix</option>
               <option value="monsoon">🌧️ Dynamic Impact of Monsoon</option>
               <option value="bar">📊 Comparative Exceedance (Bar)</option>
@@ -1433,6 +1369,7 @@ export default function App() {
         {/* Desktop Tab Controls Bar */}
         <div className="hidden md:flex flex-wrap gap-x-3.5 gap-y-3 mb-8 select-none p-4 bg-white rounded-3xl border border-slate-200 shadow-sm">
           {[
+            { id: "kpi", label: "KPI Analysis", icon: Award, baseColor: "amber" },
             { id: "single", label: "Detailed Analysis", icon: LayoutDashboard, baseColor: "blue" },
             { id: "advancedAnalysis", label: "Advanced Data Analysis", icon: Activity, baseColor: "indigo" },
             { id: "ranking", label: "Ranking Stats", icon: TrendingUp, baseColor: "violet" },
@@ -1442,7 +1379,6 @@ export default function App() {
             { id: "hydrochemistry", label: "Hydrochemistry Sheet", icon: TableProperties, baseColor: "emerald" },
             { id: "calculatorius", label: "Calculatorius", icon: Calculator, baseColor: "blue" },
             { id: "gis", label: "Geospatial Map Module", icon: Globe, baseColor: "teal" },
-            { id: "choropleth", label: "GIS Choropleth Map", icon: Map, baseColor: "indigo" },
             { id: "master", label: "Master Summary", icon: Table2, baseColor: "amber" },
             { id: "monsoon", label: "Dynamic Monsoon Impact", icon: Database, baseColor: "emerald" },
             { id: "bar", label: "Comparative Exceedance (Bar)", icon: BarChart3, baseColor: "orange" },
@@ -1775,119 +1711,6 @@ export default function App() {
             />
           </div>
 
-          <div className={activeTab === "choropleth" ? "block" : "hidden"}>
-            {(() => {
-              const activeConfigKey = activeParam === "SAR" ? "SAR" : activeParam === "RSC" ? "RSC" : (headerMap[activeParam] || "");
-              const virtualConfigs: Record<string, { b1: number; b2: number; unit: string; name: string }> = {
-                SAR: { b1: 10, b2: 18, unit: "Ratio", name: "Sodium Adsorption Ratio (SAR)" },
-                RSC: { b1: 1.25, b2: 2.5, unit: "meq/L", name: "Residual Sodium Carbonate (RSC)" },
-                SSP: { b1: 40, b2: 60, unit: "%", name: "Soluble Sodium Percentage (SSP)" },
-                "Na%": { b1: 40, b2: 60, unit: "%", name: "Sodium Percentage (%Na)" },
-                PI: { b1: 25, b2: 75, unit: "%", name: "Permeability Index (PI)" },
-                KR: { b1: 1.0, b2: 2.0, unit: "Ratio", name: "Kelly's Ratio (KR)" },
-                MH: { b1: 50, b2: 50, unit: "%", name: "Magnesium Hazard (MH)" }
-              };
-              const activeConfig = PARAM_CONFIG[activeConfigKey] || PARAM_CONFIG[activeParam] || virtualConfigs[activeParam] || { b1: 0, b2: 0, unit: "units", perm: 0 };
-              
-              return (
-                <div className="space-y-6 animate-fade-in">
-                  <div className="bg-white rounded-3xl border border-slate-100 shadow-md p-6">
-                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                      <div>
-                        <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
-                          <Map className="w-5 h-5 text-indigo-600" />
-                          Groundwater Quality Choropleth Map
-                        </h3>
-                        <p className="text-xs text-slate-500 mt-1">
-                          Dynamic geospatial visualization of groundwater quality parameter compliance and permissible limit exceedances.
-                        </p>
-                      </div>
-                      
-                      {/* Parameter selector */}
-                      <div className="flex items-center gap-2 bg-indigo-50/50 px-3.5 py-2 rounded-xl border border-indigo-100/50 w-full md:w-auto shrink-0">
-                        <span className="text-[10px] font-black uppercase text-indigo-950 tracking-wider">
-                          Active Parameter:
-                        </span>
-                        <select
-                          value={activeParam}
-                          onChange={(e) => setActiveParam(e.target.value)}
-                          className="bg-white border border-indigo-200 rounded-lg p-1.5 font-bold text-xs text-indigo-800 cursor-pointer min-w-[120px] shadow-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                        >
-                          {(() => {
-                            const baseParams = headers.params || ["pH", "TDS", "TH", "EC", "Cl", "NO3", "F"];
-                            const cleanBase = baseParams.filter(p => !["Na", "K", "HCO3", "CO3"].includes(p));
-                            
-                            const extraMap = [
-                              { value: "Alkalinity", label: "Total Alkalinity (Alkalinity)" },
-                              { value: "SAR", label: "Sodium Adsorption Ratio (SAR)" },
-                              { value: "RSC", label: "Residual Sodium Carbonate (RSC)" },
-                              { value: "SSP", label: "Soluble Sodium Percentage (SSP)" },
-                              { value: "Na%", label: "Sodium Percentage (%Na)" },
-                              { value: "PI", label: "Permeability Index (PI)" },
-                              { value: "KR", label: "Kelly's Ratio (KR)" },
-                              { value: "MH", label: "Magnesium Hazard (MH)" },
-                              { value: "TDS", label: "Total Dissolved Solids (TDS)" }
-                            ];
-
-                            const renderedValues = new Set<string>();
-                            const options: React.ReactNode[] = [];
-
-                            cleanBase.forEach(p => {
-                              const match = extraMap.find(m => m.value.toLowerCase() === p.toLowerCase() || (headerMap[p] && m.value.toLowerCase() === headerMap[p].toLowerCase()));
-                              const val = match ? match.value : p;
-                              const label = match ? match.label : p;
-                              if (!renderedValues.has(val)) {
-                                renderedValues.add(val);
-                                options.push(<option key={val} value={val}>{label}</option>);
-                              }
-                            });
-
-                            extraMap.forEach(m => {
-                              if (!renderedValues.has(m.value)) {
-                                renderedValues.add(m.value);
-                                options.push(<option key={m.value} value={m.value}>{m.label}</option>);
-                              }
-                            });
-
-                            return options;
-                          })()}
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-
-                  {rawData.length > 0 ? (
-                    <GisChoroplethMap
-                      rawData={yearFilteredData}
-                      headers={headers}
-                      headerMap={headerMap}
-                      activeParam={activeParam}
-                      activeConfig={activeConfig}
-                      reportingLevel={reportingLevel}
-                      selectedState={selectedState}
-                      selectedDistrict={selectedDistrict}
-                      sendToBulletin={(title, base64) => {
-                        setSharedBulletinMaps((prev) => ({
-                          ...prev,
-                          [title]: base64,
-                        }));
-                      }}
-                      layers={sharedLayers}
-                      setLayers={setSharedLayers}
-                      choroplethClasses={choroplethClasses}
-                      setChoroplethClasses={setChoroplethClasses}
-                      isVisible={activeTab === "choropleth"}
-                    />
-                  ) : (
-                    <div className="bg-white rounded-3xl border border-slate-100 shadow-md p-12 text-center text-slate-400 font-bold uppercase tracking-wider">
-                      No data uploaded yet. Please upload a spreadsheet to view the Choropleth Map.
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
-
           {activeTab === "limits" && (
             <LimitsManagerView
               headers={headers}
@@ -1916,6 +1739,25 @@ export default function App() {
               isVisible={activeTab === "advancedAnalysis"}
             />
           </div>
+
+          {activeTab === "kpi" && (
+            <KpiView
+              rawData={yearSeasonFilteredData}
+              setRawData={setRawData}
+              headers={headers}
+              headerMap={headerMap}
+              selectedState={selectedState}
+              selectedDistrict={selectedDistrict}
+              selectedYear={selectedYear}
+              selectedSeason={selectedSeason}
+              reportingLevel={reportingLevel}
+              sharedLayers={sharedLayers}
+              setSharedLayers={setSharedLayers}
+              choroplethClasses={choroplethClasses}
+              setChoroplethClasses={setChoroplethClasses}
+              showToast={showToast}
+            />
+          )}
 
         </div>
 
