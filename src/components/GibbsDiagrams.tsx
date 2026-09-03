@@ -83,15 +83,16 @@ export const GibbsPlot = React.memo(({
   }, [data, isDownsampled]);
 
   const [labelsConfig, setLabelsConfig] = useState({
-    title: { text: defaultTitle, size: 14, color: "#64748b", isBold: true, isItalic: false },
+    title: { text: defaultTitle, size: 14, color: "#64748b", isBold: true, isItalic: false, fontFamily: "sans-serif" },
     xAxis: {
       text: type === "cation" ? "Na⁺ / (Na⁺ + Ca²⁺)" : "Cl⁻ / (Cl⁻ + HCO₃⁻)",
       size: 11,
       color: "#64748b",
       isBold: true,
       isItalic: false,
+      fontFamily: "sans-serif",
     },
-    yAxis: { text: "TDS (mg/L)", size: 12, color: "#64748b", isBold: true, isItalic: false },
+    yAxis: { text: "TDS (mg/L)", size: 12, color: "#64748b", isBold: true, isItalic: false, fontFamily: "sans-serif" },
   });
 
   React.useEffect(() => {
@@ -139,12 +140,12 @@ export const GibbsPlot = React.memo(({
     e.stopPropagation();
     let clientX = 0;
     let clientY = 0;
-    if ("touches" in e && (e as TouchEvent).touches && (e as TouchEvent).touches.length > 0) {
-      clientX = (e as TouchEvent).touches[0].clientX;
-      clientY = (e as TouchEvent).touches[0].clientY;
-    } else {
-      clientX = (e as MouseEvent).clientX || 0;
-      clientY = (e as MouseEvent).clientY || 0;
+    if ("touches" in e && e.touches && e.touches.length > 0) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else if ("clientX" in e) {
+      clientX = (e as React.MouseEvent).clientX || 0;
+      clientY = (e as React.MouseEvent).clientY || 0;
     }
 
     cropDraggingRef.current = {
@@ -316,8 +317,9 @@ export const GibbsPlot = React.memo(({
           stroke={is3d ? "rgba(255,255,255,0.4)" : "none"}
           strokeWidth={is3d ? 0.2 : 0}
           className="cursor-pointer hover:opacity-80 transition-all duration-300"
-          title={`${d._calc.locName}\nTDS: ${yVal.toFixed(1)}\nRatio: ${xVal.toFixed(2)}` + (stateStr ? `\nState: ${stateStr}` : "")}
-        />
+        >
+          <title>{`${d._calc.locName}\nTDS: ${yVal.toFixed(1)}\nRatio: ${xVal.toFixed(2)}` + (stateStr ? `\nState: ${stateStr}` : "")}</title>
+        </circle>
       );
     });
   }, [displayData, pointColors, pointSizes, getPointKey, stateHeader, type, is3d, bubbleSizeMultiplier]);
@@ -557,6 +559,18 @@ export const GibbsPlot = React.memo(({
           {renderedPoints}
         </svg>
         </div>
+
+        {/* Dynamic Point Color Legend */}
+        {pointColors && Object.keys(pointColors).length > 0 && (
+          <div className="flex flex-wrap items-center justify-center gap-2 mt-2 pt-3 border-t border-slate-200/80 max-w-[650px] w-full px-4">
+            {Object.entries(pointColors).map(([key, color]) => (
+              <div key={key} className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 text-[10px] font-bold shadow-xs">
+                <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs" style={{ backgroundColor: color }} />
+                <span className="truncate max-w-[150px]">{key}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Full Screen Modal View */}

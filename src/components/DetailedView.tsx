@@ -3,9 +3,9 @@ import Highcharts from "highcharts";
 // @ts-ignore
 import HighchartsMore from "highcharts/highcharts-more";
 import { DataHeaders, GroupedStatRow, ShapefileLayer } from "../types";
-import { PARAM_CONFIG } from "../data/config";
-import { getStats } from "../utils/math";
-import { buildDonutChartOptions, generateOfflineChartBase64 } from "../utils/chartHelpers";
+import { PARAM_CONFIG, hasBisLimit } from "../data/config";
+import { getStats, safeMin, safeMax } from "../utils/math";
+import { buildDonutChartOptions, generateOfflineChartBase64, initHighchartsModule } from "../utils/chartHelpers";
 import { Settings2, Image, ChevronDown, Check, Circle, Maximize2, Send, X, BarChart3, SlidersHorizontal, Activity, Table, PieChart, TrendingUp } from "lucide-react";
 
 
@@ -27,13 +27,7 @@ const hexToRgba = (hex: string, alpha: number) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
-try {
-  if (typeof Highcharts === "object") {
-    (HighchartsMore as any)(Highcharts);
-  }
-} catch (err) {
-  console.warn("HighchartsMore error in DetailedView:", err);
-}
+initHighchartsModule(HighchartsMore, Highcharts);
 
 function toTableHeaderUnit(unit: string): string {
   return unit;
@@ -43,6 +37,14 @@ function getTableHeaderLabels(configKey: string, config: any) {
   const unit = config?.unit || "";
   const unitStr = unit ? ` ${toTableHeaderUnit(unit)}` : "";
   const isSingle = config ? (config.b1 === config.b2 && configKey !== "pH") : false;
+
+  if (configKey === "RSC") {
+    return {
+      acc: "<1.25 meq/L",
+      perm: "1.25 to 2.5 meq/L",
+      fail: "Above Permissible Limit (>2.5 meq/L)"
+    };
+  }
 
   if (configKey === "pH") {
     return {
@@ -70,6 +72,9 @@ function getTableHeaderLabels(configKey: string, config: any) {
 function getExceedanceLimitStr(configKey: string, config: any): string {
   const unit = config?.unit || "";
   const unitStr = unit ? ` ${toTableHeaderUnit(unit)}` : "";
+  if (configKey === "RSC") {
+    return "(>2.5 meq/L)";
+  }
   if (configKey === "pH") {
     return "(<6.5 or >8.5)";
   }
@@ -317,7 +322,7 @@ export default function DetailedView({
     if (!headers || !headers.params) return [];
     const base = headers.params.filter(p => {
       const paramId = headerMap[p] || p;
-      return !["Na", "K", "HCO3", "CO3"].includes(paramId);
+      return hasBisLimit(paramId) && hasBisLimit(p);
     });
 
     const extras = ["Alkalinity", "SAR", "RSC", "SSP", "Na%", "PI", "KR", "MH", "TDS"];
@@ -671,8 +676,8 @@ export default function DetailedView({
       if (vals.length === 0) return;
       
       const categoryColor = getCategoryColor(group.name, i);
-      const min = Math.min(...vals);
-      const max = Math.max(...vals);
+      const min = safeMin(vals);
+      const max = safeMax(vals);
       const avg = vals.reduce((sum, v) => sum + v, 0) / vals.length;
       
       const std = Math.sqrt(vals.reduce((sum, v) => sum + Math.pow(v - avg, 2), 0) / vals.length) || 1.0;
@@ -697,7 +702,7 @@ export default function DetailedView({
         densityPoints.push({ y: yVal, density });
       }
       
-      const maxD = Math.max(...densityPoints.map(p => p.density)) || 1.0;
+      const maxD = safeMax(densityPoints.map(p => p.density)) || 1.0;
       const scale = 0.35 / maxD;
       
       const polygonData: [number, number][] = [];
@@ -964,10 +969,14 @@ export default function DetailedView({
 
     allVals.forEach((val) => {
       if (activeParam === "SAR") {
-        if (val <= 10) sSarS1++;
+        if (val < 10) sSarS1++;
         else if (val <= 18) sSarS2++;
         else if (val <= 26) sSarS3++;
         else sSarS4++;
+      } else if (activeParam === "RSC" || activeConfigKey === "RSC") {
+        if (val < 1.25) sAcc++;
+        else if (val <= 2.5) sPerm++;
+        else sFail++;
       } else if (activeConfigKey === "pH") {
         if (val >= activeConfig.b1 && val <= activeConfig.b2) sAcc++;
         else sFail++;
@@ -984,9 +993,9 @@ export default function DetailedView({
     let chartData: any[] = [];
     if (activeParam === "SAR") {
       chartData = [
-        { name: "S1: Excellent (≤10)", y: sSarS1, color: colorAcc },
-        { name: "S2: Medium (>10–18)", y: sSarS2, color: colorPerm },
-        { name: "S3: High (>18–26)", y: sSarS3, color: "#f97316" },
+        { name: "S1: Excellent (<10)", y: sSarS1, color: colorAcc },
+        { name: "S2: Medium (10 to up to 18)", y: sSarS2, color: colorPerm },
+        { name: "S3: High (>18 to upto 26)", y: sSarS3, color: "#f97316" },
         { name: "S4: Very High (>26)", y: sSarS4, color: colorFail },
       ].filter((point) => point.y > 0);
     } else {
@@ -996,10 +1005,10 @@ export default function DetailedView({
 
       const unitStr = activeConfig.unit ? ` ${activeConfig.unit}` : "";
 
-      if ((activeParam === "RSC" || activeConfigKey === "RSC") && activeConfig.b1 !== activeConfig.b2) {
-        accLabel = `Excellent (<${activeConfig.b1} meq/L)`;
-        permLabel = `Acceptable (${activeConfig.b1}–${activeConfig.b2} meq/L)`;
-        failLabel = `Unsuitable (>${activeConfig.b2} meq/L)`;
+      if (activeParam === "RSC" || activeConfigKey === "RSC") {
+        accLabel = `Safe (<1.25 meq/L)`;
+        permLabel = `Marginal (1.25 to 2.5 meq/L)`;
+        failLabel = `Unsuitable (>2.5 meq/L)`;
       } else if (activeConfigKey === "pH") {
         accLabel = `pH: ${activeConfig.b1}–${activeConfig.b2}`;
         failLabel = `pH: <${activeConfig.b1} or >${activeConfig.b2}`;
@@ -1055,34 +1064,32 @@ export default function DetailedView({
       },
       plotOptions: {
         pie: {
-          size: "82%", // Increased donut size by 50% (from 55% to 82%)
-          innerSize: "46%", // Decreased donut hole size by 20% (from 57% to 46%)
+          size: "65%",
+          innerSize: "46%",
           depth: 40,
           borderWidth: 2,
           borderColor: chartTheme === "theme-dark" ? "#1e293b" : "#ffffff",
-          slicedOffset: 20,
+          slicedOffset: 15,
           dataLabels: {
             enabled: true,
-            useHTML: true,
-            format: isRscOrSar
-              ? `<div style="text-align: center; line-height: 1.4; padding: 2px; font-family: 'Times New Roman', Times, serif;">
-                  <span style="font-size: 20px; font-weight: 700; color: {point.color};">{point.name}</span><br/>
-                  <span style="font-size: 24px; font-weight: 800; color: ${chartTheme === "theme-dark" ? "#f8fafc" : "#0f172a"};">{point.percentage:.1f}%</span>
-                  <span style="font-size: 20px; font-weight: 600; color: ${chartTheme === "theme-dark" ? "#94a3b8" : "#64748b"};"> ({point.y})</span>
-                </div>`
-              : `<div style="text-align: center; line-height: 1.4; padding: 2px; font-family: ${fontFamily};">
-                  <span style="font-size: 20px; font-weight: 700; color: {point.color};">{point.name}</span><br/>
-                  <span style="font-size: 24px; font-weight: 800; color: ${chartTheme === "theme-dark" ? "#f8fafc" : "#0f172a"};">{point.percentage:.1f}%</span>
-                  <span style="font-size: 20px; font-weight: 600; color: ${chartTheme === "theme-dark" ? "#94a3b8" : "#64748b"};"> ({point.y})</span>
-                </div>`,
+            useHTML: false, // MANDATORY: Must be false so getSVG captures dataLabels inside vector SVG for DOCX reports
+            allowOverlap: true,
+            crop: false,
+            overflow: "allow",
+            softConnector: true,
+            distance: 20,
+            padding: 1,
+            format: "<b>{point.name}</b><br/><b>{point.percentage:.1f}%</b> ({point.y})",
             style: {
               fontFamily: chartFontFamily,
-              fontSize: isRscOrSar ? "22pt" : "22px", // Increased by 100% (doubled from 11px/11pt)
-              textOutline: "none",
+              fontSize: isRscOrSar ? "13pt" : "14px",
+              fontWeight: "bold",
+              color: chartTheme === "theme-dark" ? "#f8fafc" : "#0f172a",
+              textOutline: chartTheme === "theme-dark" ? "2.5px #0f172a" : "2.5px #ffffff",
             },
             connectorWidth: 2,
-            connectorPadding: 6,
-          },
+            connectorPadding: 4,
+          } as any,
         },
       },
       series: [
@@ -1890,12 +1897,12 @@ export default function DetailedView({
         allNumericVals.push(val);
         // Categorize globally
         if (activeParam === "SAR") {
-          if (val <= 10) globalSarS1++;
+          if (val < 10) globalSarS1++;
           else if (val <= 18) globalSarS2++;
-          else if (val < 26) globalSarS3++;
+          else if (val <= 26) globalSarS3++;
           else globalSarS4++;
         } else if (activeParam === "RSC") {
-          if (val <= 1.25) globalAcc++;
+          if (val < 1.25) globalAcc++;
           else if (val <= 2.5) globalPerm++;
           else globalFail++;
         } else if (activeParam === "SSP" || activeParam === "Na%") {
@@ -1943,12 +1950,12 @@ export default function DetailedView({
 
       vals.forEach((v) => {
         if (activeParam === "SAR") {
-          if (v <= 10) nSarS1++;
+          if (v < 10) nSarS1++;
           else if (v <= 18) nSarS2++;
-          else if (v < 26) nSarS3++;
+          else if (v <= 26) nSarS3++;
           else nSarS4++;
         } else if (activeParam === "RSC") {
-          if (v <= 1.25) nAcc++;
+          if (v < 1.25) nAcc++;
           else if (v <= 2.5) nPerm++;
           else nFail++;
         } else if (activeParam === "SSP" || activeParam === "Na%") {
@@ -2095,9 +2102,9 @@ export default function DetailedView({
     let chartData: any[] = [];
     if (activeParam === "SAR") {
       chartData = [
-        { name: "S1: Excellent (≤10)", y: globalSarS1, color: colorAcc },
-        { name: "S2: Medium (>10–18)", y: globalSarS2, color: colorPerm },
-        { name: "S3: High (>18–26)", y: globalSarS3, color: "#f97316" },
+        { name: "S1: Excellent (<10)", y: globalSarS1, color: colorAcc },
+        { name: "S2: Medium (10 to up to 18)", y: globalSarS2, color: colorPerm },
+        { name: "S3: High (>18 to upto 26)", y: globalSarS3, color: "#f97316" },
         { name: "S4: Very High (>26)", y: globalSarS4, color: colorFail },
       ].filter((point) => point.y > 0);
     } else {
@@ -2108,10 +2115,10 @@ export default function DetailedView({
       const isSingle = activeConfig.b1 === activeConfig.b2 && activeConfigKey !== "pH";
       const unitStr = activeConfig.unit ? ` ${activeConfig.unit}` : "";
 
-      if ((activeParam === "RSC" || activeConfigKey === "RSC") && activeConfig.b1 !== activeConfig.b2) {
-        accLabel = `Excellent (<${activeConfig.b1} meq/L)`;
-        permLabel = `Acceptable (${activeConfig.b1}–${activeConfig.b2} meq/L)`;
-        failLabel = `Unsuitable (>${activeConfig.b2} meq/L)`;
+      if (activeParam === "RSC" || activeConfigKey === "RSC") {
+        accLabel = `Safe (<1.25 meq/L)`;
+        permLabel = `Marginal (1.25 to 2.5 meq/L)`;
+        failLabel = `Unsuitable (>2.5 meq/L)`;
       } else if (activeConfigKey === "pH") {
         accLabel = `pH: ${activeConfig.b1}–${activeConfig.b2}`;
         failLabel = `pH: <${activeConfig.b1} or >${activeConfig.b2}`;
@@ -2178,34 +2185,32 @@ export default function DetailedView({
       },
       plotOptions: {
         pie: {
-          size: "82%", // Increased donut size by 50% (from 55% to 82%)
-          innerSize: "46%", // Decreased donut hole size by 20% (from 57% to 46%)
+          size: "65%",
+          innerSize: "46%",
           depth: 50,
           borderWidth: 2,
           borderColor: chartTheme === "theme-dark" ? "#1e293b" : "#ffffff",
-          slicedOffset: 20,
+          slicedOffset: 15,
           dataLabels: {
             enabled: true,
-            useHTML: true,
-            format: isRscOrSar
-              ? `<div style="text-align: center; line-height: 1.4; padding: 4px; font-family: 'Times New Roman', Times, serif;">
-                  <span style="font-size: 22px; font-weight: 700; color: {point.color}; text-transform: none;">{point.name}</span><br/>
-                  <span style="font-size: 28px; font-weight: 800; color: ${chartTheme === "theme-dark" ? "#f8fafc" : "#0f172a"};">{point.percentage:.1f}%</span>
-                  <span style="font-size: 22px; font-weight: 600; color: ${chartTheme === "theme-dark" ? "#94a3b8" : "#64748b"};"> ({point.y})</span>
-                </div>`
-              : `<div style="text-align: center; line-height: 1.4; padding: 4px; font-family: ${fontFamily};">
-                  <span style="font-size: 22px; font-weight: 700; color: {point.color}; text-transform: none; letter-spacing: 0.6px;">{point.name}</span><br/>
-                  <span style="font-size: 28px; font-weight: 800; color: ${chartTheme === "theme-dark" ? "#f8fafc" : "#0f172a"};">{point.percentage:.1f}%</span>
-                  <span style="font-size: 22px; font-weight: 600; color: ${chartTheme === "theme-dark" ? "#94a3b8" : "#64748b"};"> ({point.y})</span>
-                </div>`,
+            useHTML: false, // MANDATORY: Must be false so getSVG captures dataLabels inside vector SVG for DOCX reports
+            allowOverlap: true,
+            crop: false,
+            overflow: "allow",
+            softConnector: true,
+            distance: 20,
+            padding: 1,
+            format: "<b>{point.name}</b><br/><b>{point.percentage:.1f}%</b> ({point.y})",
             style: {
               fontFamily: chartFontFamily,
-              fontSize: isRscOrSar ? "24pt" : `${fontSize * 2}px`, // Doubled by 100%
-              textOutline: "none",
+              fontSize: isRscOrSar ? "13pt" : "14px",
+              fontWeight: "bold",
+              color: chartTheme === "theme-dark" ? "#f8fafc" : "#0f172a",
+              textOutline: chartTheme === "theme-dark" ? "2.5px #0f172a" : "2.5px #ffffff",
             },
             connectorWidth: 2,
-            connectorPadding: 6,
-          },
+            connectorPadding: 4,
+          } as any,
         },
       },
       series: [
@@ -2323,9 +2328,9 @@ export default function DetailedView({
     let chartDataPoints: any[] = [];
     if (activeParam === "SAR") {
       chartDataPoints = [
-        { name: "S1: Excellent (≤10)", y: grandTotalRow ? (grandTotalRow.nSarS1 || 0) : 0, color: colorAcc },
-        { name: "S2: Medium (>10–18)", y: grandTotalRow ? (grandTotalRow.nSarS2 || 0) : 0, color: colorPerm },
-        { name: "S3: High (>18–26)", y: grandTotalRow ? (grandTotalRow.nSarS3 || 0) : 0, color: "#f97316" },
+        { name: "S1: Excellent (<10)", y: grandTotalRow ? (grandTotalRow.nSarS1 || 0) : 0, color: colorAcc },
+        { name: "S2: Medium (10 to up to 18)", y: grandTotalRow ? (grandTotalRow.nSarS2 || 0) : 0, color: colorPerm },
+        { name: "S3: High (>18 to upto 26)", y: grandTotalRow ? (grandTotalRow.nSarS3 || 0) : 0, color: "#f97316" },
         { name: "S4: Very High (>26)", y: grandTotalRow ? (grandTotalRow.nSarS4 || 0) : 0, color: colorFail },
       ].filter((point) => point.y > 0);
     } else {
@@ -2336,10 +2341,10 @@ export default function DetailedView({
       const isSingle = activeConfig.b1 === activeConfig.b2 && activeConfigKey !== "pH";
       const unitStr = activeConfig.unit ? ` ${activeConfig.unit}` : "";
 
-      if ((activeParam === "RSC" || activeConfigKey === "RSC") && activeConfig.b1 !== activeConfig.b2) {
-        accLabel = `Excellent (<${activeConfig.b1} meq/L)`;
-        permLabel = `Acceptable (${activeConfig.b1}–${activeConfig.b2} meq/L)`;
-        failLabel = `Unsuitable (>${activeConfig.b2} meq/L)`;
+      if (activeParam === "RSC" || activeConfigKey === "RSC") {
+        accLabel = `Safe (<1.25 meq/L)`;
+        permLabel = `Marginal (1.25 to 2.5 meq/L)`;
+        failLabel = `Unsuitable (>2.5 meq/L)`;
       } else if (activeConfigKey === "pH") {
         accLabel = `pH: ${activeConfig.b1}–${activeConfig.b2}`;
         failLabel = `pH: <${activeConfig.b1} or >${activeConfig.b2}`;
@@ -2390,28 +2395,32 @@ export default function DetailedView({
       },
       plotOptions: {
         pie: {
-          size: "82%", // Increased donut size by 50% (from 55% to 82%)
-          innerSize: "46%", // Decreased donut hole size by 20% (from 57% to 46%)
+          size: "65%",
+          innerSize: "46%",
           depth: 50,
           borderWidth: 2,
           borderColor: "transparent",
-          slicedOffset: 20,
+          slicedOffset: 15,
           dataLabels: {
             enabled: true,
-            useHTML: true,
-            format: `<div style="text-align: center; line-height: 1.4; padding: 4px; font-family: ${fontFamily};">
-              <span style="font-size: 22px; font-weight: 700; color: {point.color}; text-transform: none; letter-spacing: 0.6px;">{point.name}</span><br/>
-              <span style="font-size: 28px; font-weight: 800; color: ${chartTheme === "theme-dark" ? "#f8fafc" : "#0f172a"};">{point.percentage:.1f}%</span>
-              <span style="font-size: 22px; font-weight: 600; color: ${chartTheme === "theme-dark" ? "#94a3b8" : "#64748b"};"> ({point.y})</span>
-            </div>`,
+            useHTML: false, // MANDATORY: Must be false so getSVG captures dataLabels inside vector SVG for DOCX reports
+            allowOverlap: true,
+            crop: false,
+            overflow: "allow",
+            softConnector: true,
+            distance: 20,
+            padding: 1,
+            format: "<b>{point.name}</b><br/><b>{point.percentage:.1f}%</b> ({point.y})",
             style: {
               fontFamily,
-              fontSize: "22px",
-              textOutline: "none",
+              fontSize: "14px",
+              fontWeight: "bold",
+              color: chartTheme === "theme-dark" ? "#f8fafc" : "#0f172a",
+              textOutline: chartTheme === "theme-dark" ? "2.5px #0f172a" : "2.5px #ffffff",
             },
             connectorWidth: 2,
-            connectorPadding: 6,
-          },
+            connectorPadding: 4,
+          } as any,
         },
       },
       series: [
@@ -2578,7 +2587,7 @@ export default function DetailedView({
       `;
 
       uniquePeriods.forEach((period) => {
-        const stats = row.periods?.[period] || row.periodStats?.[period] || {
+        const stats = (row as any).periods?.[period] || row.periodStats?.[period] || {
           total: 0, nAcc: 0, nPerm: 0, nFail: 0,
           nSarS1: 0, nSarS2: 0, nSarS3: 0, nSarS4: 0,
           min: NaN, max: NaN, avg: NaN
@@ -2646,7 +2655,7 @@ export default function DetailedView({
       `;
 
       uniquePeriods.forEach((period) => {
-        const stats = grandTotalRow.periods?.[period] || grandTotalRow.periodStats?.[period] || {
+        const stats = (grandTotalRow as any).periods?.[period] || grandTotalRow.periodStats?.[period] || {
           total: 0, nAcc: 0, nPerm: 0, nFail: 0,
           nSarS1: 0, nSarS2: 0, nSarS3: 0, nSarS4: 0,
           min: NaN, max: NaN, avg: NaN
@@ -3810,12 +3819,12 @@ export default function DetailedView({
                         <th className="p-2 border font-black text-slate-500 text-center text-[10px] bg-slate-50/50">Total</th>
                         {activeParam === "SAR" ? (
                           <>
-                            <th className="p-2 border font-black text-emerald-600 text-center text-[10px] bg-emerald-50/30">≤10 (No)</th>
-                            <th className="p-2 border font-black text-emerald-600 text-center text-[10px] bg-emerald-50/30">≤10 (%)</th>
-                            <th className="p-2 border font-black text-amber-600 text-center text-[10px] bg-amber-50/30">&gt;10-18 (No)</th>
-                            <th className="p-2 border font-black text-amber-600 text-center text-[10px] bg-amber-50/30">&gt;10-18 (%)</th>
-                            <th className="p-2 border font-black text-orange-600 text-center text-[10px] bg-orange-50/30">&gt;18-26 (No)</th>
-                            <th className="p-2 border font-black text-orange-600 text-center text-[10px] bg-orange-50/30">&gt;18-26 (%)</th>
+                            <th className="p-2 border font-black text-emerald-600 text-center text-[10px] bg-emerald-50/30">&lt;10 (No)</th>
+                            <th className="p-2 border font-black text-emerald-600 text-center text-[10px] bg-emerald-50/30">&lt;10 (%)</th>
+                            <th className="p-2 border font-black text-amber-600 text-center text-[10px] bg-amber-50/30">10 to up to 18 (No)</th>
+                            <th className="p-2 border font-black text-amber-600 text-center text-[10px] bg-amber-50/30">10 to up to 18 (%)</th>
+                            <th className="p-2 border font-black text-orange-600 text-center text-[10px] bg-orange-50/30">&gt;18 to upto 26 (No)</th>
+                            <th className="p-2 border font-black text-orange-600 text-center text-[10px] bg-orange-50/30">&gt;18 to upto 26 (%)</th>
                             <th className="p-2 border font-black text-rose-600 text-center text-[10px] bg-rose-50/30">&gt;26 (No)</th>
                             <th className="p-2 border font-black text-rose-600 text-center text-[10px] bg-rose-50/30">&gt;26 (%)</th>
                           </>
@@ -4007,22 +4016,22 @@ export default function DetailedView({
                     {activeParam === "SAR" ? (
                       <>
                         <th className="p-4 font-black text-emerald-600 tracking-tighter text-center bg-emerald-50/50">
-                          ≤10 (No)
+                          &lt;10 (No)
                         </th>
                         <th className="p-4 font-black text-emerald-600 tracking-tighter text-center bg-emerald-50/50">
-                          ≤10 (%)
+                          &lt;10 (%)
                         </th>
                         <th className="p-4 font-black text-amber-600 tracking-tighter text-center bg-amber-50/50">
-                          &gt;10–18 (No)
+                          10 to up to 18 (No)
                         </th>
                         <th className="p-4 font-black text-amber-600 tracking-tighter text-center bg-amber-50/50">
-                          &gt;10–18 (%)
+                          10 to up to 18 (%)
                         </th>
                         <th className="p-4 font-black text-orange-600 tracking-tighter text-center bg-orange-50/50">
-                          &gt;18–26 (No)
+                          &gt;18 to upto 26 (No)
                         </th>
                         <th className="p-4 font-black text-orange-600 tracking-tighter text-center bg-orange-50/50">
-                          &gt;18–26 (%)
+                          &gt;18 to upto 26 (%)
                         </th>
                         <th className="p-4 font-black text-rose-600 tracking-tighter text-center bg-rose-50/50">
                           &gt;26 (No)

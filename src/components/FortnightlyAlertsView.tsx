@@ -342,26 +342,26 @@ const SimpleReportTable: React.FC<SimpleReportTableProps> = ({ data, isDistrict,
   const sumContaminated = sumMarginal + sumUnsafe;
 
   return (
-    <div className="w-full overflow-x-auto custom-scrollbar mb-6">
-      <table className="border-collapse border border-black text-[13px] text-center bg-white mx-auto" style={{ width: 'auto', maxWidth: '100%', tableLayout: 'auto' }}>
+    <div className="w-full max-w-full overflow-x-auto custom-scrollbar mb-4 border border-slate-300 rounded-lg">
+      <table className="w-full border-collapse border border-black text-[11px] text-center bg-white min-w-[550px]" style={{ tableLayout: 'auto' }}>
         <thead>
-        <tr>
-          <th rowSpan={2} className="border border-black p-1.5 font-bold text-center" style={{ width: 'auto', whiteSpace: 'nowrap' }}>Sl. No.</th>
-          <th rowSpan={2} className="border border-black p-1.5 font-bold text-left" style={{ width: 'auto', whiteSpace: 'nowrap' }}>Name of {isDistrict ? 'District' : 'State/Union Territory'}</th>
-          <th rowSpan={2} className="border border-black p-1.5 font-bold text-center" style={{ width: 'auto' }}>Total no.<br/>of samples<br/>analysed</th>
-          <th colSpan={3} className="border border-black p-1.5 font-bold text-center" style={{ width: 'auto' }}>No. of samples contaminated</th>
-          <th rowSpan={2} className="border border-black p-1.5 font-bold text-left uppercase tracking-wider" style={{ width: 'auto' }}>Parameters of contamination</th>
+        <tr className="bg-slate-100/90 text-[11px]">
+          <th rowSpan={2} className="border border-black p-1 font-bold text-center w-8 whitespace-nowrap">Sl. No.</th>
+          <th rowSpan={2} className="border border-black p-1 font-bold text-left whitespace-nowrap">Name of {isDistrict ? 'District' : 'State/UT'}</th>
+          <th rowSpan={2} className="border border-black p-1 font-bold text-center w-20 leading-tight">Total samples<br/>analysed</th>
+          <th colSpan={3} className="border border-black p-1 font-bold text-center">No. of samples contaminated</th>
+          <th rowSpan={2} className="border border-black p-1 font-bold text-left uppercase tracking-wider min-w-[160px]">Parameters of contamination</th>
         </tr>
-        <tr>
-          <th className="border border-black p-1.5 font-bold text-center" style={{ width: 'auto' }}>Above<br/>Acceptable<br/>Limit</th>
-          <th className="border border-black p-1.5 font-bold text-center" style={{ width: 'auto' }}>Above<br/>Permissible<br/>Limit</th>
-          <th className="border border-black p-1.5 font-bold text-center" style={{ width: 'auto' }}>Total samples<br/>Contaminated</th>
+        <tr className="bg-slate-100/90 text-[11px]">
+          <th className="border border-black p-1 font-bold text-center w-16 leading-tight">Above<br/>Acceptable</th>
+          <th className="border border-black p-1 font-bold text-center w-16 leading-tight">Above<br/>Permissible</th>
+          <th className="border border-black p-1 font-bold text-center w-20 leading-tight">Total<br/>Contaminated</th>
         </tr>
       </thead>
       <tbody>
         {data.length === 0 ? (
           <tr>
-            <td colSpan={7} className="border border-black p-3 text-center italic">No data available</td>
+            <td colSpan={7} className="border border-black p-2 text-center italic text-xs">No data available</td>
           </tr>
         ) : (
           data.map((row, idx) => {
@@ -371,24 +371,25 @@ const SimpleReportTable: React.FC<SimpleReportTableProps> = ({ data, isDistrict,
             
             return (
               <tr key={row.key || idx}>
-                <td className="border border-black p-1.5 text-center font-medium" style={{ whiteSpace: 'nowrap' }}>{idx + 1}</td>
-                <td className="border border-black p-1.5 text-left font-bold" style={{ whiteSpace: 'nowrap' }}>{isDistrict ? row.district : row.state}</td>
-                <td className="border border-black p-1.5 font-bold text-center" style={{ whiteSpace: 'nowrap' }}>
+                <td className="border border-black p-1 text-center font-medium whitespace-nowrap">{idx + 1}</td>
+                <td className="border border-black p-1 text-left font-bold whitespace-nowrap">{isDistrict ? row.district : row.state}</td>
+                <td className="border border-black p-1 font-bold text-center whitespace-nowrap">
                   <input 
                     type="number" 
                     min="0"
                     value={manualTotals[row.key] !== undefined ? manualTotals[row.key] : row.total}
                     onChange={(e) => onManualTotalChange(row.key, e.target.value)}
-                    className="w-full max-w-[50px] text-center bg-transparent border-b border-dashed border-gray-400 outline-none no-print"
+                    className="w-full max-w-[42px] text-center bg-transparent border-b border-dashed border-gray-400 outline-none no-print py-0"
                   />
                   <span className="print-only hidden">{manualTotals[row.key] !== undefined ? manualTotals[row.key] : row.total}</span>
                 </td>
-                <td className="border border-black p-1.5 font-bold text-center" style={{ whiteSpace: 'nowrap' }}>{row.marginal || 'Nil'}</td>
-                <td className="border border-black p-1.5 font-bold text-center" style={{ whiteSpace: 'nowrap' }}>{row.unsafe || 'Nil'}</td>
-                <td className="border border-black p-1.5 font-bold text-center" style={{ whiteSpace: 'nowrap' }}>{totalContaminated || 'Nil'}</td>
+                <td className="border border-black p-1 font-bold text-center whitespace-nowrap">{row.marginal || 'Nil'}</td>
+                <td className="border border-black p-1 font-bold text-center whitespace-nowrap">{row.unsafe || 'Nil'}</td>
+                <td className="border border-black p-1 font-bold text-center whitespace-nowrap">{totalContaminated || 'Nil'}</td>
                 <td 
-                  className="border border-black p-1.5 text-left text-[12px] leading-snug antialiased subpixel-antialiased font-semibold text-slate-900"
+                  className="border border-black p-1 text-left text-[11px] leading-tight antialiased subpixel-antialiased font-semibold text-slate-900 break-words min-w-[160px]"
                   style={{
+                    wordBreak: 'break-word',
                     fontFamily: 
                       contaminationFont === 'times' ? "'Times New Roman', Times, serif" :
                       contaminationFont === 'calibri' ? "Calibri, Candara, Segoe, 'Segoe UI', Optima, Arial, sans-serif" :
@@ -405,13 +406,13 @@ const SimpleReportTable: React.FC<SimpleReportTableProps> = ({ data, isDistrict,
           })
         )}
         {data.length > 0 && (
-          <tr className="font-bold">
-            <td colSpan={2} className="border border-black p-1.5 font-bold text-right uppercase">Total</td>
-            <td className="border border-black p-1.5 font-bold text-center">{sumTotalAnalysed}</td>
-            <td className="border border-black p-1.5 font-bold text-center">{sumMarginal || 'Nil'}</td>
-            <td className="border border-black p-1.5 font-bold text-center">{sumUnsafe || 'Nil'}</td>
-            <td className="border border-black p-1.5 font-bold text-center">{sumContaminated || 'Nil'}</td>
-            <td className="border border-black p-1.5"></td>
+          <tr className="font-bold bg-slate-50">
+            <td colSpan={2} className="border border-black p-1 font-bold text-right uppercase">Total</td>
+            <td className="border border-black p-1 font-bold text-center">{sumTotalAnalysed}</td>
+            <td className="border border-black p-1 font-bold text-center">{sumMarginal || 'Nil'}</td>
+            <td className="border border-black p-1 font-bold text-center">{sumUnsafe || 'Nil'}</td>
+            <td className="border border-black p-1 font-bold text-center">{sumContaminated || 'Nil'}</td>
+            <td className="border border-black p-1"></td>
           </tr>
         )}
       </tbody>
@@ -435,61 +436,61 @@ const SummaryTable: React.FC<SummaryTableProps> = ({ data, isDistrict, manualTot
   const sumContaminated = sumMarginal + sumUnsafe;
 
   return (
-    <div className="overflow-x-auto p-4 custom-scrollbar bg-slate-50">
-      <table className="w-full text-center border-separate border-spacing-0 shadow-[0_8px_30px_rgb(0,0,0,0.15)] rounded-xl overflow-hidden bg-white ring-1 ring-gray-200">
+    <div className="w-full max-w-full overflow-x-auto p-2 custom-scrollbar bg-slate-50">
+      <table className="w-full text-center border-separate border-spacing-0 shadow-sm rounded-lg overflow-hidden bg-white ring-1 ring-gray-200 text-xs min-w-[580px]">
         <thead>
-          <tr className="bg-gradient-to-b from-indigo-800 to-blue-900 text-white shadow-[inset_0_2px_4px_rgba(255,255,255,0.3)]">
-            <th rowSpan={2} className="p-3 border-b-2 border-r border-blue-950 font-extrabold shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]">Sl. No.</th>
-            <th rowSpan={2} className="p-3 border-b-2 border-r border-blue-950 text-left font-extrabold shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]">Name of {isDistrict ? 'District' : 'State/Union Territory'}</th>
-            <th rowSpan={2} className="p-3 border-b-2 border-r border-blue-950 font-extrabold shadow-[inset_0_1px_0_rgba(255,255,255,0.2)] w-28">Total no. of samples analysed</th>
-            <th colSpan={3} className="p-3 border-b border-r border-blue-950 font-extrabold shadow-[inset_0_1px_0_rgba(255,255,255,0.2)] bg-gradient-to-b from-indigo-700 to-blue-800 tracking-wider text-lg">No. of samples contaminated</th>
-            <th rowSpan={2} className="p-3 border-b-2 border-blue-950 text-left font-extrabold shadow-[inset_0_1px_0_rgba(255,255,255,0.2)] w-1/3">Parameters of contamination</th>
+          <tr className="bg-gradient-to-b from-indigo-800 to-blue-900 text-white shadow-[inset_0_1px_2px_rgba(255,255,255,0.3)]">
+            <th rowSpan={2} className="p-1.5 border-b border-r border-blue-950 font-extrabold text-center w-10">Sl. No.</th>
+            <th rowSpan={2} className="p-1.5 border-b border-r border-blue-950 text-left font-extrabold whitespace-nowrap">Name of {isDistrict ? 'District' : 'State/UT'}</th>
+            <th rowSpan={2} className="p-1.5 border-b border-r border-blue-950 font-extrabold w-20 leading-tight">Total samples analysed</th>
+            <th colSpan={3} className="p-1.5 border-b border-r border-blue-950 font-extrabold bg-gradient-to-b from-indigo-700 to-blue-800 tracking-wide text-xs">No. of samples contaminated</th>
+            <th rowSpan={2} className="p-1.5 border-b border-blue-950 text-left font-extrabold min-w-[180px]">Parameters of contamination</th>
           </tr>
           <tr className="text-white">
-            <th className="p-2 border-b-2 border-r border-blue-950 text-xs w-32 bg-gradient-to-b from-orange-500 to-orange-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.3)] font-bold">Above Acceptable Limit</th>
-            <th className="p-2 border-b-2 border-r border-blue-950 text-xs w-32 bg-gradient-to-b from-red-600 to-red-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.3)] font-bold">Above Permissible Limit</th>
-            <th className="p-2 border-b-2 border-r border-blue-950 text-xs w-32 bg-gradient-to-b from-purple-600 to-purple-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.3)] font-bold">Total samples Contaminated</th>
+            <th className="p-1 border-b border-r border-blue-950 text-[10px] w-20 bg-gradient-to-b from-orange-500 to-orange-600 font-bold leading-tight">Above Acceptable</th>
+            <th className="p-1 border-b border-r border-blue-950 text-[10px] w-20 bg-gradient-to-b from-red-600 to-red-700 font-bold leading-tight">Above Permissible</th>
+            <th className="p-1 border-b border-r border-blue-950 text-[10px] w-20 bg-gradient-to-b from-purple-600 to-purple-700 font-bold leading-tight">Total Contaminated</th>
           </tr>
         </thead>
         <tbody className="bg-slate-50">
           {data.length === 0 ? (
             <tr>
-              <td colSpan={7} className="p-20 text-center text-gray-500 font-bold bg-white border-b border-gray-300">
-                No compliance dataset is loaded or mapped yet. Use data inputs above to check.
+              <td colSpan={7} className="p-8 text-center text-gray-500 font-bold bg-white border-b border-gray-300 text-xs">
+                No compliance dataset is loaded or mapped yet.
               </td>
             </tr>
           ) : (
             data.map((row, idx) => {
               const totalContaminated = row.marginal + row.unsafe;
               return (
-                <tr key={row.key || idx} className="hover:bg-white hover:scale-[1.005] hover:shadow-[0_0_20px_rgba(0,0,0,0.15)] transition-all duration-200 z-10 relative">
-                  <td className="p-3 border-b border-r border-gray-300 font-bold text-gray-700 bg-gray-100/50 shadow-[inset_1px_1px_0_rgba(255,255,255,1)]">{idx + 1}</td>
-                  <td className="p-3 border-b border-r border-gray-300 text-left font-extrabold text-gray-800 bg-white shadow-[inset_1px_1px_0_rgba(255,255,255,1)]">
-                    <div className="flex flex-col gap-1 items-start">
-                      <span className="drop-shadow-sm text-[15px]">{isDistrict ? row.district : row.state}</span>
+                <tr key={row.key || idx} className="hover:bg-blue-50/30 transition-colors relative text-xs">
+                  <td className="p-1.5 border-b border-r border-gray-200 font-semibold text-gray-600 bg-gray-50/50">{idx + 1}</td>
+                  <td className="p-1.5 border-b border-r border-gray-200 text-left font-bold text-gray-800 bg-white">
+                    <div className="flex flex-col gap-0.5 items-start">
+                      <span className="text-xs">{isDistrict ? row.district : row.state}</span>
                       {row.hasHeavyMetals && (
-                        <span className="px-2 py-0.5 bg-gradient-to-b from-red-500 to-red-600 text-white text-[9px] font-black rounded border border-red-700 shadow-sm uppercase tracking-widest">
+                        <span className="px-1 py-0.2 bg-red-600 text-white text-[8px] font-bold rounded uppercase tracking-wider">
                           Heavy Metals
                         </span>
                       )}
                     </div>
                   </td>
-                  <td className="p-3 border-b border-r border-gray-300 font-black text-blue-900 bg-blue-50/50 text-lg shadow-[inset_1px_1px_0_rgba(255,255,255,1)]">
+                  <td className="p-1.5 border-b border-r border-gray-200 font-bold text-blue-900 bg-blue-50/40 text-xs">
                     <input 
-                       type="number" 
+                      type="number" 
                       min="0"
                       value={manualTotals[row.key] !== undefined ? manualTotals[row.key] : row.total}
                       onChange={(e) => onManualTotalChange(row.key, e.target.value)}
-                      className="w-full max-w-[80px] text-center bg-white/80 border border-blue-300 focus:border-blue-600 rounded px-1 py-1 outline-none font-bold transition-colors no-print"
+                      className="w-full max-w-[50px] text-center bg-white border border-blue-200 focus:border-blue-500 rounded px-1 py-0.5 outline-none font-bold text-xs no-print"
                       title="Manually edit the Total Analyzed"
                     />
-                    <span className="print-only hidden text-lg">{manualTotals[row.key] !== undefined ? manualTotals[row.key] : row.total}</span>
+                    <span className="print-only hidden text-xs">{manualTotals[row.key] !== undefined ? manualTotals[row.key] : row.total}</span>
                   </td>
-                  <td className="p-3 border-b border-r border-gray-300 font-black text-orange-700 bg-orange-50/50 text-lg shadow-[inset_1px_1px_0_rgba(255,255,255,1)]">{row.marginal}</td>
-                  <td className="p-3 border-b border-r border-gray-300 font-black text-red-700 bg-red-50/50 text-lg shadow-[inset_1px_1px_0_rgba(255,255,255,1)]">{row.unsafe}</td>
-                  <td className="p-3 border-b border-r border-gray-300 font-black text-purple-800 bg-purple-50/50 text-lg shadow-[inset_1px_1px_0_rgba(255,255,255,1)]">{totalContaminated}</td>
+                  <td className="p-1.5 border-b border-r border-gray-200 font-bold text-orange-700 bg-orange-50/30 text-xs">{row.marginal}</td>
+                  <td className="p-1.5 border-b border-r border-gray-200 font-bold text-red-700 bg-red-50/30 text-xs">{row.unsafe}</td>
+                  <td className="p-1.5 border-b border-r border-gray-200 font-bold text-purple-800 bg-purple-50/30 text-xs">{totalContaminated}</td>
                   <td 
-                    className="p-3 border-b border-gray-300 text-left bg-white shadow-[inset_1px_1px_0_rgba(255,255,255,1)]"
+                    className="p-1.5 border-b border-gray-200 text-left bg-white text-xs"
                     style={{
                       fontFamily: 
                         contaminationFont === 'times' ? "'Times New Roman', Times, serif" :
@@ -497,23 +498,23 @@ const SummaryTable: React.FC<SummaryTableProps> = ({ data, isDistrict, manualTot
                         contaminationFont === 'mono' ? "'JetBrains Mono', monospace" : "Inter, system-ui, sans-serif",
                     }}
                   >
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-1">
                       {row.unsafeList.map((p: string) => (
-                        <span key={p} className="pl-2 pr-1 py-1 bg-gradient-to-b from-red-50 to-red-100 border border-red-300 text-red-900 rounded shadow-[0_2px_4px_rgba(0,0,0,0.05)] flex items-center gap-1.5 transform hover:-translate-y-0.5 transition-transform font-bold">
+                        <span key={p} className="px-1.5 py-0.5 bg-red-50 border border-red-200 text-red-900 rounded text-[10px] flex items-center gap-1 font-semibold">
                           <FormatParam param={p} />
-                          <span className="bg-red-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase">Permissible</span>
+                          <span className="bg-red-600 text-white text-[8px] font-black px-1 rounded uppercase">Permissible</span>
                         </span>
                       ))}
                       {row.marginalList.map((p: string) => (
-                        <span key={p} className="pl-2 pr-1 py-1 bg-gradient-to-b from-orange-50 to-orange-100 border border-orange-300 text-orange-900 rounded shadow-[0_2px_4px_rgba(0,0,0,0.05)] flex items-center gap-1.5 transform hover:-translate-y-0.5 transition-transform font-bold">
+                        <span key={p} className="px-1.5 py-0.5 bg-orange-50 border border-orange-200 text-orange-900 rounded text-[10px] flex items-center gap-1 font-semibold">
                           <FormatParam param={p} />
-                          <span className="bg-orange-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase">Acceptable</span>
+                          <span className="bg-orange-500 text-white text-[8px] font-black px-1 rounded uppercase">Acceptable</span>
                         </span>
                       ))}
                       {row.unsafeList.length === 0 && row.marginalList.length === 0 && (
-                        <span className="text-emerald-600 font-bold text-sm flex items-center gap-1 bg-emerald-50 px-2 py-1 rounded border border-emerald-200 shadow-sm">
-                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
-                          No Contamination
+                        <span className="text-emerald-600 font-semibold text-[11px] flex items-center gap-1 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                          <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                          Nil
                         </span>
                       )}
                     </div>
@@ -525,13 +526,13 @@ const SummaryTable: React.FC<SummaryTableProps> = ({ data, isDistrict, manualTot
           
           {/* TOTAL ROW */}
           {data.length > 0 && (
-            <tr className="bg-gradient-to-b from-indigo-800 to-blue-900 text-white shadow-[inset_0_2px_4px_rgba(255,255,255,0.3)] z-20 relative font-bold">
-              <td colSpan={2} className="p-3 border-t-2 border-r border-blue-950 font-extrabold text-right uppercase tracking-wider text-[15px]">Total</td>
-              <td className="p-3 border-t-2 border-r border-blue-950 font-black text-lg">{sumTotalAnalysed}</td>
-              <td className="p-3 border-t-2 border-r border-blue-950 font-black text-orange-400 text-lg">{sumMarginal}</td>
-              <td className="p-3 border-t-2 border-r border-blue-950 font-black text-red-400 text-lg">{sumUnsafe}</td>
-              <td className="p-3 border-t-2 border-r border-blue-950 font-black text-purple-300 text-lg">{sumContaminated}</td>
-              <td className="p-3 border-t-2 border-blue-950"></td>
+            <tr className="bg-gradient-to-b from-indigo-800 to-blue-900 text-white z-20 relative font-bold text-xs">
+              <td colSpan={2} className="p-1.5 border-t border-r border-blue-950 font-extrabold text-right uppercase tracking-wider text-xs">Total</td>
+              <td className="p-1.5 border-t border-r border-blue-950 font-black text-xs">{sumTotalAnalysed}</td>
+              <td className="p-1.5 border-t border-r border-blue-950 font-black text-orange-300 text-xs">{sumMarginal}</td>
+              <td className="p-1.5 border-t border-r border-blue-950 font-black text-red-300 text-xs">{sumUnsafe}</td>
+              <td className="p-1.5 border-t border-r border-blue-950 font-black text-purple-200 text-xs">{sumContaminated}</td>
+              <td className="p-1.5 border-t border-blue-950"></td>
             </tr>
           )}
         </tbody>
@@ -540,7 +541,7 @@ const SummaryTable: React.FC<SummaryTableProps> = ({ data, isDistrict, manualTot
   );
 };
 
-const MapContainer: React.FC<{ data: any[]; limits: any; geoJsonData: any }> = ({ data, limits, geoJsonData }) => {
+const MapContainer: React.FC<{ data: any[]; limits: any; geoJsonData: any; activeSubTab?: string }> = ({ data, limits, geoJsonData, activeSubTab }) => {
   const mapRef = useRef<any>(null);
   const markersLayer = useRef<any>(null);
   const geoJsonLayerRef = useRef<any>(null);
@@ -553,6 +554,36 @@ const MapContainer: React.FC<{ data: any[]; limits: any; geoJsonData: any }> = (
       }
     };
   }, []);
+
+  // ResizeObserver + activeSubTab invalidateSize trigger for flaw-free canvas rendering
+  useEffect(() => {
+    const container = document.getElementById('fortnightly-leaflet-map');
+    if (!container) return;
+
+    const triggerInvalidate = () => {
+      if (mapRef.current) {
+        mapRef.current.invalidateSize();
+      }
+    };
+
+    // Immediate and delayed invalidate calls to handle CSS tab transitions
+    const timer = setTimeout(triggerInvalidate, 100);
+    const animFrame = requestAnimationFrame(triggerInvalidate);
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        triggerInvalidate();
+      });
+      resizeObserver.observe(container);
+    }
+
+    return () => {
+      clearTimeout(timer);
+      cancelAnimationFrame(animFrame);
+      if (resizeObserver) resizeObserver.disconnect();
+    };
+  }, [activeSubTab]);
 
   useEffect(() => {
     const L = (window as any).L;
@@ -584,30 +615,17 @@ const MapContainer: React.FC<{ data: any[]; limits: any; geoJsonData: any }> = (
         attribution: 'Tiles &copy; Esri'
       });
 
-      const lightCanvasLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; CARTO',
-        subdomains: 'abcd',
-        maxZoom: 20
-      });
-
-      const darkCanvasLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; CARTO',
-        subdomains: 'abcd',
-        maxZoom: 20
-      });
-
       osmLayer.addTo(mapRef.current);
 
       const baseMaps = {
         "OpenStreetMap": osmLayer,
         "Satellite (Esri)": satelliteLayer,
         "Topographic": topoLayer,
-        "Terrain (Esri)": terrainLayer,
-        "Light Canvas": lightCanvasLayer,
-        "Dark Canvas": darkCanvasLayer
+        "Terrain (Esri)": terrainLayer
       };
 
       L.control.layers(baseMaps, null, { position: 'topright' }).addTo(mapRef.current);
+      L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(mapRef.current);
       
       geoJsonLayerRef.current = L.layerGroup().addTo(mapRef.current);
       markersLayer.current = L.layerGroup().addTo(mapRef.current);
@@ -1133,58 +1151,85 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
       }
     });
 
+    // Ensure dropcaps and multi-column elements are formatted with MSO CSS properties
+    const dropcaps = clone.querySelectorAll('.float-left');
+    dropcaps.forEach(dc => {
+      const el = dc as HTMLElement;
+      el.style.cssText += "; float: left; font-size: 36pt; line-height: 0.8; font-weight: bold; margin-right: 6px; mso-element: drop-cap; color: #1e3a8a;";
+    });
+
     // Ensure all tables in downloaded document are snug and content-fit without extra horizontal/vertical whitespace
     const tables = clone.querySelectorAll('table');
     tables.forEach(tbl => {
-      tbl.style.width = 'auto';
+      tbl.style.width = '100%';
       tbl.style.maxWidth = '100%';
       tbl.style.tableLayout = 'auto';
       tbl.style.marginLeft = 'auto';
       tbl.style.marginRight = 'auto';
+      tbl.style.borderCollapse = 'collapse';
       tbl.removeAttribute('width');
+
+      const cells = tbl.querySelectorAll('th, td');
+      cells.forEach(c => {
+        const cell = c as HTMLElement;
+        cell.style.border = '1px solid black';
+        cell.style.padding = '4px 6px';
+        cell.style.fontSize = '9.5pt';
+      });
     });
 
     const htmlContent = `
       <html xmlns:v="urn:schemas-microsoft-com:vml"
             xmlns:o="urn:schemas-microsoft-com:office:office"
             xmlns:w="urn:schemas-microsoft-com:office:word"
+            xmlns:m="http://schemas.microsoft.com/office/2004/12/omml"
             xmlns="http://www.w3.org/TR/REC-html40">
       <head>
           <meta charset='utf-8'>
-          <title>Ground Water Quality Alert</title>
+          <title>${customTitle || 'Ground Water Quality Alert'}</title>
           <!--[if gte mso 9]>
           <xml>
               <w:WordDocument>
                   <w:View>Print</w:View>
                   <w:Zoom>100</w:Zoom>
                   <w:DoNotOptimizeForBrowser/>
+                  <w:ValidateAgainstSchemas/>
+                  <w:SaveIfXMLInvalid>false</w:SaveIfXMLInvalid>
+                  <w:IgnoreMixedContent>false</w:IgnoreMixedContent>
+                  <w:AlwaysShowPlaceholderText>false</w:AlwaysShowPlaceholderText>
               </w:WordDocument>
           </xml>
           <![endif]-->
           <style>
               @page WordSection1 {
-                  size: 8.27in 11.69in;
-                  margin: 0.8in 0.8in 0.8in 0.8in;
+                  size: 210mm 297mm;
+                  margin: 20mm 20mm 20mm 20mm;
+                  mso-header-margin: 12.5mm;
+                  mso-footer-margin: 12.5mm;
+                  mso-paper-source: 0;
               }
               div.WordSection1 { page: WordSection1; }
-              body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 11pt; }
-              table { border-collapse: collapse; width: auto !important; max-width: 100% !important; margin-left: auto; margin-right: auto; margin-bottom: 16px; table-layout: auto !important; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
-              th, td { border: 1px solid black; padding: 4px 6px !important; font-size: 9.5pt; text-align: center; vertical-align: middle; white-space: normal; mso-padding-alt: 4pt 6pt 4pt 6pt; }
+              body { font-family: 'Times New Roman', Times, serif; font-size: 11pt; line-height: 1.35; text-align: justify; }
+              table { border-collapse: collapse; width: 100% !important; margin-bottom: 16px; table-layout: auto !important; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+              th, td { border: 1px solid black; padding: 4pt 6pt !important; font-size: 9.5pt; text-align: center; vertical-align: middle; white-space: normal; mso-padding-alt: 4pt 6pt 4pt 6pt; }
               .text-left { text-align: left !important; }
+              .text-center { text-align: center !important; }
               .font-bold { font-weight: bold; }
-              .bg-gray-100 { background-color: #f3f4f6; }
-              h1 { text-align: center; text-decoration: underline; font-size: 16pt; margin-bottom: 16px; color: black; }
+              .bg-slate-50 { background-color: #f8fafc; }
+              h1 { text-align: center; text-decoration: underline; font-size: 16pt; margin-bottom: 16px; color: black; font-weight: bold; }
               h3 { text-decoration: underline; font-size: 13pt; margin-bottom: 8px; color: black; font-weight: bold; }
               h4 { text-decoration: underline; font-size: 11pt; margin-bottom: 8px; color: black; font-weight: bold; }
               h5 { text-decoration: underline; font-size: 10.5pt; font-weight: bold; color: black; }
               .text-justify { text-align: justify; }
-              ul { margin-top: 4px; margin-bottom: 16px; }
+              ul { margin-top: 4px; margin-bottom: 12px; padding-left: 20px; }
               li { margin-bottom: 4px; }
-              p { margin-bottom: 8px; line-height: 1.4; }
+              p { margin-bottom: 8px; line-height: 1.35; }
+              .columns-2, .md\\:columns-2 { mso-column-count: 2; column-count: 2; column-gap: 20pt; }
+              .drop-cap { mso-element: drop-cap; float: left; font-size: 36pt; line-height: 0.8; font-weight: bold; margin-right: 6px; }
           </style>
       </head>
       <body>
-          <div class="WordSection1 font-sans">
+          <div class="WordSection1">
               ${clone.innerHTML}
           </div>
       </body>
@@ -1224,7 +1269,7 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
 
   return (
     <div 
-      className="bg-white rounded-3xl p-6 shadow-xl border border-slate-100 min-h-[500px]"
+      className="glossy-panel p-4 sm:p-8 rounded-3xl border border-white/95 shadow-[0_24px_50px_-10px_rgba(15,23,42,0.12),inset_0_2.5px_0_rgba(255,255,255,1),inset_0_0_20px_rgba(255,255,255,0.8)] min-h-[500px] w-full max-w-full min-w-0 overflow-hidden box-border"
       style={{
         fontFamily: 
           contaminationFont === 'times' ? "'Times New Roman', Times, serif" :
@@ -1234,74 +1279,74 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
     >
       
       {uploadError && (
-        <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 rounded-xl shadow-sm flex justify-between items-center mb-6">
+        <div className="bg-rose-50/95 border-l-4 border-rose-600 text-rose-950 p-4 rounded-2xl shadow-sm flex justify-between items-center mb-6">
           <div>
-            <p className="font-bold text-sm">Upload Alert</p>
-            <p className="text-xs">{uploadError}</p>
+            <p className="font-black text-sm">Upload Alert</p>
+            <p className="text-xs font-bold">{uploadError}</p>
           </div>
-          <button onClick={() => setUploadError('')} className="text-red-700 hover:text-red-900">
+          <button onClick={() => setUploadError('')} className="text-rose-700 hover:text-rose-950 p-1 cursor-pointer">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
       )}
 
       {/* Tabs & Data Controls Row */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-slate-100 p-2.5 rounded-2xl mb-6 no-print border border-slate-200">
-        <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-gradient-to-b from-white/90 via-slate-50/80 to-slate-100/80 p-3 rounded-2xl mb-6 no-print border border-white/90 shadow-[0_8px_20px_rgba(15,23,42,0.05),inset_0_1.5px_0_rgba(255,255,255,1)] w-full max-w-full backdrop-blur-md">
+        <div className="flex flex-wrap gap-2">
           <button 
             onClick={() => setActiveSubTab('report')}
-            className={`px-4 py-2 rounded-xl text-xs font-black transition-all border ${activeSubTab === 'report' ? 'bg-gradient-to-b from-blue-500 to-blue-700 text-white shadow-md border-blue-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+            className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all border cursor-pointer ${activeSubTab === 'report' ? 'bg-gradient-to-r from-blue-600 to-indigo-700 text-white shadow-md border-blue-500' : 'bg-white/90 text-slate-800 border-slate-300 hover:bg-slate-100'}`}
           >
             Alert Document
           </button>
           <button 
             onClick={() => setActiveSubTab('state')}
-            className={`px-4 py-2 rounded-xl text-xs font-black transition-all border ${activeSubTab === 'state' ? 'bg-gradient-to-b from-violet-500 to-violet-700 text-white shadow-md border-violet-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+            className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all border cursor-pointer ${activeSubTab === 'state' ? 'bg-gradient-to-r from-violet-600 to-purple-700 text-white shadow-md border-violet-500' : 'bg-white/90 text-slate-800 border-slate-300 hover:bg-slate-100'}`}
           >
             State Summary
           </button>
           <button 
             onClick={() => setActiveSubTab('district')}
-            className={`px-4 py-2 rounded-xl text-xs font-black transition-all border ${activeSubTab === 'district' ? 'bg-gradient-to-b from-orange-500 to-orange-700 text-white shadow-md border-orange-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+            className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all border cursor-pointer ${activeSubTab === 'district' ? 'bg-gradient-to-r from-orange-600 to-amber-700 text-white shadow-md border-orange-500' : 'bg-white/90 text-slate-800 border-slate-300 hover:bg-slate-100'}`}
           >
             District Summary
           </button>
           <button 
             onClick={() => setActiveSubTab('map')}
-            className={`px-4 py-2 rounded-xl text-xs font-black transition-all border ${activeSubTab === 'map' ? 'bg-gradient-to-b from-teal-500 to-teal-700 text-white shadow-md border-teal-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+            className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all border cursor-pointer ${activeSubTab === 'map' ? 'bg-gradient-to-r from-teal-600 to-emerald-700 text-white shadow-md border-teal-500' : 'bg-white/90 text-slate-800 border-slate-300 hover:bg-slate-100'}`}
           >
             Spatial Map
           </button>
           <button 
             onClick={() => setActiveSubTab('standards')}
-            className={`px-4 py-2 rounded-xl text-xs font-black transition-all border ${activeSubTab === 'standards' ? 'bg-gradient-to-b from-rose-500 to-rose-700 text-white shadow-md border-rose-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+            className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all border cursor-pointer ${activeSubTab === 'standards' ? 'bg-gradient-to-r from-rose-600 to-pink-700 text-white shadow-md border-rose-500' : 'bg-white/90 text-slate-800 border-slate-300 hover:bg-slate-100'}`}
           >
             Standards Table
           </button>
           <button 
             onClick={() => setActiveSubTab('treatments')}
-            className={`px-4 py-2 rounded-xl text-xs font-black transition-all border ${activeSubTab === 'treatments' ? 'bg-gradient-to-b from-cyan-500 to-cyan-700 text-white shadow-md border-cyan-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+            className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all border cursor-pointer ${activeSubTab === 'treatments' ? 'bg-gradient-to-r from-cyan-600 to-blue-700 text-white shadow-md border-cyan-500' : 'bg-white/90 text-slate-800 border-slate-300 hover:bg-slate-100'}`}
           >
             Treatment Measures
           </button>
         </div>
 
         <div className="flex flex-wrap gap-2 items-center">
-          <button onClick={downloadTemplate} className="px-3.5 py-2 rounded-xl font-bold text-white bg-gradient-to-b from-emerald-500 to-emerald-700 border border-emerald-800 shadow-[0_2px_0_rgb(6,95,70)] hover:from-emerald-400 hover:to-emerald-600 active:shadow-none active:translate-y-[2px] transition-all text-xs">
+          <button onClick={downloadTemplate} className="px-3.5 py-2 rounded-xl font-black text-white bg-gradient-to-b from-emerald-500 to-emerald-700 border border-emerald-800 shadow-[0_2px_0_rgb(6,95,70)] hover:from-emerald-400 hover:to-emerald-600 active:shadow-none active:translate-y-[2px] transition-all text-xs cursor-pointer">
             Template
           </button>
-          <label className="px-3.5 py-2 rounded-xl font-bold text-white bg-gradient-to-b from-blue-500 to-blue-700 border border-blue-800 shadow-[0_2px_0_rgb(30,58,138)] hover:from-blue-400 hover:to-blue-600 active:shadow-none active:translate-y-[2px] transition-all cursor-pointer text-xs flex items-center gap-1">
+          <label className="px-3.5 py-2 rounded-xl font-black text-white bg-gradient-to-b from-blue-500 to-blue-700 border border-blue-800 shadow-[0_2px_0_rgb(30,58,138)] hover:from-blue-400 hover:to-blue-600 active:shadow-none active:translate-y-[2px] transition-all cursor-pointer text-xs flex items-center gap-1">
             <Globe className="w-3.5 h-3.5" />
             Shapefile (ZIP)
             <input type="file" accept=".zip" className="hidden" onChange={handleShapefileUpload} />
           </label>
-          <label className="px-3.5 py-2 rounded-xl font-bold text-slate-700 bg-gradient-to-b from-white to-gray-200 border border-gray-300 shadow-[0_2px_0_rgb(156,163,175)] hover:from-gray-50 hover:to-gray-100 active:shadow-none active:translate-y-[2px] transition-all cursor-pointer text-xs flex items-center gap-1">
+          <label className="px-3.5 py-2 rounded-xl font-black text-slate-900 bg-gradient-to-b from-white to-slate-200 border border-slate-300 shadow-[0_2px_0_rgb(156,163,175)] hover:from-slate-50 hover:to-slate-100 active:shadow-none active:translate-y-[2px] transition-all cursor-pointer text-xs flex items-center gap-1">
             <Upload className="w-3.5 h-3.5" />
             Override Data
             <input type="file" accept=".xlsx, .xls, .csv" className="hidden" onChange={handleFileUpload} />
           </label>
           {internalRawData.length > 0 && (
-            <button onClick={() => setInternalRawData([])} className="px-3 py-2 rounded-xl font-bold text-white bg-red-600 hover:bg-red-700 transition-colors text-xs shadow-md">
+            <button onClick={() => setInternalRawData([])} className="px-3 py-2 rounded-xl font-black text-white bg-rose-600 hover:bg-rose-700 transition-colors text-xs shadow-md cursor-pointer">
               Clear Override
             </button>
           )}
@@ -1319,20 +1364,20 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
       ) : (
         <>
           {activeSubTab === 'report' && (
-            <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 items-start mb-8">
+            <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 items-start mb-8 w-full max-w-full min-w-0">
               {/* Left Side: Interactive Customization Panel */}
-              <div className="xl:col-span-1 bg-slate-50 border border-slate-200 rounded-2xl p-5 shadow-sm space-y-5 no-print">
+              <div className="xl:col-span-1 bg-gradient-to-b from-white/95 via-slate-50/90 to-slate-100/85 border border-white/90 rounded-2xl p-5 shadow-[0_12px_28px_rgba(15,23,42,0.06),inset_0_2px_0_rgba(255,255,255,1)] space-y-5 no-print w-full max-w-full min-w-0 backdrop-blur-lg">
                 <div>
-                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center gap-1 font-sans">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-900 mb-1 flex items-center gap-1.5 font-sans">
+                    <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" />
                     Interactive Customizer
                   </h3>
-                  <p className="text-[11px] text-slate-500 font-medium font-sans">Fine-tune your ground water alert pamphlet in real-time.</p>
+                  <p className="text-[11px] text-slate-700 font-extrabold font-sans">Fine-tune your ground water alert pamphlet in real-time.</p>
                 </div>
 
                 {/* Theme Selector */}
                 <div className="space-y-2">
-                  <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block font-sans">Pamphlet Color Accent</label>
+                  <label className="text-[11px] font-black text-slate-900 uppercase tracking-wider block font-sans">Pamphlet Color Accent</label>
                   <div className="grid grid-cols-2 gap-1.5 font-sans">
                     {[
                       { id: 'navy', label: 'Royal Navy', color: 'bg-blue-900 border-blue-950' },
@@ -1343,9 +1388,9 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
                       <button
                         key={theme.id}
                         onClick={() => setThemeColor(theme.id as any)}
-                        className={`p-1.5 rounded-lg border text-[10px] font-black text-left flex items-center gap-1.5 transition-all ${themeColor === theme.id ? 'bg-white text-slate-900 shadow-sm border-slate-300 ring-2 ring-indigo-500' : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                        className={`p-2 rounded-xl border text-[11px] font-black text-left flex items-center gap-1.5 transition-all cursor-pointer ${themeColor === theme.id ? 'bg-white text-slate-950 shadow-md border-indigo-400 ring-2 ring-indigo-500' : 'bg-white/80 text-slate-700 border-slate-200 hover:bg-white'}`}
                       >
-                        <span className={`w-3 h-3 rounded-full ${theme.color} border`}></span>
+                        <span className={`w-3.5 h-3.5 rounded-full ${theme.color} border shrink-0`}></span>
                         {theme.label}
                       </button>
                     ))}
@@ -1437,9 +1482,9 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
               </div>
 
               {/* Right Side: The Pamphlet View */}
-              <div className="xl:col-span-3 bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden">
+              <div className="xl:col-span-3 bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden w-full max-w-full min-w-0">
                 {/* Print Control Header */}
-                <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex justify-between items-center no-print font-sans">
+                <div className="bg-slate-50 px-4 sm:px-6 py-4 border-b border-slate-100 flex flex-wrap gap-2 justify-between items-center no-print font-sans">
                   <div className="flex items-center gap-1.5">
                     <span className="relative flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -1460,15 +1505,15 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
                 </div>
 
                 {/* The actual formatted publication document with print-container */}
-                <div className="print-container overflow-hidden">
+                <div className="print-container overflow-hidden w-full max-w-full min-w-0">
                   <div 
-                    className="p-8 md:p-12 text-gray-950 text-justify leading-relaxed text-[13.5px] max-w-4xl mx-auto relative transition-all duration-300 antialiased subpixel-antialiased"
+                    className="p-4 sm:p-6 md:p-10 text-gray-950 text-justify leading-relaxed text-[13.5px] max-w-4xl mx-auto relative transition-all duration-300 antialiased subpixel-antialiased w-full box-border"
                     style={{ 
                       fontFamily: 
                         contaminationFont === 'times' ? "'Times New Roman', Times, serif" :
                         contaminationFont === 'calibri' ? "Calibri, Candara, Segoe, 'Segoe UI', Optima, Arial, sans-serif" :
                         contaminationFont === 'mono' ? "'JetBrains Mono', monospace" : "Inter, system-ui, sans-serif",
-                      margin: "16px",
+                      margin: "16px auto",
                       textRendering: "optimizeLegibility",
                       WebkitFontSmoothing: "antialiased",
                       MozOsxFontSmoothing: "grayscale"
@@ -1484,32 +1529,34 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
                     </div>
                     
                     {/* Metadata Table */}
-                    <table className="w-full border-collapse border border-black mb-6 text-xs text-center">
-                      <tbody>
-                        <tr>
-                          <td className="border border-black p-2 font-bold bg-slate-50 w-1/4">Location</td>
-                          <td className="border border-black p-2 w-1/4 font-semibold">{reportLocation}</td>
-                          <td className="border border-black p-2 font-bold bg-slate-50 w-1/4">Analysis Period</td>
-                          <td className="border border-black p-2 w-1/4 text-left font-semibold">
-                            <div>From: {fromDate.split('-').reverse().join('/')}</div>
-                            <div>To: {toDate.split('-').reverse().join('/')}</div>
-                          </td>
-                        </tr>
-                        <tr>
-                          <td className="border border-black p-2 font-bold bg-slate-50">Issue Date</td>
-                          <td className="border border-black p-2 text-left font-semibold">
-                            {issueDate.split('-').reverse().join('/')}
-                          </td>
-                          <td className="border border-black p-2 font-bold bg-slate-50">Issuing Office</td>
-                          <td className="border border-black p-2 font-semibold">{getIssuingOffice()}</td>
-                        </tr>
-                      </tbody>
-                    </table>
+                    <div className="w-full max-w-full overflow-x-auto custom-scrollbar mb-6">
+                      <table className="w-full border-collapse border border-black text-xs text-center min-w-[500px]">
+                        <tbody>
+                          <tr>
+                            <td className="border border-black p-2 font-bold bg-slate-50 w-1/4">Location</td>
+                            <td className="border border-black p-2 w-1/4 font-semibold">{reportLocation}</td>
+                            <td className="border border-black p-2 font-bold bg-slate-50 w-1/4">Analysis Period</td>
+                            <td className="border border-black p-2 w-1/4 text-left font-semibold">
+                              <div>From: {fromDate.split('-').reverse().join('/')}</div>
+                              <div>To: {toDate.split('-').reverse().join('/')}</div>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className="border border-black p-2 font-bold bg-slate-50">Issue Date</td>
+                            <td className="border border-black p-2 text-left font-semibold">
+                              {issueDate.split('-').reverse().join('/')}
+                            </td>
+                            <td className="border border-black p-2 font-bold bg-slate-50">Issuing Office</td>
+                            <td className="border border-black p-2 font-semibold">{getIssuingOffice()}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
 
                     {(() => {
                       const overallTotal = reportTableData.reduce((sum, row) => {
                         const man = manualTotals[row.key];
-                        const val = (man !== undefined && man !== '') ? (parseInt(man as string, 10) || 0) : row.total;
+                        const val = (man !== undefined && man !== '') ? (parseInt(man as unknown as string, 10) || 0) : row.total;
                         return sum + (isNaN(val) ? 0 : val);
                       }, 0);
 
@@ -1673,7 +1720,7 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
 
           {activeSubTab === 'map' && (
             <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-8">
-              <MapContainer data={processedRawData} limits={limits} geoJsonData={geoJsonData} />
+              <MapContainer data={processedRawData} limits={limits} geoJsonData={geoJsonData} activeSubTab={activeSubTab} />
               <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-100 flex items-center gap-3">
                   <div className="w-4.5 h-4.5 rounded-full bg-emerald-500"></div>

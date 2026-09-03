@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import Highcharts from "highcharts";
 import { DataHeaders } from "../types";
-import { PARAM_CONFIG } from "../data/config";
+import { PARAM_CONFIG, hasBisLimit } from "../data/config";
 import { BarChart3 } from "lucide-react";
 
 interface ComparisonsViewProps {
@@ -17,6 +17,7 @@ interface ExceedanceTableItem {
   paramName: string;
   limitStr: string;
   totalSamples: number;
+  exceedSamples: number;
   exceedPct: string;
 }
 
@@ -34,7 +35,14 @@ export default function ComparisonsView({
   // Calculate comparative exceedance data as memoized derived state
   const computedData = useMemo(() => {
     if (!rawData.length || !headers.params || headers.params.length === 0) {
-      return { categories: [], dataSeries: [], tableItems: [] };
+      return {
+        categories: [],
+        dataSeries: [],
+        tableItems: [],
+        totalValidSamplesSum: 0,
+        totalExceedSamplesSum: 0,
+        overallPct: "0.00",
+      };
     }
 
     // Filter Raw Data
@@ -54,11 +62,13 @@ export default function ComparisonsView({
     const dataSeries: any[] = [];
     const tableItems: ExceedanceTableItem[] = [];
     let slNo = 1;
+    let totalValidSamplesSum = 0;
+    let totalExceedSamplesSum = 0;
 
     headers.params.forEach((paramName) => {
-      const configKey = headerMap[paramName];
-      if (configKey === "CO3" || configKey === "HCO3" || configKey === "Na" || configKey === "K") return;
-      const config = PARAM_CONFIG[configKey];
+      const configKey = headerMap[paramName] || paramName;
+      if (!hasBisLimit(configKey) && !hasBisLimit(paramName)) return;
+      const config = PARAM_CONFIG[configKey] || PARAM_CONFIG[paramName];
       if (!config) return;
 
       const isSingleLimit = config.b1 === config.b2 && configKey !== "pH";
@@ -75,11 +85,13 @@ export default function ComparisonsView({
         } else if (isSingleLimit) {
           if (v > config.b1) exceedSamples++;
         } else {
-          if (v > config.b2) exceedSamples++; // Compares against Permissible limit limit (b2)
+          if (v > config.b2) exceedSamples++; // Compares against Permissible limit (b2)
         }
       });
 
       if (validSamples > 0) {
+        totalValidSamplesSum += validSamples;
+        totalExceedSamplesSum += exceedSamples;
         const pct = (exceedSamples / validSamples) * 100;
         
         if (pct >= threshold) {
@@ -95,9 +107,9 @@ export default function ComparisonsView({
           if (configKey === "pH") {
             limitStr = `< ${config.b1} or > ${config.b2}`;
           } else if (isSingleLimit) {
-            limitStr = `> ${config.b1} ${config.unit}`;
+            limitStr = `> ${config.b1} ${config.unit || ""}`.trim();
           } else {
-            limitStr = `> ${config.b2} ${config.unit}`;
+            limitStr = `> ${config.b2} ${config.unit || ""}`.trim();
           }
 
           tableItems.push({
@@ -105,16 +117,36 @@ export default function ComparisonsView({
             paramName,
             limitStr,
             totalSamples: validSamples,
+            exceedSamples: exceedSamples,
             exceedPct: pct.toFixed(decimals),
           });
         }
       }
     });
 
-    return { categories, dataSeries, tableItems };
+    const overallPct =
+      totalValidSamplesSum > 0
+        ? ((totalExceedSamplesSum / totalValidSamplesSum) * 100).toFixed(decimals)
+        : "0.00";
+
+    return {
+      categories,
+      dataSeries,
+      tableItems,
+      totalValidSamplesSum,
+      totalExceedSamplesSum,
+      overallPct,
+    };
   }, [rawData, headers, headerMap, selectedState, selectedDistrict, threshold, decimals]);
 
-  const { categories, dataSeries, tableItems } = computedData;
+  const {
+    categories,
+    dataSeries,
+    tableItems,
+    totalValidSamplesSum,
+    totalExceedSamplesSum,
+    overallPct,
+  } = computedData;
 
   // Render Highcharts chart when container mounts or data changes
   useEffect(() => {
@@ -140,8 +172,8 @@ export default function ComparisonsView({
             gridLineColor: "#e2e8f0",
           },
           tooltip: {
-            headerFormat: '<span style="font-size: 10px">{point.key}</span><br/>',
-            pointFormat: `Exceedance ratio: <b>{point.y:.${decimals}f}%</b><br/>({point.samples} out of {point.total} samples failed)`,
+            headerFormat: '<span style="font-size: 11px; font-weight: bold;">{point.key}</span><br/>',
+            pointFormat: `Samples Above Permissible Limit: <b>{point.samples}</b> (out of {point.total} valid samples)<br/>Exceedance Ratio: <b>{point.y:.${decimals}f}%</b>`,
           },
           plotOptions: {
             column: {
@@ -149,8 +181,8 @@ export default function ComparisonsView({
               borderRadius: 6,
               dataLabels: {
                 enabled: true,
-                format: `{point.y:.${decimals}f}%`,
-                style: { fontSize: "10.5px", color: "#1e293b", textOutline: "none" },
+                format: `{point.y:.${decimals}f}% ({point.samples})`,
+                style: { fontSize: "10.5px", color: "#1e293b", textOutline: "none", fontWeight: "bold" },
                 crop: false,
                 overflow: "allow",
               },
@@ -173,9 +205,47 @@ export default function ComparisonsView({
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 border-b border-slate-100 pb-4">
           <h3 className="text-lg font-black text-slate-800 flex items-center gap-2 drop-shadow-sm">
             <BarChart3 className="w-5 h-5 text-indigo-500" />
-            Parameter Exceedance Comparison (% Above Permissible Limit)
+            Parameter Exceedance Comparison (% & Counts Above Permissible Limit)
           </h3>
         </div>
+
+        {/* KPI Summary Cards */}
+        {tableItems.length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div className="bg-slate-50 border border-slate-200/80 p-4 rounded-2xl shadow-xs">
+              <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider block mb-1">
+                Parameters Assessed
+              </span>
+              <span className="text-xl font-black text-slate-800">
+                {tableItems.length}
+              </span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 p-4 rounded-2xl shadow-xs">
+              <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider block mb-1">
+                Total Valid Samples
+              </span>
+              <span className="text-xl font-black text-indigo-600">
+                {totalValidSamplesSum.toLocaleString()}
+              </span>
+            </div>
+            <div className="bg-rose-50/50 border border-rose-200/80 p-4 rounded-2xl shadow-xs">
+              <span className="text-[10px] font-black uppercase text-rose-600 tracking-wider block mb-1">
+                Samples Above Limit
+              </span>
+              <span className="text-xl font-black text-rose-600">
+                {totalExceedSamplesSum.toLocaleString()}
+              </span>
+            </div>
+            <div className="bg-amber-50/50 border border-amber-200/80 p-4 rounded-2xl shadow-xs">
+              <span className="text-[10px] font-black uppercase text-amber-700 tracking-wider block mb-1">
+                Overall Exceedance Ratio
+              </span>
+              <span className="text-xl font-black text-amber-700">
+                {overallPct}%
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Custom filters panel range slider layout */}
         <div className="bg-white/40 shadow-inner p-6 rounded-2xl mb-6 grid grid-cols-1 md:grid-cols-3 gap-6 border border-white/60 backdrop-blur-sm">
@@ -270,16 +340,19 @@ export default function ComparisonsView({
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="p-4 font-black text-slate-500 uppercase tracking-tighter w-16 text-center border-r border-slate-100">Sl. No.</th>
-                <th className="p-4 font-black text-slate-500 uppercase tracking-tighter">Parameter Header</th>
-                <th className="p-4 font-black text-slate-500 uppercase tracking-tighter">Failure Criteria (Permissible Limit)</th>
-                <th className="p-4 font-black text-slate-500 uppercase tracking-tighter text-center">Total Valid Samples</th>
-                <th className="p-4 font-black text-rose-600 uppercase tracking-tighter text-center bg-rose-50/40">Exceedance Percentage</th>
+                <th className="p-4 font-black text-slate-500 uppercase tracking-tighter border-r border-slate-100">Parameter Header</th>
+                <th className="p-4 font-black text-slate-500 uppercase tracking-tighter border-r border-slate-100">Failure Criteria (Permissible Limit)</th>
+                <th className="p-4 font-black text-slate-500 uppercase tracking-tighter text-center border-r border-slate-100">Total Valid Samples</th>
+                <th className="p-4 font-black text-rose-700 uppercase tracking-tighter text-center border-r border-slate-100 bg-rose-50/70">
+                  No. of Samples Above Permissible Limit
+                </th>
+                <th className="p-4 font-black text-rose-700 uppercase tracking-tighter text-center bg-rose-50/40">Exceedance Percentage</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium">
               {tableItems.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-12 text-center text-slate-400 font-bold uppercase tracking-wider bg-white">
+                  <td colSpan={6} className="p-12 text-center text-slate-400 font-bold uppercase tracking-wider bg-white">
                     No data uploaded yet. Please upload a spreadsheet to view comparative exceedance stats.
                   </td>
                 </tr>
@@ -290,6 +363,9 @@ export default function ComparisonsView({
                     <td className="p-4 font-black text-slate-800 border-r border-slate-100">{row.paramName}</td>
                     <td className="p-4 border-r border-slate-100 font-bold text-indigo-700">{row.limitStr}</td>
                     <td className="p-4 text-center border-r border-slate-100 font-bold">{row.totalSamples}</td>
+                    <td className="p-4 text-center border-r border-slate-100 font-black text-sm text-rose-600 bg-rose-50/30">
+                      {row.exceedSamples.toLocaleString()}
+                    </td>
                     <td className="p-4 text-center font-black text-sm text-rose-600 bg-rose-50/10">
                       {row.exceedPct}%
                     </td>
@@ -297,6 +373,24 @@ export default function ComparisonsView({
                 ))
               )}
             </tbody>
+            {tableItems.length > 0 && (
+              <tfoot className="bg-slate-900 text-white font-bold border-t-2 border-slate-800">
+                <tr>
+                  <td colSpan={3} className="p-4 text-right uppercase tracking-wider font-black text-xs border-r border-slate-800">
+                    Grand Total
+                  </td>
+                  <td className="p-4 text-center font-black border-r border-slate-800">
+                    {totalValidSamplesSum.toLocaleString()}
+                  </td>
+                  <td className="p-4 text-center font-black border-r border-slate-800 text-rose-300 bg-rose-950/40">
+                    {totalExceedSamplesSum.toLocaleString()}
+                  </td>
+                  <td className="p-4 text-center font-black text-rose-300 bg-rose-950/20">
+                    {overallPct}%
+                  </td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
 

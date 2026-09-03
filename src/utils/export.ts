@@ -4,6 +4,7 @@ import JSZip from "jszip";
  * Clean vector SVG Generator to fallback safely if conversion fails
  */
 function sanitizeSvgStringForCanvas(svgStr: string): string {
+  if (!svgStr) return "";
   let clean = svgStr;
   // 1. Remove @import rules (which trigger cross-origin blocking in sandboxed SVGs)
   clean = clean.replace(/@import\s+url\([^)]+\);?/gi, "");
@@ -15,19 +16,24 @@ function sanitizeSvgStringForCanvas(svgStr: string): string {
   // 3. Strip external web fonts or absolute URLs in font-face/imports
   clean = clean.replace(/url\(['"]?https?:[^'"()]+['"]?\)/gi, "none");
   
+  // 4. Strip <font-face> or @font-face blocks with external fonts
+  clean = clean.replace(/@font-face\s*\{[^}]*\}/gi, "");
+
+  // 5. Replace external web fonts with standard system fonts
+  clean = clean.replace(/font-family\s*:\s*['"]?(?:Plus Jakarta Sans|Inter|Roboto|Open Sans|Montserrat|Lato|Poppins|Nunito|Raleway)['"]?/gi, "font-family: Arial, sans-serif");
+  clean = clean.replace(/font-family\s*=\s*["']?(?:Plus Jakarta Sans|Inter|Roboto|Open Sans|Montserrat|Lato|Poppins|Nunito|Raleway)["']?/gi, 'font-family="Arial, sans-serif"');
+
+  // 6. Strip any external images or cross-origin xlink:href
+  clean = clean.replace(/href=["']https?:[^"']+["']/gi, 'href=""');
+  clean = clean.replace(/xlink:href=["']https?:[^"']+["']/gi, 'xlink:href=""');
+
   return clean;
 }
 
 function stringToBase64(str: string): string {
   try {
     const bytes = new TextEncoder().encode(str);
-    let binary = "";
-    const chunkSize = 8192;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      const chunk = bytes.subarray(i, i + chunkSize);
-      binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
-    }
-    return window.btoa(binary);
+    return bytesToBase64(bytes);
   } catch (e) {
     console.error("[Export] stringToBase64 failed:", e);
     try {
@@ -132,9 +138,20 @@ async function ensureBase64Image(src: string): Promise<string> {
   
   try {
     return new Promise((resolve) => {
+      let resolved = false;
+      const timer = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          resolve(src);
+        }
+      }, 2000);
+
       const img = new Image();
       img.crossOrigin = "anonymous";
       img.onload = () => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
         try {
           const canvas = document.createElement("canvas");
           canvas.width = img.naturalWidth || img.width || 800;
@@ -153,6 +170,9 @@ async function ensureBase64Image(src: string): Promise<string> {
         resolve(src);
       };
       img.onerror = (e) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
         console.warn("[Export] ensureBase64Image loading failed for src:", src, e);
         resolve(src);
       };
@@ -182,26 +202,39 @@ async function convertSvgToPngDataUrl(svgString: string, fallbackDataUrl: string
 
     const timeoutTimer = setTimeout(() => {
       if (!isResolved) {
-        console.warn("[Export] SVG-to-PNG conversion timed out, using fallback DataURL.");
-        safeResolve(fallbackDataUrl);
+        console.warn("[Export] SVG-to-PNG conversion timed out, returning empty or fallback PNG.");
+        safeResolve("");
       }
-    }, 3000);
+    }, 4000);
 
-    let parsedSvg = svgString;
-    if (parsedSvg && !parsedSvg.includes("xmlns:xlink=")) {
+    let parsedSvg = sanitizeSvgStringForCanvas(svgString || "");
+
+    // Clean up unescaped entities that break XML parser in SVG images
+    parsedSvg = parsedSvg
+      .replace(/&mu;/g, "μ")
+      .replace(/&plusmn;/g, "±")
+      .replace(/&deg;/g, "°")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&sup2;/g, "²")
+      .replace(/&sup3;/g, "³")
+      .replace(/&radic;/g, "√")
+      .replace(/&(?!(amp|lt|gt|quot|apos|#\d+);)/g, "&amp;");
+
+    if (!parsedSvg.includes('xmlns="http://www.w3.org/2000/svg"')) {
+      parsedSvg = parsedSvg.replace(/<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+    }
+    if (!parsedSvg.includes("xmlns:xlink=")) {
       parsedSvg = parsedSvg.replace(/<svg/i, `<svg xmlns:xlink="http://www.w3.org/1999/xlink"`);
     }
-    if (parsedSvg && parsedSvg.includes("<image") && !parsedSvg.includes("xlink:href=")) {
-      parsedSvg = parsedSvg.replace(/href=/g, 'xlink:href=');
+
+    if (!parsedSvg.includes("text-rendering")) {
+      if (/<svg[^>]*\bstyle=["']/i.test(parsedSvg)) {
+        parsedSvg = parsedSvg.replace(/(<svg[^>]*\bstyle=["'])/i, '$1text-rendering: geometricPrecision; shape-rendering: geometricPrecision; image-rendering: high-quality; ');
+      } else {
+        parsedSvg = parsedSvg.replace(/<svg/i, '<svg style="text-rendering: geometricPrecision; shape-rendering: geometricPrecision; image-rendering: high-quality;"');
+      }
     }
 
-    // Inject SVG rendering quality hints if missing
-    if (parsedSvg && !parsedSvg.includes("text-rendering")) {
-      parsedSvg = parsedSvg.replace(/<svg/i, `<svg style="text-rendering: geometricPrecision; shape-rendering: geometricPrecision; image-rendering: high-quality;"`);
-    }
-
-    // CRITICAL: Ensure viewBox is set and replace root width/height with targetW and targetH
-    // so the browser's native Image SVG rasterizer renders vectors at 100% full high-DPI resolution!
     if (parsedSvg) {
       const viewBoxMatch = parsedSvg.match(/<svg[^>]*\bviewBox=["']([^"']+)["']/i);
       const widthMatch = parsedSvg.match(/<svg[^>]*\bwidth=["'](\d+(?:\.\d+)?)%?["']/i);
@@ -222,65 +255,65 @@ async function convertSvgToPngDataUrl(svgString: string, fallbackDataUrl: string
     canvas.width = targetW;
     canvas.height = targetH;
     const ctx = canvas.getContext("2d");
+
     if (!ctx) {
-      safeResolve(fallbackDataUrl);
+      safeResolve("");
       return;
     }
 
-    // High quality canvas anti-aliasing & image smoothing
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, targetW, targetH);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
 
     const img = new Image();
+    img.crossOrigin = "anonymous";
 
-    const handleSuccess = () => {
+    let blobUrl = "";
+    try {
+      const blob = new Blob([parsedSvg], { type: "image/svg+xml;charset=utf-8" });
+      blobUrl = URL.createObjectURL(blob);
+    } catch (_) {}
+
+    img.onload = () => {
       try {
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(0, 0, targetW, targetH);
         ctx.drawImage(img, 0, 0, targetW, targetH);
-        safeResolve(canvas.toDataURL("image/png"));
+        if (blobUrl) URL.revokeObjectURL(blobUrl);
+        const pngUrl = canvas.toDataURL("image/png");
+        safeResolve(pngUrl);
       } catch (e) {
-        console.warn("[Export] Canvas drawing failed in convertSvgToPngDataUrl, using fallback:", e);
-        safeResolve(fallbackDataUrl);
+        console.warn("[Export] Canvas drawing failed in convertSvgToPngDataUrl:", e);
+        if (blobUrl) URL.revokeObjectURL(blobUrl);
+        safeResolve("");
       }
     };
-
-    img.onload = handleSuccess;
 
     img.onerror = () => {
-      console.warn("[Export] Direct SVG base64 load failed, trying Blob-URL fallback...");
-      const blobImg = new Image();
-      let blobUrl = "";
-      try {
-        const blob = new Blob([parsedSvg], { type: "image/svg+xml;charset=utf-8" });
-        blobUrl = URL.createObjectURL(blob);
-        blobImg.onload = () => {
-          try {
-            ctx.fillStyle = "#ffffff";
-            ctx.fillRect(0, 0, targetW, targetH);
-            ctx.drawImage(blobImg, 0, 0, targetW, targetH);
-            URL.revokeObjectURL(blobUrl);
-            safeResolve(canvas.toDataURL("image/png"));
-          } catch (_) {
-            if (blobUrl) URL.revokeObjectURL(blobUrl);
-            safeResolve(fallbackDataUrl);
-          }
-        };
-        blobImg.onerror = () => {
-          if (blobUrl) URL.revokeObjectURL(blobUrl);
-          safeResolve(fallbackDataUrl);
-        };
-        blobImg.src = blobUrl;
-      } catch (err) {
-        if (blobUrl) URL.revokeObjectURL(blobUrl);
-        safeResolve(fallbackDataUrl);
-      }
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      // Fallback method using URI-encoded SVG data
+      const dataImg = new Image();
+      dataImg.onload = () => {
+        try {
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, targetW, targetH);
+          ctx.drawImage(dataImg, 0, 0, targetW, targetH);
+          safeResolve(canvas.toDataURL("image/png"));
+        } catch (_) {
+          safeResolve("");
+        }
+      };
+      dataImg.onerror = () => {
+        safeResolve("");
+      };
+      dataImg.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(parsedSvg);
     };
 
-    if (parsedSvg) {
-      img.src = "data:image/svg+xml;base64," + stringToBase64(parsedSvg);
+    if (blobUrl) {
+      img.src = blobUrl;
     } else {
-      img.src = fallbackDataUrl;
+      img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(parsedSvg);
     }
   });
 }
@@ -305,261 +338,267 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
 
   // 1. Process all existing <img> tags first (convert remote urls, blob:, canvas, objects, etc. to standard Base64 PNGs)
   console.log("[Export] Validating and converting existing images to Base64...");
-  for (let i = 0; i < initialImages.length; i++) {
-    const img = initialImages[i];
-    const src = img.getAttribute("src") || "";
-    
-    if (src) {
-      if (src.startsWith("data:image/svg+xml")) {
-        // High-resolution SVG-in-image conversion
-        try {
-          const imgWidth = img.getAttribute("width") || "550";
-          const imgHeight = img.getAttribute("height") || "400";
-          const w = Math.max(50, parseInt(imgWidth, 10) || 550);
-          const h = Math.max(50, parseInt(imgHeight, 10) || 400);
-
-          const scaleFactor = 8.0; // High-resolution (600 DPI equivalent)
-          let targetW = Math.round(w * scaleFactor);
-          let targetH = Math.round(h * scaleFactor);
-
-          const maxDimension = 8192;
-          if (targetW > maxDimension || targetH > maxDimension) {
-            const ratio = Math.min(maxDimension / targetW, maxDimension / targetH);
-            targetW = Math.round(targetW * ratio);
-            targetH = Math.round(targetH * ratio);
-          }
-
-          const scaledSrc = scaleAndSanitizeSvgDataUrl(src, targetW, targetH);
-          let svgText = "";
+  await Promise.all(
+    initialImages.map(async (img) => {
+      const src = img.getAttribute("src") || "";
+      
+      if (src) {
+        if (src.startsWith("data:image/svg+xml")) {
+          // High-resolution SVG-in-image conversion
           try {
-            const parsed = parseSvgDataUrl(scaledSrc);
-            svgText = parsed.decoded || "";
-            if (svgText) {
-              svgText = svgText
-                .replace(/&nbsp;/g, "&#160;")
-                .replace(/&deg;/g, "&#176;")
-                .replace(/&mu;/g, "&#956;")
-                .replace(/&plusmn;/g, "&#177;")
-                .replace(/&sup2;/g, "&#178;")
-                .replace(/&sup3;/g, "&#179;");
-            }
-          } catch (_) {}
+            const imgWidth = img.getAttribute("width") || "550";
+            const imgHeight = img.getAttribute("height") || "400";
+            const w = Math.max(50, parseInt(imgWidth, 10) || 550);
+            const h = Math.max(50, parseInt(imgHeight, 10) || 400);
 
-          // 3-attempt retry conversion
-          let pngDataUrl = "";
-          for (let attempt = 1; attempt <= 3; attempt++) {
+            const scaleFactor = 2.0; // Optimized high-DPI scaling (300 DPI equivalent) without browser memory freeze
+            let targetW = Math.round(w * scaleFactor);
+            let targetH = Math.round(h * scaleFactor);
+
+            const maxDimension = 4096;
+            if (targetW > maxDimension || targetH > maxDimension) {
+              const ratio = Math.min(maxDimension / targetW, maxDimension / targetH);
+              targetW = Math.round(targetW * ratio);
+              targetH = Math.round(targetH * ratio);
+            }
+
+            const scaledSrc = scaleAndSanitizeSvgDataUrl(src, targetW, targetH);
+            let svgText = "";
             try {
-              pngDataUrl = await convertSvgToPngDataUrl(svgText, scaledSrc, targetW, targetH);
-              if (pngDataUrl && pngDataUrl.startsWith("data:image/png")) {
+              const parsed = parseSvgDataUrl(scaledSrc);
+              svgText = parsed.decoded || "";
+              if (svgText) {
+                svgText = svgText
+                  .replace(/&nbsp;/g, "&#160;")
+                  .replace(/&deg;/g, "&#176;")
+                  .replace(/&mu;/g, "&#956;")
+                  .replace(/&plusmn;/g, "&#177;")
+                  .replace(/&sup2;/g, "&#178;")
+                  .replace(/&sup3;/g, "&#179;");
+              }
+            } catch (_) {}
+
+            let pngDataUrl = "";
+            for (let attempt = 1; attempt <= 2; attempt++) {
+              try {
+                pngDataUrl = await convertSvgToPngDataUrl(svgText, scaledSrc, targetW, targetH);
+                if (pngDataUrl && pngDataUrl.startsWith("data:image/png")) {
+                  break;
+                }
+              } catch (err) {
+                console.warn(`[Export] SVG-Image Conversion Attempt ${attempt} failed:`, err);
+                if (attempt < 2) await new Promise((r) => setTimeout(r, 50));
+              }
+            }
+            
+            if (pngDataUrl) {
+              img.setAttribute("src", pngDataUrl);
+            }
+          } catch (err) {
+            console.error("[Export] Failed to convert image SVG to PNG:", err);
+          }
+        } else if (!src.startsWith("data:image/png") && !src.startsWith("data:image/jpeg")) {
+          // Remote or blob URL conversion
+          let base64Src = "";
+          for (let attempt = 1; attempt <= 2; attempt++) {
+            try {
+              base64Src = await ensureBase64Image(src);
+              if (base64Src && base64Src.startsWith("data:image/png")) {
                 break;
               }
             } catch (err) {
-              console.warn(`[Export] SVG-Image Conversion Attempt ${attempt} failed:`, err);
-              if (attempt < 3) await new Promise((r) => setTimeout(r, 200 * attempt));
+              console.warn(`[Export] Blob/Remote Image Conversion Attempt ${attempt} failed:`, err);
+              if (attempt < 2) await new Promise((r) => setTimeout(r, 50));
             }
           }
-          
-          if (pngDataUrl) {
-            img.setAttribute("src", pngDataUrl);
+          if (base64Src) {
+            img.setAttribute("src", base64Src);
           }
-        } catch (err) {
-          console.error("[Export] Failed to convert image SVG to PNG:", err);
-        }
-      } else if (!src.startsWith("data:image/png") && !src.startsWith("data:image/jpeg")) {
-        // Remote or blob URL conversion
-        let base64Src = "";
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          try {
-            base64Src = await ensureBase64Image(src);
-            if (base64Src && base64Src.startsWith("data:image/png")) {
-              break;
-            }
-          } catch (err) {
-            console.warn(`[Export] Blob/Remote Image Conversion Attempt ${attempt} failed:`, err);
-            if (attempt < 3) await new Promise((r) => setTimeout(r, 200 * attempt));
-          }
-        }
-        if (base64Src) {
-          img.setAttribute("src", base64Src);
         }
       }
-    }
-  }
+    })
+  );
 
   // 2. Process all inline <svg> elements (like the Piper Diagrams) and convert them to crisp, high-resolution base64 PNGs
   console.log("[Export] Processing inline SVGs...");
   const svgs = Array.from(div.getElementsByTagName("svg"));
-  for (let i = 0; i < svgs.length; i++) {
-    const svg = svgs[i];
-    try {
-      if (!svg.getAttribute("xmlns")) {
-        svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-      }
-      
-      const svgWidth = svg.getAttribute("width") || "550";
-      const svgHeight = svg.getAttribute("height") || "400";
-      const viewBox = svg.getAttribute("viewBox");
-      const style = svg.getAttribute("style");
-      
-      let w = parseInt(svgWidth, 10) || 550;
-      let h = parseInt(svgHeight, 10) || 400;
-      if (viewBox) {
-        const parts = viewBox.split(/[\s,]+/).filter(Boolean);
-        if (parts.length === 4) {
-          w = Math.round(parseFloat(parts[2])) || w;
-          h = Math.round(parseFloat(parts[3])) || h;
+  await Promise.all(
+    svgs.map(async (svg, i) => {
+      try {
+        if (!svg.getAttribute("xmlns")) {
+          svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
         }
-      }
-
-      const svgString = new XMLSerializer().serializeToString(svg);
-      let sanitizedSvgString = sanitizeSvgStringForCanvas(svgString);
-
-      sanitizedSvgString = sanitizedSvgString
-        .replace(/&nbsp;/g, "&#160;")
-        .replace(/&deg;/g, "&#176;")
-        .replace(/&mu;/g, "&#956;")
-        .replace(/&plusmn;/g, "&#177;")
-        .replace(/&sup2;/g, "&#178;")
-        .replace(/&sup3;/g, "&#179;")
-        .replace(/&(?!(amp|lt|gt|quot|apos|#\d+);)/g, "&amp;");
-
-      const scaleFactor = 8.0; // High-resolution (600 DPI equivalent)
-      let targetW = Math.max(100, Math.round(w * scaleFactor) || 550);
-      let targetH = Math.max(100, Math.round(h * scaleFactor) || 400);
-
-      const maxDimension = 8192;
-      if (targetW > maxDimension || targetH > maxDimension) {
-        const ratio = Math.min(maxDimension / targetW, maxDimension / targetH);
-        targetW = Math.round(targetW * ratio);
-        targetH = Math.round(targetH * ratio);
-      }
-
-      if (!/<svg[^>]*\bviewBox=/i.test(sanitizedSvgString)) {
-        sanitizedSvgString = sanitizedSvgString.replace(/<svg/i, `<svg viewBox="0 0 ${w} ${h}"`);
-      }
-
-      sanitizedSvgString = sanitizedSvgString.replace(/<svg([^>]*)\bwidth\s*=\s*["'][^"']*["']/i, '<svg$1');
-      sanitizedSvgString = sanitizedSvgString.replace(/<svg([^>]*)\bheight\s*=\s*["'][^"']*["']/i, '<svg$1');
-      sanitizedSvgString = sanitizedSvgString.replace(/<svg/i, `<svg width="${targetW}" height="${targetH}"`);
-
-      const base64 = stringToBase64(sanitizedSvgString);
-      const dataUrl = `data:image/svg+xml;base64,${base64}`;
-
-      // 3-attempt retry conversion
-      let pngDataUrl = "";
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          console.log(`[Export] Converting SVG ${i + 1}/${svgs.length} (Attempt ${attempt}/3). Target Dimensions: ${targetW}x${targetH}`);
-          pngDataUrl = await convertSvgToPngDataUrl(sanitizedSvgString, dataUrl, targetW, targetH);
-          if (pngDataUrl && pngDataUrl.startsWith("data:image/png")) {
-            console.log(`[Export] Successfully converted SVG ${i + 1}/${svgs.length} on attempt ${attempt}`);
-            break;
-          }
-        } catch (err) {
-          console.warn(`[Export] Attempt ${attempt} failed for SVG ${i + 1}:`, err);
-          if (attempt === 3) {
-            pngDataUrl = dataUrl; // fallback
-          } else {
-            await new Promise((r) => setTimeout(r, 200 * attempt));
+        
+        const svgWidth = svg.getAttribute("width") || "550";
+        const svgHeight = svg.getAttribute("height") || "400";
+        const viewBox = svg.getAttribute("viewBox");
+        const style = svg.getAttribute("style");
+        
+        let w = parseInt(svgWidth, 10) || 550;
+        let h = parseInt(svgHeight, 10) || 400;
+        if (viewBox) {
+          const parts = viewBox.split(/[\s,]+/).filter(Boolean);
+          if (parts.length === 4) {
+            w = Math.round(parseFloat(parts[2])) || w;
+            h = Math.round(parseFloat(parts[3])) || h;
           }
         }
-      }
 
-      const img = document.createElement("img");
-      img.src = pngDataUrl;
-      img.setAttribute("width", w.toString());
-      img.setAttribute("height", h.toString());
-      if (style) {
-        img.setAttribute("style", style);
-      } else {
-        img.setAttribute("style", "display: block; margin: 15px auto; max-width: 100%; height: auto;");
+        const svgString = new XMLSerializer().serializeToString(svg);
+        let sanitizedSvgString = sanitizeSvgStringForCanvas(svgString);
+
+        sanitizedSvgString = sanitizedSvgString
+          .replace(/&nbsp;/g, "&#160;")
+          .replace(/&deg;/g, "&#176;")
+          .replace(/&mu;/g, "&#956;")
+          .replace(/&plusmn;/g, "&#177;")
+          .replace(/&sup2;/g, "&#178;")
+          .replace(/&sup3;/g, "&#179;")
+          .replace(/&(?!(amp|lt|gt|quot|apos|#\d+);)/g, "&amp;");
+
+        const scaleFactor = 2.0; // Optimized high-DPI scaling (300 DPI equivalent)
+        let targetW = Math.max(100, Math.round(w * scaleFactor) || 550);
+        let targetH = Math.max(100, Math.round(h * scaleFactor) || 400);
+
+        const maxDimension = 4096;
+        if (targetW > maxDimension || targetH > maxDimension) {
+          const ratio = Math.min(maxDimension / targetW, maxDimension / targetH);
+          targetW = Math.round(targetW * ratio);
+          targetH = Math.round(targetH * ratio);
+        }
+
+        if (!/<svg[^>]*\bviewBox=/i.test(sanitizedSvgString)) {
+          sanitizedSvgString = sanitizedSvgString.replace(/<svg/i, `<svg viewBox="0 0 ${w} ${h}"`);
+        }
+
+        sanitizedSvgString = sanitizedSvgString.replace(/<svg([^>]*)\bwidth\s*=\s*["'][^"']*["']/i, '<svg$1');
+        sanitizedSvgString = sanitizedSvgString.replace(/<svg([^>]*)\bheight\s*=\s*["'][^"']*["']/i, '<svg$1');
+        sanitizedSvgString = sanitizedSvgString.replace(/<svg/i, `<svg width="${targetW}" height="${targetH}"`);
+
+        const base64 = stringToBase64(sanitizedSvgString);
+        const dataUrl = `data:image/svg+xml;base64,${base64}`;
+
+        let pngDataUrl = "";
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            pngDataUrl = await convertSvgToPngDataUrl(sanitizedSvgString, dataUrl, targetW, targetH);
+            if (pngDataUrl && pngDataUrl.startsWith("data:image/png")) {
+              break;
+            }
+          } catch (err) {
+            console.warn(`[Export] Attempt ${attempt} failed for SVG ${i + 1}:`, err);
+            if (attempt < 2) {
+              await new Promise((r) => setTimeout(r, 50));
+            }
+          }
+        }
+
+        const img = document.createElement("img");
+        if (pngDataUrl && pngDataUrl.startsWith("data:image/png")) {
+          img.src = pngDataUrl;
+        } else {
+          console.warn(`[Export] Canvas rasterization failed for SVG ${i + 1}, using vector SVG image fallback.`);
+          img.src = dataUrl;
+        }
+        img.setAttribute("width", w.toString());
+        img.setAttribute("height", h.toString());
+        if (style) {
+          img.setAttribute("style", style);
+        } else {
+          img.setAttribute("style", "display: block; margin: 15px auto; max-width: 100%; height: auto;");
+        }
+        
+        svg.parentNode?.replaceChild(img, svg);
+      } catch (err) {
+        console.error("[Export] Failed to convert inline SVG to PNG:", err);
       }
-      
-      svg.parentNode?.replaceChild(img, svg);
-    } catch (err) {
-      console.error("[Export] Failed to convert inline SVG to PNG:", err);
-    }
-  }
+    })
+  );
 
   // 3. Post-process ALL <img> elements in the document to prevent stretching in Microsoft Word!
-  // We load each image's natural dimensions, calculate its correct proportional height based on its width,
-  // and set explicit width/height attributes and inline styles to completely disable any automatic resizing/stretching in Word.
   console.log("[Export] Post-processing all images to set explicit non-stretching bounds...");
   const finalImages = Array.from(div.getElementsByTagName("img"));
-  for (let i = 0; i < finalImages.length; i++) {
-    const img = finalImages[i];
-    const src = img.getAttribute("src") || "";
-    if (src) {
-      try {
-        const widthAttr = img.getAttribute("width");
-        const heightAttr = img.getAttribute("height");
-        
-        let targetW = widthAttr ? parseFloat(widthAttr) : 0;
-        let targetH = heightAttr ? parseFloat(heightAttr) : 0;
-
-        // Load the image to find its natural dimensions
-        const dims = await new Promise<{ w: number; h: number }>((resolve) => {
-          const tempImg = new Image();
-          tempImg.onload = () => {
-            resolve({ w: tempImg.naturalWidth || tempImg.width || 0, h: tempImg.naturalHeight || tempImg.height || 0 });
-          };
-          tempImg.onerror = () => {
-            resolve({ w: 0, h: 0 });
-          };
-          tempImg.src = src;
-        });
-
-        if (dims.w > 0 && dims.h > 0) {
-          const naturalRatio = dims.h / dims.w;
+  await Promise.all(
+    finalImages.map(async (img) => {
+      const src = img.getAttribute("src") || "";
+      if (src) {
+        try {
+          const widthAttr = img.getAttribute("width");
+          const heightAttr = img.getAttribute("height");
           
-          if (!targetW && !targetH) {
-            // Default to natural dimensions up to 16 cm (600px at 96 DPI)
-            targetW = Math.min(600, dims.w);
-            targetH = Math.round(targetW * naturalRatio);
-          } else if (targetW && !targetH) {
-            // Proportional height - cap to 16 cm (600px)
-            if (targetW > 600) {
-              targetW = 600;
-            }
-            targetH = Math.round(targetW * naturalRatio);
-          } else if (!targetW && targetH) {
-            // Proportional width
-            targetW = Math.round(targetH / naturalRatio);
-            if (targetW > 600) {
-              targetW = 600;
+          let targetW = widthAttr ? parseFloat(widthAttr) : 0;
+          let targetH = heightAttr ? parseFloat(heightAttr) : 0;
+
+          // Load the image to find its natural dimensions
+          const dims = await new Promise<{ w: number; h: number }>((resolve) => {
+            let resolved = false;
+            const timer = setTimeout(() => {
+              if (!resolved) {
+                resolved = true;
+                resolve({ w: 0, h: 0 });
+              }
+            }, 600);
+            const tempImg = new Image();
+            tempImg.onload = () => {
+              if (!resolved) {
+                resolved = true;
+                clearTimeout(timer);
+                resolve({ w: tempImg.naturalWidth || tempImg.width || 0, h: tempImg.naturalHeight || tempImg.height || 0 });
+              }
+            };
+            tempImg.onerror = () => {
+              if (!resolved) {
+                resolved = true;
+                clearTimeout(timer);
+                resolve({ w: 0, h: 0 });
+              }
+            };
+            tempImg.src = src;
+          });
+
+          if (dims.w > 0 && dims.h > 0) {
+            const naturalRatio = dims.h / dims.w;
+            
+            if (!targetW && !targetH) {
+              targetW = Math.min(600, dims.w);
+              targetH = Math.round(targetW * naturalRatio);
+            } else if (targetW && !targetH) {
+              if (targetW > 600) {
+                targetW = 600;
+              }
+              targetH = Math.round(targetW * naturalRatio);
+            } else if (!targetW && targetH) {
+              targetW = Math.round(targetH / naturalRatio);
+              if (targetW > 600) {
+                targetW = 600;
+                targetH = Math.round(targetW * naturalRatio);
+              }
+            } else {
+              if (targetW > 600) {
+                targetW = 600;
+              }
               targetH = Math.round(targetW * naturalRatio);
             }
-          } else {
-            // Both specified: Always force exact natural aspect ratio to prevent any stretching
-            if (targetW > 600) {
-              targetW = 600;
-            }
-            targetH = Math.round(targetW * naturalRatio);
-          }
-          
-          // Force set explicit attributes
-          img.setAttribute("width", targetW.toString());
-          img.setAttribute("height", targetH.toString());
+            
+            img.setAttribute("width", targetW.toString());
+            img.setAttribute("height", targetH.toString());
 
-          // Clean up inline styles and inject explicit pixel bounds (Word is extremely picky about height: auto)
-          let originalStyle = img.getAttribute("style") || "";
-          
-          // Strip out height: auto, max-width: 100%, and width/height declarations from style
-          let cleanedStyle = originalStyle
-            .replace(/height\s*:\s*auto;?/gi, "")
-            .replace(/max-width\s*:\s*[^;]+;?/gi, "")
-            .replace(/width\s*:\s*[^;]+;?/gi, "")
-            .replace(/height\s*:\s*[^;]+;?/gi, "");
-          
-          // Re-add safe styles and explicit non-flexible width/height so MS Word maintains the aspect ratio
-          cleanedStyle = `width: ${targetW}px; height: ${targetH}px; max-width: 100%; border: none; display: block; margin: 0 auto; ` + cleanedStyle;
-          img.setAttribute("style", cleanedStyle.trim());
+            let originalStyle = img.getAttribute("style") || "";
+            let cleanedStyle = originalStyle
+              .replace(/height\s*:\s*auto;?/gi, "")
+              .replace(/max-width\s*:\s*[^;]+;?/gi, "")
+              .replace(/width\s*:\s*[^;]+;?/gi, "")
+              .replace(/height\s*:\s*[^;]+;?/gi, "");
+            
+            cleanedStyle = `width: ${targetW}px; height: ${targetH}px; max-width: 100%; border: none; display: block; margin: 0 auto; ` + cleanedStyle;
+            img.setAttribute("style", cleanedStyle.trim());
+          }
+        } catch (err) {
+          console.warn("[Export] Failed to post-process dimensions for image:", err);
         }
-      } catch (err) {
-        console.warn("[Export] Failed to post-process dimensions for image:", i, err);
       }
-    }
-  }
+    })
+  );
 
   // Clear max-width and auto-margin on nested container divs so Word can lay them out fully
   const containerDivs = Array.from(div.getElementsByTagName("div"));
@@ -591,30 +630,15 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
       table.setAttribute("width", "100%");
       table.setAttribute("style", "width: 100%; border-collapse: collapse; margin-top: 8pt; margin-bottom: 12pt; border: none; mso-table-lspace: 0pt; mso-table-rspace: 0pt;");
     } else {
-      // Data table styling
+      // Data table styling - compact, auto-adjusted layout without extra space
       table.setAttribute("border", "1");
       table.setAttribute("cellpadding", "0");
       table.setAttribute("cellspacing", "0");
       table.setAttribute("width", "100%");
-      table.setAttribute("style", "width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 8pt; margin-bottom: 12pt; mso-table-lspace: 0pt; mso-table-rspace: 0pt; mso-table-anchor-vertical: paragraph;");
+      table.setAttribute("style", "width: 100% !important; table-layout: auto !important; border-collapse: collapse !important; margin-top: 4pt !important; margin-bottom: 6pt !important; mso-table-lspace: 0pt; mso-table-rspace: 0pt; mso-table-anchor-vertical: paragraph;");
     }
 
     const rows = Array.from(table.getElementsByTagName("tr"));
-
-    // Extract explicit column widths from the first row of cells (usually headers) so we can enforce them on all rows
-    const colWidths: string[] = [];
-    if (rows.length > 0) {
-      const firstRowCells = Array.from(rows[0].querySelectorAll("th, td"));
-      firstRowCells.forEach((cell) => {
-        const style = cell.getAttribute("style") || "";
-        let w = cell.getAttribute("width") || "";
-        const wMatch = style.match(/width\s*:\s*([^;]+)/i);
-        if (wMatch) {
-          w = wMatch[1].trim();
-        }
-        colWidths.push(w);
-      });
-    }
 
     rows.forEach((row) => {
       row.removeAttribute("height");
@@ -636,7 +660,7 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
       row.setAttribute("style", rowStyle);
 
       const cells = Array.from(row.querySelectorAll("th, td"));
-      cells.forEach((cell, colIndex) => {
+      cells.forEach((cell) => {
         cell.removeAttribute("width");
         cell.removeAttribute("height");
         cell.classList.remove("whitespace-nowrap");
@@ -657,24 +681,17 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
         
         const isTh = cell.tagName.toLowerCase() === "th";
         const isBold = isTh || /font-weight\s*:\s*bold/i.test(cellStyle);
-        const fontSize = isTh ? "10pt" : "9.5pt";
-        
-        // Propagate the corresponding column width from the header
-        const explicitWidth = colWidths[colIndex] || "";
-        if (explicitWidth && !isLayoutTable) {
-          cleanedCellStyle += ` width: ${explicitWidth};`;
-          cell.setAttribute("width", explicitWidth.replace("%", ""));
-        }
+        const fontSize = isTh ? "9pt" : "8.5pt";
         
         if (isLayoutTable) {
-          cleanedCellStyle += ` border: none !important; padding: 4pt; vertical-align: top; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; line-height: 1.35;`;
+          cleanedCellStyle += ` border: none !important; padding: 2pt 4pt; vertical-align: top; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; line-height: 1.2;`;
         } else {
-          // Publication quality cell padding & twips
-          const cellPadding = "4.5pt 6pt";
-          const topBottomTwips = "85twips";
-          const leftRightTwips = "120twips";
+          // Compact, publication-quality cell padding & twips with zero extra space
+          const cellPadding = "2.5pt 4pt";
+          const topBottomTwips = "40twips";
+          const leftRightTwips = "60twips";
 
-          cleanedCellStyle += ` font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; padding: ${cellPadding}; mso-padding-top-alt: ${topBottomTwips}; mso-padding-bottom-alt: ${topBottomTwips}; mso-padding-left-alt: ${leftRightTwips}; mso-padding-right-alt: ${leftRightTwips}; ${isBold ? "font-weight: bold;" : ""} line-height: 1.25 !important; mso-line-height-rule: at-least !important; vertical-align: middle; mso-vertical-align-alt: middle; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; white-space: normal !important; margin: 0pt !important; height: auto; min-height: 0pt;`;
+          cleanedCellStyle += ` font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; padding: ${cellPadding}; mso-padding-top-alt: ${topBottomTwips}; mso-padding-bottom-alt: ${topBottomTwips}; mso-padding-left-alt: ${leftRightTwips}; mso-padding-right-alt: ${leftRightTwips}; ${isBold ? "font-weight: bold;" : ""} line-height: 1.15 !important; mso-line-height-rule: at-least !important; vertical-align: middle; mso-vertical-align-alt: middle; word-wrap: break-word; overflow-wrap: break-word; word-break: normal; white-space: normal !important; margin: 0pt !important; height: auto; min-height: 0pt;`;
         }
         
         // Align headers centered by default, data aligned according to existing style or left
@@ -703,12 +720,12 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
 
         if (cellParagraphs.length > 0) {
           cellParagraphs.forEach((p) => {
-            p.setAttribute("style", `margin: 0pt !important; margin-top: 0pt !important; margin-bottom: 0pt !important; padding: 0pt !important; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; line-height: 1.25 !important; mso-line-height-rule: at-least !important; mso-margin-top-alt: 0pt !important; mso-margin-bottom-alt: 0pt !important; text-align: ${alignVal};`);
+            p.setAttribute("style", `margin: 0pt !important; margin-top: 0pt !important; margin-bottom: 0pt !important; padding: 0pt !important; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; line-height: 1.15 !important; mso-line-height-rule: at-least !important; mso-margin-top-alt: 0pt !important; mso-margin-bottom-alt: 0pt !important; text-align: ${alignVal};`);
           });
         } else {
           const originalHTML = cell.innerHTML.trim();
           if (originalHTML) {
-            cell.innerHTML = `<p style="margin: 0pt !important; margin-top: 0pt !important; margin-bottom: 0pt !important; padding: 0pt !important; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; line-height: 1.25 !important; mso-line-height-rule: at-least !important; mso-margin-top-alt: 0pt !important; mso-margin-bottom-alt: 0pt !important; text-align: ${alignVal};">${originalHTML}</p>`;
+            cell.innerHTML = `<p style="margin: 0pt !important; margin-top: 0pt !important; margin-bottom: 0pt !important; padding: 0pt !important; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; line-height: 1.15 !important; mso-line-height-rule: at-least !important; mso-margin-top-alt: 0pt !important; mso-margin-bottom-alt: 0pt !important; text-align: ${alignVal};">${originalHTML}</p>`;
           }
         }
 
@@ -738,7 +755,7 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
   const figureMap: Record<number, string> = {};
   const tableMap: Record<number, string> = {};
 
-  const allElements = Array.from(div.getElementsByTagName("*"));
+  const allElements = Array.from(div.querySelectorAll("h1, h2, h3, h4, span, p, div"));
   allElements.forEach((el) => {
     const tagName = el.tagName.toLowerCase();
     
@@ -899,15 +916,15 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
   table {
     width: 100% !important;
     max-width: 100% !important;
-    table-layout: fixed !important;
+    table-layout: auto !important;
     border-collapse: collapse !important;
-    margin-top: 8pt !important;
-    margin-bottom: 12pt !important;
+    margin-top: 4pt !important;
+    margin-bottom: 6pt !important;
     margin-left: auto;
     margin-right: auto;
     font-family: 'Times New Roman', Times, serif;
-    font-size: 9.5pt;
-    page-break-inside: avoid;
+    font-size: 8.5pt;
+    page-break-inside: auto;
     mso-table-lspace: 0pt;
     mso-table-rspace: 0pt;
     mso-table-anchor-vertical: paragraph;
@@ -923,35 +940,35 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
   }
   th, td {
     border: 0.5pt solid #cbd5e1;
-    padding: 4.5pt 6pt !important;
+    padding: 2.5pt 4pt !important;
     text-align: left;
     vertical-align: middle;
     mso-vertical-align-alt: middle;
     font-family: 'Times New Roman', Times, serif;
-    font-size: 9.5pt;
+    font-size: 8.5pt;
     white-space: normal !important;
-    word-break: break-word;
+    word-break: normal;
     word-wrap: break-word;
     overflow-wrap: break-word;
-    line-height: 1.25 !important;
+    line-height: 1.15 !important;
     mso-line-height-rule: at-least !important;
-    mso-padding-top-alt: 85twips !important;
-    mso-padding-bottom-alt: 85twips !important;
-    mso-padding-left-alt: 120twips !important;
-    mso-padding-right-alt: 120twips !important;
+    mso-padding-top-alt: 40twips !important;
+    mso-padding-bottom-alt: 40twips !important;
+    mso-padding-left-alt: 60twips !important;
+    mso-padding-right-alt: 60twips !important;
     height: auto !important;
     min-height: 0pt !important;
   }
   table th p, table td p {
     margin: 0pt !important;
     padding: 0pt !important;
-    line-height: 1.25 !important;
+    line-height: 1.15 !important;
     mso-line-height-rule: at-least !important;
     mso-margin-top-alt: 0pt !important;
     mso-margin-bottom-alt: 0pt !important;
   }
   th {
-    font-size: 10pt;
+    font-size: 9pt;
     background-color: #1e3a8a !important;
     font-weight: bold;
     color: #ffffff !important;
@@ -1010,10 +1027,37 @@ export async function convertHtmlToWordDocHtml(contentHtml: string, fileName: st
   return completeHtml;
 }
 
+function chunkString(str: string, length: number = 76): string {
+  if (!str) return "";
+  const chunks: string[] = [];
+  for (let i = 0; i < str.length; i += length) {
+    chunks.push(str.substring(i, i + length));
+  }
+  return chunks.join("\r\n");
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  try {
+    let binary = "";
+    const len = bytes.byteLength;
+    const chunkSize = 0x8000;
+    for (let i = 0; i < len; i += chunkSize) {
+      binary += String.fromCharCode.apply(
+        null,
+        bytes.subarray(i, i + chunkSize) as unknown as number[]
+      );
+    }
+    return btoa(binary);
+  } catch (e) {
+    console.error("[Export] bytesToBase64 failed:", e);
+    return "";
+  }
+}
+
 export function convertHtmlToMhtml(completeHtml: string, fileName: string): string {
-  const boundary = "----=_NextPart_01D1A_BULLETIN_EXPORT";
+  const boundary = "----=_NextPart_000_0000_01D1A9E3.12345678";
   
-  // Use DOMParser to parse the full HTML document (keeps head, style, body intact)
+  // Use DOMParser to parse the full HTML document
   const parser = new DOMParser();
   const doc = parser.parseFromString(completeHtml, "text/html");
   
@@ -1023,51 +1067,92 @@ export function convertHtmlToMhtml(completeHtml: string, fileName: string): stri
   imgs.forEach((img, index) => {
     const src = img.getAttribute("src") || "";
     if (src.startsWith("data:")) {
-      const match = src.match(/^data:([^;]+);base64,(.+)$/);
-      if (match) {
-        const mimeType = match[1];
-        const base64Data = match[2];
-        const ext = mimeType.split("/")[1] || "png";
-        const filename = `img_${index}.${ext}`;
-        
-        // Replace src in HTML with the relative filename
+      let mimeType = "image/png";
+      let rawBase64 = "";
+
+      if (src.includes(";base64,")) {
+        const parts = src.split(";base64,");
+        const header = parts[0];
+        rawBase64 = parts[1].replace(/[\r\n\s]/g, "");
+
+        if (header.includes("image/jpeg") || header.includes("image/jpg")) {
+          mimeType = "image/jpeg";
+        } else if (header.includes("image/gif")) {
+          mimeType = "image/gif";
+        } else if (header.includes("image/svg+xml")) {
+          mimeType = "image/svg+xml";
+        } else {
+          mimeType = "image/png";
+        }
+      } else {
+        const commaIdx = src.indexOf(",");
+        if (commaIdx !== -1) {
+          const header = src.substring(0, commaIdx);
+          if (header.includes("image/svg+xml")) {
+            mimeType = "image/svg+xml";
+          }
+          const content = decodeURIComponent(src.substring(commaIdx + 1));
+          const bytes = new TextEncoder().encode(content);
+          rawBase64 = bytesToBase64(bytes);
+        }
+      }
+
+      if (rawBase64) {
+        const ext = mimeType === "image/jpeg" ? "jpg" : mimeType === "image/svg+xml" ? "svg" : "png";
+        const filename = `image_${index}.${ext}`;
         img.setAttribute("src", filename);
-        
+        const chunkedBase64 = chunkString(rawBase64, 76);
         attachments.push({
           filename,
           mimeType,
-          data: base64Data
+          data: chunkedBase64
         });
       }
     }
   });
   
-  // Serialize the updated DOM back to HTML string
-  const updatedHtml = "<!DOCTYPE html>\n" + doc.documentElement.outerHTML;
+  // Clean & serialize HTML
+  const rawHtml = "<!DOCTYPE html>\r\n" + doc.documentElement.outerHTML;
   
-  // Construct MHTML
-  let mhtml = "";
-  mhtml += `MIME-Version: 1.0\r\n`;
-  mhtml += `Content-Type: multipart/related; boundary="${boundary}"\r\n`;
-  mhtml += `\r\n`;
-  mhtml += `--${boundary}\r\n`;
-  mhtml += `Content-Type: text/html; charset="utf-8"\r\n`;
-  mhtml += `Content-Transfer-Encoding: 8bit\r\n`;
-  mhtml += `\r\n`;
-  mhtml += updatedHtml;
-  mhtml += `\r\n`;
+  // Safely encode UTF-8 HTML string to Base64 using fast bytesToBase64
+  let htmlBase64 = "";
+  try {
+    const bytes = new TextEncoder().encode(rawHtml);
+    htmlBase64 = bytesToBase64(bytes);
+  } catch (e) {
+    htmlBase64 = btoa(unescape(encodeURIComponent(rawHtml)));
+  }
+  
+  // Chunk HTML base64 to 76 characters per line without regex memory spikes
+  const chunkedHtmlBase64 = chunkString(htmlBase64, 76);
+  
+  // Construct MIME Parts with strictly \r\n (CRLF) line endings
+  const lines: string[] = [];
+  lines.push("MIME-Version: 1.0");
+  lines.push(`Content-Type: multipart/related; type="text/html"; boundary="${boundary}"`);
+  lines.push("");
+  lines.push(`--${boundary}`);
+  lines.push('Content-Type: text/html; charset="utf-8"');
+  lines.push("Content-Transfer-Encoding: base64");
+  lines.push("Content-Location: file:///C:/fake/document.html");
+  lines.push("");
+  lines.push(chunkedHtmlBase64);
+  lines.push("");
   
   attachments.forEach((att) => {
-    mhtml += `\r\n--${boundary}\r\n`;
-    mhtml += `Content-Type: ${att.mimeType}\r\n`;
-    mhtml += `Content-Transfer-Encoding: base64\r\n`;
-    mhtml += `Content-Location: ${att.filename}\r\n`;
-    mhtml += `\r\n`;
-    mhtml += att.data + `\r\n`;
+    lines.push(`--${boundary}`);
+    lines.push(`Content-Type: ${att.mimeType}`);
+    lines.push("Content-Transfer-Encoding: base64");
+    lines.push(`Content-Location: file:///C:/fake/${att.filename}`);
+    lines.push("");
+    lines.push(att.data);
+    lines.push("");
   });
   
-  mhtml += `\r\n--${boundary}--\r\n`;
-  return mhtml;
+  lines.push(`--${boundary}--`);
+  lines.push("");
+  
+  return lines.join("\r\n");
 }
 
 export async function convertHtmlToDocxBlob(completeHtml: string, fileName: string): Promise<Blob> {
@@ -1075,12 +1160,12 @@ export async function convertHtmlToDocxBlob(completeHtml: string, fileName: stri
   
   const zip = new JSZip();
   
-  // 1. [Content_Types].xml
+  // 1. [Content_Types].xml - Registered .mht as message/rfc822
   zip.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml" />
   <Default Extension="xml" ContentType="application/xml" />
-  <Default Extension="mhtml" ContentType="message/rfc822" />
+  <Default Extension="mht" ContentType="message/rfc822" />
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml" />
 </Types>`);
 
@@ -1105,31 +1190,80 @@ export async function convertHtmlToDocxBlob(completeHtml: string, fileName: stri
   // 4. word/_rels/document.xml.rels
   zip.file("word/_rels/document.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="htmlChunk" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="afchunk.mhtml" />
+  <Relationship Id="htmlChunk" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="afchunk.mht" />
 </Relationships>`);
 
-  // 5. word/afchunk.mhtml
-  zip.file("word/afchunk.mhtml", mhtmlContent);
+  // 5. word/afchunk.mht
+  zip.file("word/afchunk.mht", mhtmlContent);
   
-  return await zip.generateAsync({ type: "blob" });
+  return await zip.generateAsync({
+    type: "blob",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    compression: "DEFLATE",
+    compressionOptions: {
+      level: 6
+    }
+  });
+}
+
+export function buildStandaloneHtml(contentHtml: string, fileName: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${fileName}</title>
+<style>
+  body {
+    font-family: 'Times New Roman', Times, serif, system-ui, sans-serif;
+    line-height: 1.6;
+    color: #0f172a;
+    background-color: #ffffff;
+    margin: 0 auto;
+    padding: 2rem;
+    max-width: 1100px;
+  }
+  h1, h2, h3, h4 { color: #1e3a8a; page-break-after: avoid; }
+  h1 { text-align: center; font-size: 2rem; margin-bottom: 1.5rem; }
+  h2 { font-size: 1.5rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; margin-top: 2rem; }
+  p { text-align: justify; margin-bottom: 1rem; }
+  table { width: 100%; table-layout: auto; border-collapse: collapse; margin: 1rem 0; font-size: 0.825rem; line-height: 1.2; }
+  th, td { border: 1px solid #cbd5e1; padding: 4px 6px; text-align: left; white-space: normal; word-wrap: break-word; overflow-wrap: break-word; }
+  th { background-color: #1e3a8a; color: #ffffff; font-weight: bold; text-align: center; font-size: 0.875rem; }
+  tr:nth-child(even) { background-color: #f8fafc; }
+  img, svg { max-width: 100%; height: auto; display: block; margin: 1rem auto; }
+</style>
+</head>
+<body>
+  ${contentHtml}
+</body>
+</html>`;
 }
 
 export async function downloadMhtmlWordDoc(contentHtml: string, fileName: string, format: "doc" | "html" | "docx" = "doc") {
   console.log(`[Export] Starting Document Export Pipeline for format: ${format}...`);
   try {
-    const completeHtml = await convertHtmlToWordDocHtml(contentHtml, fileName);
-    
+    if (!contentHtml || !contentHtml.trim()) {
+      console.warn("[Export] Empty content passed to downloadMhtmlWordDoc. Export aborted.");
+      return;
+    }
+
     let blob: Blob;
     let finalFileName = fileName;
     
     if (format === "html") {
+      console.log("[Export] Packaging standalone HTML document...");
+      const completeHtml = buildStandaloneHtml(contentHtml, fileName);
       blob = new Blob([completeHtml], { type: "text/html;charset=utf-8" });
       finalFileName = `${fileName}.html`;
     } else if (format === "docx") {
       console.log("[Export] Converting HTML to native Word .docx...");
+      const completeHtml = await convertHtmlToWordDocHtml(contentHtml, fileName);
       blob = await convertHtmlToDocxBlob(completeHtml, fileName);
       finalFileName = `${fileName}.docx`;
     } else {
+      console.log("[Export] Converting HTML to Word .doc (MHTML)...");
+      const completeHtml = await convertHtmlToWordDocHtml(contentHtml, fileName);
       const mhtmlContent = convertHtmlToMhtml(completeHtml, fileName);
       blob = new Blob([mhtmlContent], { type: "application/msword;charset=utf-8" });
       finalFileName = `${fileName}.doc`;
@@ -1143,7 +1277,7 @@ export async function downloadMhtmlWordDoc(contentHtml: string, fileName: string
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
     console.log(`[Export] Export (${format}) completed successfully.`);
   } catch (err) {
     console.error("[Export] Failed to generate document:", err);

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from "react";
 import { safeHtml2canvas } from "../utils/colorSanitizer";
 import { DataHeaders, ShapefileLayer } from "../types";
-import { PARAM_CONFIG } from "../data/config";
+import { PARAM_CONFIG, hasBisLimit } from "../data/config";
 import { toProperCase } from "../utils/shapefileFilter";
 import {
   Activity,
@@ -282,13 +282,16 @@ export default function KpiView({
   setChoroplethClasses,
   showToast
 }: KpiViewProps) {
-  // 1. Available Mapped Parameters List
+  // 1. Available Mapped Parameters List (excluding non-BIS parameters)
   const availableParams = useMemo(() => {
-    if (!headers.params || headers.params.length === 0) {
-      return ["EC", "pH", "TDS", "F", "NO3", "As", "Fe", "TH", "Ca", "Mg", "Cl", "SO4"];
-    }
-    return headers.params;
-  }, [headers.params]);
+    const rawList = (!headers.params || headers.params.length === 0)
+      ? ["EC", "pH", "TDS", "F", "NO3", "As", "Fe", "TH", "Ca", "Mg", "Cl", "SO4"]
+      : headers.params;
+    return rawList.filter(p => {
+      const stdKey = headerMap[p] || p;
+      return hasBisLimit(stdKey) && hasBisLimit(p);
+    });
+  }, [headers.params, headerMap]);
 
   // Active Parameter selection (Default to EC or first available param)
   const [selectedParamKey, setSelectedParamKey] = useState<string>(() => {
@@ -314,14 +317,14 @@ export default function KpiView({
     setIsDownloading(true);
     try {
       if (showToast) {
-        showToast("Generating high-density JPEG image...", "success");
+        showToast("Generating high-density 600 DPI JPEG image...", "success");
       }
       
-      // safeHtml2canvas with scale: 3 for high pixel density (3x ultra-sharp resolution) and oklab/oklch color sanitization
+      // safeHtml2canvas with scale: 4 for high resolution and allowTaint: false to prevent DOMSecurity exceptions
       const canvas = await safeHtml2canvas(kpiSectionRef.current, {
-        scale: 3,
+        scale: 4,
         useCORS: true,
-        allowTaint: true,
+        allowTaint: false,
         backgroundColor: "#f8fafc",
         logging: false,
         imageTimeout: 15000,
@@ -329,18 +332,42 @@ export default function KpiView({
         scrollY: 0,
       });
 
-      const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
-      const link = document.createElement("a");
+      let exported = false;
       const dateStr = new Date().toISOString().slice(0, 10);
       const paramSlug = (selectedParamKey || "KPI").replace(/[^a-zA-Z0-9]/g, "_");
-      link.download = `KPI_Section_${paramSlug}_${dateStr}.jpg`;
-      link.href = dataUrl;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      const filename = `KPI_Section_${paramSlug}_600DPI_${dateStr}.jpg`;
+
+      try {
+        const blob = await new Promise<Blob | null>((resolve) => {
+          canvas.toBlob((b) => resolve(b), "image/jpeg", 0.95);
+        });
+        if (blob) {
+          const blobUrl = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.download = filename;
+          link.href = blobUrl;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+          exported = true;
+        }
+      } catch (e) {
+        console.warn("toBlob failed, falling back to toDataURL:", e);
+      }
+
+      if (!exported) {
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
+        const link = document.createElement("a");
+        link.download = filename;
+        link.href = dataUrl;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
 
       if (showToast) {
-        showToast("KPI Section downloaded as High-Density JPEG!", "success");
+        showToast("KPI Section downloaded as High-Density 600 DPI JPEG!", "success");
       }
     } catch (err) {
       console.error("Error generating KPI Section JPEG:", err);
@@ -352,13 +379,32 @@ export default function KpiView({
     }
   };
 
-  const mappedCol = headerMap[selectedParamKey] || selectedParamKey;
-  const paramConfig = PARAM_CONFIG[mappedCol] || PARAM_CONFIG[selectedParamKey] || {
-    b1: 750,
-    b2: 3000,
-    unit: "µS/cm at 25°C",
-    name: selectedParamKey === "EC" ? "Electrical Conductivity (EC)" : selectedParamKey
+  // Helper to resolve parameter config
+  const resolveParamConfig = (pKey: string) => {
+    if (PARAM_CONFIG[pKey]) return PARAM_CONFIG[pKey];
+    const stdKey = headerMap[pKey];
+    if (stdKey && PARAM_CONFIG[stdKey]) return PARAM_CONFIG[stdKey];
+    const reverseKey = Object.keys(headerMap).find(k => headerMap[k] === pKey);
+    if (reverseKey && PARAM_CONFIG[reverseKey]) return PARAM_CONFIG[reverseKey];
+    
+    // Check keywords match
+    const pKeyLow = pKey.toLowerCase().trim();
+    const foundConfigKey = Object.keys(PARAM_CONFIG).find(k => {
+      const c = PARAM_CONFIG[k];
+      if (k.toLowerCase() === pKeyLow) return true;
+      return c.keywords && c.keywords.some(kw => pKeyLow.includes(kw.toLowerCase()));
+    });
+    if (foundConfigKey) return PARAM_CONFIG[foundConfigKey];
+
+    return {
+      b1: 750,
+      b2: 3000,
+      unit: "µS/cm at 25°C",
+      name: pKey
+    };
   };
+
+  const paramConfig = resolveParamConfig(selectedParamKey);
 
   const b1 = paramConfig.b1 || 0;
   const b2 = paramConfig.b2 || 0;
@@ -372,10 +418,10 @@ export default function KpiView({
   const top5LevelLabel = isDistrictSelected ? "Block" : isStateSelected ? "District" : "State";
   const top5PluralLabel = isDistrictSelected ? "Blocks" : isStateSelected ? "Districts" : "States";
 
-  // Derive effective reporting level dynamically based on main location selection
+  // Derive effective reporting level dynamically based on main location selection and reportingLevel prop
   const effectiveReportingLevel: "State" | "District" | "Block" = useMemo(() => {
     if (isDistrictSelected) return "Block";
-    if (isStateSelected) return "District";
+    if (isStateSelected && reportingLevel === "State") return "District";
     return reportingLevel || "State";
   }, [isDistrictSelected, isStateSelected, reportingLevel]);
 
@@ -415,13 +461,57 @@ export default function KpiView({
 
   const assessmentPeriodText = `${derivedSeason} ${derivedYear}`.trim();
 
-  // Helper to get row parameter numerical value
+  // Robust helper to extract numerical value for any parameter key from a row
   const getRowVal = (row: any, pKey: string): number | null => {
-    const colKey = headerMap[pKey] || pKey;
-    if (row[colKey] !== undefined && row[colKey] !== null) {
-      const v = parseFloat(row[colKey]);
-      return isNaN(v) ? null : v;
+    if (!row) return null;
+
+    const parseVal = (raw: any): number | null => {
+      if (raw === undefined || raw === null || raw === "" || raw === "-" || raw === "—") return null;
+      const num = parseFloat(String(raw).trim());
+      return isNaN(num) ? null : num;
+    };
+
+    // 1. Direct key match
+    if (row[pKey] !== undefined) {
+      const val = parseVal(row[pKey]);
+      if (val !== null) return val;
     }
+
+    // 2. Direct lookup in headerMap
+    const mappedHeader = headerMap[pKey];
+    if (mappedHeader && row[mappedHeader] !== undefined) {
+      const val = parseVal(row[mappedHeader]);
+      if (val !== null) return val;
+    }
+
+    // 3. Reverse lookup in headerMap where value equals pKey
+    const reverseHeader = Object.keys(headerMap).find((k) => headerMap[k] === pKey);
+    if (reverseHeader && row[reverseHeader] !== undefined) {
+      const val = parseVal(row[reverseHeader]);
+      if (val !== null) return val;
+    }
+
+    // 4. Case-insensitive / Fuzzy search across row keys
+    const rowKeys = Object.keys(row);
+    const pKeyLow = pKey.toLowerCase().trim();
+
+    // 4a. Exact case-insensitive match
+    const exactCaseKey = rowKeys.find((k) => k.toLowerCase().trim() === pKeyLow);
+    if (exactCaseKey && row[exactCaseKey] !== undefined) {
+      const val = parseVal(row[exactCaseKey]);
+      if (val !== null) return val;
+    }
+
+    // 4b. Prefix / Parentheses keyword match (e.g. "EC" matches "EC (µS/Cm at 25° C)")
+    const fuzzyKey = rowKeys.find((k) => {
+      const kLow = k.toLowerCase().trim();
+      return kLow.startsWith(pKeyLow + " ") || kLow.startsWith(pKeyLow + "(") || kLow.includes(`(${pKeyLow})`);
+    });
+    if (fuzzyKey && row[fuzzyKey] !== undefined) {
+      const val = parseVal(row[fuzzyKey]);
+      if (val !== null) return val;
+    }
+
     return null;
   };
 
@@ -446,27 +536,40 @@ export default function KpiView({
     const totalBlocksSet = new Set<string>();
     const affectedBlocksSet = new Set<string>();
 
-    const regionExceedanceMap: Record<string, { total: number; exceed: number }> = {};
+    const regionExceedanceMap: Record<string, { total: number; exceed: number; displayName: string }> = {};
 
     rawData.forEach((row) => {
       const st = String(row[stateCol] || "").trim();
       const dt = String(row[districtCol] || "").trim();
       const blk = String(row[blockCol] || row["BLOCK"] || row["Block"] || "").trim();
-      if (st) uniqueStates.add(st);
-      if (dt) uniqueDistricts.add(dt);
 
-      // Determine grouping key based on selection hierarchy: All States -> State, Selected State -> District, Selected District -> Block
+      if (st) uniqueStates.add(st);
+
+      // District and Block composite unique keys checking corresponding state/district
+      // to ensure same-named districts and blocks in different states/districts are uniquely counted
+      const dtKey = (st && dt) ? `${st.toLowerCase()}__${dt.toLowerCase()}` : dt.toLowerCase();
+      const blkKey = (st && dt && blk)
+        ? `${st.toLowerCase()}__${dt.toLowerCase()}__${blk.toLowerCase()}`
+        : ((dt && blk) ? `${dt.toLowerCase()}__${blk.toLowerCase()}` : blk.toLowerCase());
+
+      if (dt) uniqueDistricts.add(dtKey);
+
+      // Determine grouping key based on effectiveReportingLevel or selection hierarchy
       let regKey = "";
-      if (isDistrictSelected) {
-        regKey = blk || dt || st || "Unknown Block";
-      } else if (isStateSelected) {
-        regKey = dt || st || "Unknown District";
+      let displayName = "";
+      if (effectiveReportingLevel === "Block") {
+        regKey = blkKey || dtKey || st.toLowerCase() || "Unknown Block";
+        displayName = blk || dt || st || "Unknown Block";
+      } else if (effectiveReportingLevel === "District") {
+        regKey = dtKey || st.toLowerCase() || "Unknown District";
+        displayName = dt ? (st ? `${dt}, ${st}` : dt) : st || "Unknown District";
       } else {
-        regKey = st || "Unknown State";
+        regKey = st.toLowerCase() || "Unknown State";
+        displayName = st || "Unknown State";
       }
 
       if (!regionExceedanceMap[regKey]) {
-        regionExceedanceMap[regKey] = { total: 0, exceed: 0 };
+        regionExceedanceMap[regKey] = { total: 0, exceed: 0, displayName };
       }
 
       const val = getRowVal(row, selectedParamKey);
@@ -475,8 +578,8 @@ export default function KpiView({
         regionExceedanceMap[regKey].total++;
 
         if (st) totalStatesSet.add(st);
-        if (dt) totalDistrictsSet.add(dt);
-        if (blk) totalBlocksSet.add(blk);
+        if (dt) totalDistrictsSet.add(dtKey);
+        if (blk) totalBlocksSet.add(blkKey);
 
         let isExceed = false;
         if (selectedParamKey === "pH") {
@@ -489,8 +592,8 @@ export default function KpiView({
           exceedanceCount++;
           regionExceedanceMap[regKey].exceed++;
           if (st) affectedStatesSet.add(st);
-          if (dt) affectedDistrictsSet.add(dt);
-          if (blk) affectedBlocksSet.add(blk);
+          if (dt) affectedDistrictsSet.add(dtKey);
+          if (blk) affectedBlocksSet.add(blkKey);
         } else {
           withinCount++;
         }
@@ -508,10 +611,10 @@ export default function KpiView({
     // Calculate region rankings
     const regionRankingList: { name: string; exceedPct: number; total: number; exceed: number }[] = [];
 
-    Object.entries(regionExceedanceMap).forEach(([regName, data]) => {
+    Object.entries(regionExceedanceMap).forEach(([regKey, data]) => {
       if (data.total >= 1) {
         const pct = (data.exceed / data.total) * 100;
-        regionRankingList.push({ name: regName, exceedPct: pct, total: data.total, exceed: data.exceed });
+        regionRankingList.push({ name: data.displayName || regKey, exceedPct: pct, total: data.total, exceed: data.exceed });
       }
     });
 
@@ -581,7 +684,7 @@ export default function KpiView({
         totalBlocks: totalBlocksSet.size
       }
     };
-  }, [rawData, selectedParamKey, b2, headers, isStateSelected, isDistrictSelected]);
+  }, [rawData, selectedParamKey, b2, headers, isStateSelected, isDistrictSelected, effectiveReportingLevel]);
 
   // Donut Chart Data (Within Limit vs Exceeding)
   const donutPieData = useMemo(() => {
@@ -769,109 +872,132 @@ export default function KpiView({
         </div>
       </div>
 
-      {/* TOP DEEP BLUE HEADER BANNER */}
-      <div className="bg-[#1e295d] text-white py-4 px-6 rounded-2xl shadow-md text-center flex items-center justify-center min-h-[56px] border border-indigo-900">
-        <h1 className="text-lg sm:text-2xl font-black tracking-tight text-white text-center leading-snug">
+      {/* TOP DEEP BLUE GLOSSY HEADER BANNER */}
+      <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white py-4 px-6 rounded-2xl shadow-[0_12px_30px_rgba(15,23,42,0.35),inset_0_1.5px_0_rgba(255,255,255,0.3)] text-center flex items-center justify-center min-h-[56px] border border-indigo-800/80 relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-cyan-400 via-sky-300 to-indigo-400 opacity-90" />
+        <h1 className="text-lg sm:text-2xl font-black tracking-tight text-white text-center leading-snug drop-shadow-md relative z-10">
           Key Indicators of {toProperCase(paramName)} ({selectedParamKey}) in Groundwater in {toProperCase(locationScopeText)} ({toProperCase(assessmentPeriodText)})
         </h1>
       </div>
 
-      {/* TOP ROW - 7 KPI METRIC CARDS (ENHANCED HEIGHT & VISIBILITY) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3">
+      {/* TOP ROW - 7 KPI METRIC CARDS (ULTRA-GLOSSY 3D GLASSMOPRHIC ENHANCED) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-2.5">
         {/* Card 1: Samples Analysed */}
-        <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-sm flex flex-col justify-between min-h-[165px] sm:min-h-[180px] relative overflow-hidden border-b-4 border-b-blue-600 hover:shadow-md transition-all">
-          <div>
-            <div className="flex items-center justify-between text-slate-700 mb-1">
-              <span className="text-xs font-black uppercase tracking-wider">Samples Analysed</span>
-              <Info className="w-4 h-4 text-slate-400" />
+        <div className="group relative bg-gradient-to-b from-white via-slate-50/90 to-blue-50/50 rounded-2xl p-3 border border-white/90 shadow-md shadow-blue-500/10 flex flex-col justify-between min-h-[160px] sm:min-h-[170px] border-b-[5px] border-b-blue-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-blue-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
+          {/* Specular Top Glass Sheen (Hidden during export) */}
+          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 z-10" />
+
+          <div className="relative z-10">
+            <div className="flex items-center justify-between text-slate-700 mb-1 gap-1 min-w-0">
+              <span className="text-[10px] font-black uppercase tracking-tight text-slate-800 truncate min-w-0 leading-normal">Samples Analysed</span>
+              <Info className="w-3.5 h-3.5 text-slate-400 shrink-0 group-hover:text-blue-600 transition-colors" />
             </div>
-            <div className="my-3 flex items-center gap-2.5">
-              <div className="p-2.5 bg-blue-50 text-blue-600 rounded-2xl border border-blue-100 shrink-0 shadow-2xs">
-                <Droplets className="w-5 h-5" />
+            <div className="my-2 flex items-center gap-2 min-w-0">
+              {/* 3D Crystal Gem Badge */}
+              <div className="p-2 sm:p-2.5 bg-gradient-to-br from-blue-400/20 via-blue-100 to-blue-200/90 text-blue-700 rounded-xl border border-white/90 shrink-0 shadow-md shadow-blue-500/20 relative group-hover:scale-105 transition-transform duration-300">
+                <div data-export-hide="true" className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/80 blur-[0.5px]" />
+                <Droplets className="w-4 h-4 sm:w-4.5 sm:h-4.5 relative z-10" />
               </div>
-              <div>
-                <span className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight block leading-none">
-                  {paramMetrics.totalSamples.toLocaleString()}
+              <div className="min-w-0 flex-1">
+                <span className="text-xl sm:text-2xl xl:text-2xl 2xl:text-3xl font-black text-slate-900 tracking-tight block leading-snug py-0.5 truncate" title={String(paramMetrics.totalSamples)}>
+                  {paramMetrics.totalSamples}
                 </span>
               </div>
             </div>
           </div>
-          <p className="text-xs font-extrabold text-slate-500 leading-tight pt-2 border-t border-slate-100">
-            Background stations monitoring {paramName}
+          <p className="text-[9px] sm:text-[10px] font-extrabold text-slate-500 leading-normal py-0.5 border-t border-slate-200/80 truncate relative z-10">
+            Background stations ({paramName})
           </p>
         </div>
 
         {/* Card 2: Samples Above Permissible Limit */}
-        <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-sm flex flex-col justify-between min-h-[165px] sm:min-h-[180px] relative overflow-hidden border-b-4 border-b-amber-500 hover:shadow-md transition-all">
-          <div>
-            <div className="flex items-center justify-between text-slate-700 mb-1">
-              <span className="text-xs font-black uppercase tracking-wider">Samples Above PL</span>
-              <Info className="w-4 h-4 text-slate-400" />
+        <div className="group relative bg-gradient-to-b from-white via-amber-50/60 to-amber-100/50 rounded-2xl p-3 border border-white/90 shadow-md shadow-amber-500/10 flex flex-col justify-between min-h-[160px] sm:min-h-[170px] border-b-[5px] border-b-amber-500 hover:-translate-y-1 hover:shadow-lg hover:shadow-amber-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
+          {/* Specular Top Glass Sheen (Hidden during export) */}
+          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 z-10" />
+
+          <div className="relative z-10">
+            <div className="flex items-center justify-between text-slate-700 mb-1 gap-1 min-w-0">
+              <span className="text-[10px] font-black uppercase tracking-tight text-amber-950 truncate min-w-0 leading-normal">Samples Above PL</span>
+              <Info className="w-3.5 h-3.5 text-slate-400 shrink-0 group-hover:text-amber-600 transition-colors" />
             </div>
-            <div className="my-3 flex items-center gap-2.5">
-              <div className="p-2.5 bg-amber-50 text-amber-600 rounded-2xl border border-amber-100 shrink-0 shadow-2xs">
-                <AlertTriangle className="w-5 h-5" />
+            <div className="my-2 flex items-center gap-2 min-w-0">
+              {/* 3D Crystal Gem Badge */}
+              <div className="p-2 sm:p-2.5 bg-gradient-to-br from-amber-400/20 via-amber-100 to-amber-200/90 text-amber-700 rounded-xl border border-white/90 shrink-0 shadow-md shadow-amber-500/20 relative group-hover:scale-105 transition-transform duration-300">
+                <div data-export-hide="true" className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/80 blur-[0.5px]" />
+                <AlertTriangle className="w-4 h-4 sm:w-4.5 sm:h-4.5 relative z-10" />
               </div>
-              <div>
-                <span className="text-2xl sm:text-3xl font-black text-amber-900 tracking-tight block leading-none">
-                  {paramMetrics.exceedanceCount.toLocaleString()}
+              <div className="min-w-0 flex-1">
+                <span className="text-xl sm:text-2xl xl:text-2xl 2xl:text-3xl font-black text-amber-950 tracking-tight block leading-snug py-0.5 truncate" title={String(paramMetrics.exceedanceCount)}>
+                  {paramMetrics.exceedanceCount}
                 </span>
               </div>
             </div>
           </div>
-          <p className="text-xs font-extrabold text-amber-800/80 leading-tight pt-2 border-t border-slate-100">
-            Exceeding limit (&gt; {b2} {unit})
+          <p className="text-[9px] sm:text-[10px] font-extrabold text-amber-800/90 leading-normal py-0.5 border-t border-amber-200/80 truncate relative z-10">
+            Exceeding (&gt; {b2} {unit})
           </p>
         </div>
 
         {/* Card 3: Percent Exceedance */}
-        <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-sm flex flex-col justify-between min-h-[165px] sm:min-h-[180px] relative overflow-hidden border-b-4 border-b-rose-600 hover:shadow-md transition-all">
-          <div>
-            <div className="flex items-center justify-between text-slate-700 mb-1">
-              <span className="text-xs font-black uppercase tracking-wider">% Exceedance</span>
-              <Info className="w-4 h-4 text-slate-400" />
+        <div className="group relative bg-gradient-to-b from-white via-rose-50/60 to-rose-100/50 rounded-2xl p-3 border border-white/90 shadow-md shadow-rose-500/10 flex flex-col justify-between min-h-[160px] sm:min-h-[170px] border-b-[5px] border-b-rose-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-rose-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
+          {/* Specular Top Glass Sheen (Hidden during export) */}
+          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 z-10" />
+
+          <div className="relative z-10">
+            <div className="flex items-center justify-between text-slate-700 mb-1 gap-1 min-w-0">
+              <span className="text-[10px] font-black uppercase tracking-tight text-rose-950 truncate min-w-0 leading-normal">% Exceedance</span>
+              <Info className="w-3.5 h-3.5 text-slate-400 shrink-0 group-hover:text-rose-600 transition-colors" />
             </div>
-            <div className="my-3 flex items-center gap-2.5">
-              <div className="p-2.5 bg-rose-50 text-rose-600 rounded-2xl border border-rose-100 shrink-0 shadow-2xs">
-                <TrendingUp className="w-5 h-5" />
+            <div className="my-2 flex items-center gap-2 min-w-0">
+              {/* 3D Crystal Gem Badge */}
+              <div className="p-2 sm:p-2.5 bg-gradient-to-br from-rose-400/20 via-rose-100 to-rose-200/90 text-rose-700 rounded-xl border border-white/90 shrink-0 shadow-md shadow-rose-500/20 relative group-hover:scale-105 transition-transform duration-300">
+                <div data-export-hide="true" className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/80 blur-[0.5px]" />
+                <TrendingUp className="w-4 h-4 sm:w-4.5 sm:h-4.5 relative z-10" />
               </div>
-              <div>
-                <span className="text-2xl sm:text-3xl font-black text-rose-700 tracking-tight block leading-none">
+              <div className="min-w-0 flex-1">
+                <span className="text-lg sm:text-xl xl:text-xl 2xl:text-2xl font-black text-rose-700 tracking-tight block leading-snug py-0.5 truncate" title={`${paramMetrics.exceedancePct.toFixed(2)}%`}>
                   {paramMetrics.exceedancePct.toFixed(2)}%
                 </span>
               </div>
             </div>
           </div>
-          <p className="text-xs font-extrabold text-slate-500 leading-tight pt-2 border-t border-slate-100">
-            Overall non-compliance rate
+          <p className="text-[9px] sm:text-[10px] font-extrabold text-slate-500 leading-normal py-0.5 border-t border-rose-200/80 truncate relative z-10">
+            Non-compliance rate
           </p>
         </div>
 
-        {/* Card 4: Partially Affected Admin Units (States, Districts, Blocks) */}
-        <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm flex flex-col justify-between min-h-[165px] sm:min-h-[180px] relative overflow-hidden border-b-4 border-b-purple-600 hover:shadow-md transition-all">
-          <div>
-            <div className="flex items-center justify-between text-slate-700 mb-1">
-              <span className="text-xs font-black uppercase tracking-wider text-purple-950">
+        {/* Card 4: Partially Affected Admin Units */}
+        <div className="group relative bg-gradient-to-b from-white via-purple-50/60 to-purple-100/50 rounded-2xl p-3 border border-white/90 shadow-md shadow-purple-500/10 flex flex-col justify-between min-h-[160px] sm:min-h-[170px] border-b-[5px] border-b-purple-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-purple-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
+          {/* Specular Top Glass Sheen (Hidden during export) */}
+          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 z-10" />
+
+          <div className="relative z-10">
+            <div className="flex items-center justify-between text-slate-700 mb-1 gap-1 min-w-0">
+              <span className="text-[10px] font-black uppercase tracking-tight text-purple-950 truncate min-w-0 leading-normal">
                 Partially Affected
               </span>
-              <Info className="w-4 h-4 text-slate-400" />
+              <Info className="w-3.5 h-3.5 text-slate-400 shrink-0 group-hover:text-purple-600 transition-colors" />
             </div>
-            <div className="my-1.5 space-y-1">
-              <div className="flex items-center justify-between text-xs font-bold text-slate-700 bg-purple-50/80 px-2 py-0.5 rounded-md border border-purple-100">
-                <span>States:</span>
-                <span className="font-black text-purple-950">
-                  {paramMetrics.affectedUnits.affectedStates} <span className="text-[10px] text-slate-500 font-semibold">/ {paramMetrics.affectedUnits.totalStates}</span>
+            <div className="my-1 space-y-1 min-w-0">
+              <div className="flex items-center justify-between text-[10px] font-bold text-slate-700 bg-white/80 px-1.5 py-1 rounded-lg border border-purple-200/80 shadow-xs min-w-0 leading-normal">
+                <span className="shrink-0 text-slate-600">States:</span>
+                <span className="font-black text-purple-950 truncate ml-1 leading-normal">
+                  {paramMetrics.affectedUnits.affectedStates} <span className="text-[9px] text-slate-400 font-semibold">/ {paramMetrics.affectedUnits.totalStates}</span>
                 </span>
               </div>
-              <div className="flex items-center justify-between text-xs font-bold text-slate-700 bg-purple-50/80 px-2 py-0.5 rounded-md border border-purple-100">
-                <span>Districts:</span>
-                <span className="font-black text-purple-950">
-                  {paramMetrics.affectedUnits.affectedDistricts} <span className="text-[10px] text-slate-500 font-semibold">/ {paramMetrics.affectedUnits.totalDistricts}</span>
+              <div className="flex items-center justify-between text-[10px] font-bold text-slate-700 bg-white/80 px-1.5 py-1 rounded-lg border border-purple-200/80 shadow-xs min-w-0 leading-normal">
+                <span className="shrink-0 text-slate-600">Districts:</span>
+                <span className="font-black text-purple-950 truncate ml-1 leading-normal">
+                  {paramMetrics.affectedUnits.affectedDistricts} <span className="text-[9px] text-slate-400 font-semibold">/ {paramMetrics.affectedUnits.totalDistricts}</span>
                 </span>
               </div>
-              <div className="flex items-center justify-between text-xs font-bold text-slate-700 bg-purple-50/80 px-2 py-0.5 rounded-md border border-purple-100">
-                <span>Blocks:</span>
-                <span className="font-black text-purple-950">
+              <div className="flex items-center justify-between text-[10px] font-bold text-slate-700 bg-white/80 px-1.5 py-1 rounded-lg border border-purple-200/80 shadow-xs min-w-0 leading-normal">
+                <span className="shrink-0 text-slate-600">Blocks:</span>
+                <span className="font-black text-purple-950 truncate ml-1 leading-normal">
                   {paramMetrics.affectedUnits.totalBlocks > 0
                     ? `${paramMetrics.affectedUnits.affectedBlocks} / ${paramMetrics.affectedUnits.totalBlocks}`
                     : "N/A"}
@@ -879,87 +1005,105 @@ export default function KpiView({
               </div>
             </div>
           </div>
-          <p className="text-[11px] font-extrabold text-purple-900/80 leading-tight pt-1.5 border-t border-slate-100">
+          <p className="text-[9px] sm:text-[10px] font-extrabold text-purple-900/90 leading-normal py-0.5 border-t border-purple-200/80 truncate relative z-10">
             Units with ≥1 sample &gt; PL
           </p>
         </div>
 
-        {/* Card 5: Highest Exceedance State / District / Block */}
-        <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-sm flex flex-col justify-between min-h-[165px] sm:min-h-[180px] relative overflow-hidden border-b-4 border-b-red-600 hover:shadow-md transition-all">
-          <div>
-            <div className="flex items-center justify-between text-slate-700 mb-1">
-              <span className="text-xs font-black uppercase tracking-wider">
+        {/* Card 5: Highest Exceedance Area */}
+        <div className="group relative bg-gradient-to-b from-white via-red-50/60 to-red-100/50 rounded-2xl p-3 border border-white/90 shadow-md shadow-red-500/10 flex flex-col justify-between min-h-[160px] sm:min-h-[170px] border-b-[5px] border-b-red-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-red-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
+          {/* Specular Top Glass Sheen (Hidden during export) */}
+          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 z-10" />
+
+          <div className="relative z-10">
+            <div className="flex items-center justify-between text-slate-700 mb-1 gap-1 min-w-0">
+              <span className="text-[10px] font-black uppercase tracking-tight text-red-950 truncate min-w-0 leading-normal">
                 Highest {top5LevelLabel}
               </span>
-              <Info className="w-4 h-4 text-slate-400" />
+              <Info className="w-3.5 h-3.5 text-slate-400 shrink-0 group-hover:text-red-600 transition-colors" />
             </div>
-            <div className="my-2 flex items-center gap-2.5">
-              <div className="p-2.5 bg-red-50 text-red-600 rounded-2xl border border-red-100 shrink-0 shadow-2xs">
-                <MapPin className="w-5 h-5" />
+            <div className="my-1.5 flex items-center gap-1.5 min-w-0">
+              {/* 3D Crystal Gem Badge */}
+              <div className="p-2 sm:p-2.5 bg-gradient-to-br from-red-400/20 via-red-100 to-red-200/90 text-red-700 rounded-xl border border-white/90 shrink-0 shadow-md shadow-red-500/20 relative group-hover:scale-105 transition-transform duration-300">
+                <div data-export-hide="true" className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/80 blur-[0.5px]" />
+                <MapPin className="w-4 h-4 sm:w-4.5 sm:h-4.5 relative z-10" />
               </div>
-              <div className="overflow-hidden">
-                <span className="text-base font-black text-slate-900 tracking-tight block break-words leading-tight">
+              <div className="min-w-0 flex-1 overflow-visible">
+                <span className="text-[11px] sm:text-xs font-black text-slate-900 tracking-tight block leading-snug py-0.5 break-words" title={paramMetrics.topRegionName}>
                   {paramMetrics.topRegionName}
                 </span>
-                <span className="text-xs font-black text-red-600">
+                <span className="text-[11px] sm:text-xs font-black text-red-600 block mt-0.5 leading-snug py-0.5">
                   {paramMetrics.topRegionPct.toFixed(2)}%
                 </span>
               </div>
             </div>
           </div>
-          <p className="text-xs font-extrabold text-slate-500 leading-tight pt-2 border-t border-slate-100">
+          <p className="text-[9px] sm:text-[10px] font-extrabold text-slate-500 leading-normal py-0.5 border-t border-red-200/80 truncate relative z-10">
             Highest non-compliant area
           </p>
         </div>
 
         {/* Card 6: BIS Permissible Limit */}
-        <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-sm flex flex-col justify-between min-h-[165px] sm:min-h-[180px] relative overflow-hidden border-b-4 border-b-emerald-600 hover:shadow-md transition-all">
-          <div>
-            <div className="flex items-center justify-between text-slate-700 mb-1">
-              <span className="text-xs font-black uppercase tracking-wider">BIS Permissible Limit</span>
-              <Info className="w-4 h-4 text-slate-400" />
+        <div className="group relative bg-gradient-to-b from-white via-emerald-50/60 to-emerald-100/50 rounded-2xl p-3 border border-white/90 shadow-md shadow-emerald-500/10 flex flex-col justify-between min-h-[160px] sm:min-h-[170px] border-b-[5px] border-b-emerald-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-emerald-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
+          {/* Specular Top Glass Sheen (Hidden during export) */}
+          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 z-10" />
+
+          <div className="relative z-10">
+            <div className="flex items-center justify-between text-slate-700 mb-1 gap-1 min-w-0">
+              <span className="text-[10px] font-black uppercase tracking-tight text-emerald-950 truncate min-w-0 leading-normal">BIS PL Limit</span>
+              <Info className="w-3.5 h-3.5 text-slate-400 shrink-0 group-hover:text-emerald-600 transition-colors" />
             </div>
-            <div className="my-3 flex items-center gap-2.5">
-              <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-2xl border border-emerald-100 shrink-0 shadow-2xs">
-                <FileText className="w-5 h-5" />
+            <div className="my-2 flex items-center gap-2 min-w-0">
+              {/* 3D Crystal Gem Badge */}
+              <div className="p-2 sm:p-2.5 bg-gradient-to-br from-emerald-400/20 via-emerald-100 to-emerald-200/90 text-emerald-700 rounded-xl border border-white/90 shrink-0 shadow-md shadow-emerald-500/20 relative group-hover:scale-105 transition-transform duration-300">
+                <div data-export-hide="true" className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/80 blur-[0.5px]" />
+                <FileText className="w-4 h-4 sm:w-4.5 sm:h-4.5 relative z-10" />
               </div>
-              <div>
-                <span className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight block leading-none">
+              <div className="min-w-0 flex-1">
+                <span className="text-xl sm:text-2xl xl:text-2xl 2xl:text-3xl font-black text-slate-900 tracking-tight block leading-snug py-0.5 truncate" title={String(b2)}>
                   {b2}
                 </span>
-                <span className="text-xs font-bold text-slate-500 block mt-1">
+                <span className="text-[10px] sm:text-[11px] font-bold text-slate-500 block mt-0.5 leading-normal truncate">
                   {unit}
                 </span>
               </div>
             </div>
           </div>
-          <p className="text-xs font-extrabold text-slate-500 leading-tight pt-2 border-t border-slate-100">
-            IS 10500:2012 Drinking Standard
+          <p className="text-[9px] sm:text-[10px] font-extrabold text-slate-500 leading-normal py-0.5 border-t border-emerald-200/80 truncate relative z-10">
+            IS 10500:2012 Standard
           </p>
         </div>
 
         {/* Card 7: Geographical Coverage */}
-        <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-sm flex flex-col justify-between min-h-[165px] sm:min-h-[180px] relative overflow-hidden border-b-4 border-b-teal-600 hover:shadow-md transition-all">
-          <div>
-            <div className="flex items-center justify-between text-slate-700 mb-1">
-              <span className="text-xs font-black uppercase tracking-wider">Geo Coverage</span>
-              <Info className="w-4 h-4 text-slate-400" />
+        <div className="group relative bg-gradient-to-b from-white via-teal-50/60 to-teal-100/50 rounded-2xl p-3 border border-white/90 shadow-md shadow-teal-500/10 flex flex-col justify-between min-h-[160px] sm:min-h-[170px] border-b-[5px] border-b-teal-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-teal-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
+          {/* Specular Top Glass Sheen (Hidden during export) */}
+          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 z-10" />
+
+          <div className="relative z-10">
+            <div className="flex items-center justify-between text-slate-700 mb-1 gap-1 min-w-0">
+              <span className="text-[10px] font-black uppercase tracking-tight text-teal-950 truncate min-w-0 leading-normal">Geo Coverage</span>
+              <Info className="w-3.5 h-3.5 text-slate-400 shrink-0 group-hover:text-teal-600 transition-colors" />
             </div>
-            <div className="my-2 flex items-center gap-2.5">
-              <div className="p-2.5 bg-teal-50 text-teal-600 rounded-2xl border border-teal-100 shrink-0 shadow-2xs">
-                <Globe className="w-5 h-5" />
+            <div className="my-2 flex items-center gap-2 min-w-0">
+              {/* 3D Crystal Gem Badge */}
+              <div className="p-2 sm:p-2.5 bg-gradient-to-br from-teal-400/20 via-teal-100 to-teal-200/90 text-teal-700 rounded-xl border border-white/90 shrink-0 shadow-md shadow-teal-500/20 relative group-hover:scale-105 transition-transform duration-300">
+                <div data-export-hide="true" className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/80 blur-[0.5px]" />
+                <Globe className="w-4 h-4 sm:w-4.5 sm:h-4.5 relative z-10" />
               </div>
-              <div>
-                <span className="text-sm font-black text-slate-900 tracking-tight block leading-tight">
+              <div className="min-w-0 flex-1">
+                <span className="text-xs sm:text-xs xl:text-xs font-black text-slate-900 tracking-tight block leading-snug py-0.5 truncate">
                   {paramMetrics.stateCount} States/UTs
                 </span>
-                <span className="text-xs font-bold text-slate-600">
+                <span className="text-[10px] font-extrabold text-teal-800 block mt-0.5 leading-normal truncate">
                   {paramMetrics.districtCount} Districts
                 </span>
               </div>
             </div>
           </div>
-          <p className="text-xs font-extrabold text-slate-500 leading-tight pt-2 border-t border-slate-100">
+          <p className="text-[9px] sm:text-[10px] font-extrabold text-slate-500 leading-normal py-0.5 border-t border-slate-200/80 truncate relative z-10">
             Observation network
           </p>
         </div>
@@ -970,47 +1114,52 @@ export default function KpiView({
         {/* LEFT COLUMN: 3 CARDS (Hidable) */}
         <div className={`${showGisAnalysis ? "lg:col-span-5" : "hidden"} space-y-4 flex flex-col justify-between transition-all`}>
           {/* CARD A: BIS STANDARD CARD */}
-          <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs">
-            <div className="bg-[#1a2356] text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-xs tracking-wide mb-3">
+          <div className="relative bg-gradient-to-b from-white via-slate-50/80 to-indigo-50/30 rounded-2xl p-4 border border-white/90 shadow-[0_16px_36px_-6px_rgba(26,35,86,0.18),0_6px_16px_-2px_rgba(0,0,0,0.04),inset_0_2px_1px_0_rgba(255,255,255,0.95)] hover:-translate-y-1 hover:shadow-[0_20px_40px_-6px_rgba(26,35,86,0.25)] transition-all duration-300 overflow-hidden">
+            <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[40%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+            
+            <div className="relative z-10 bg-gradient-to-r from-[#1a2356] via-[#28357a] to-[#1a2356] text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-[0_6px_14px_rgba(26,35,86,0.4),inset_0_1px_0_rgba(255,255,255,0.3)] tracking-wide mb-3">
               BIS Standard: {toProperCase(paramName)} ({selectedParamKey})
             </div>
 
-            <div className="flex items-center justify-between gap-4 py-1">
+            <div className="relative z-10 flex items-center justify-between gap-4 py-1">
               {/* Droplet Icon */}
-              <div className="w-12 h-12 rounded-full bg-cyan-950/10 text-cyan-800 flex items-center justify-center border border-cyan-300 shrink-0">
-                <Droplets className="w-6 h-6" />
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-cyan-400/20 via-cyan-100 to-cyan-200/90 text-cyan-900 flex items-center justify-center border border-white/90 shrink-0 shadow-[0_8px_18px_rgba(6,182,212,0.35),inset_0_2px_3px_rgba(255,255,255,1),inset_0_-2px_4px_rgba(0,0,0,0.1)] relative overflow-hidden">
+                <div data-export-hide="true" className="absolute top-0.5 left-1 w-2 h-2 rounded-full bg-white/80 blur-[0.5px]" />
+                <Droplets className="w-6 h-6 relative z-10" />
               </div>
 
               {/* Acceptable & Permissible Limit Pills */}
               <div className="flex-1 space-y-2">
-                <div className="flex items-center justify-between bg-emerald-50/90 border border-emerald-300 rounded-xl px-3 py-1.5">
+                <div className="flex items-center justify-between bg-emerald-50/90 border border-emerald-300/90 rounded-xl px-3 py-1.5 shadow-[0_2px_6px_rgba(16,185,129,0.12)]">
                   <span className="text-xs font-black text-slate-800">Acceptable</span>
-                  <span className="text-xs font-black text-emerald-800 bg-emerald-100/80 px-2.5 py-0.5 rounded-lg border border-emerald-400">
+                  <span className="text-xs font-black text-emerald-800 bg-emerald-100/90 px-2.5 py-0.5 rounded-lg border border-emerald-400/80 shadow-2xs">
                     {b1} {unit}
                   </span>
                 </div>
 
-                <div className="flex items-center justify-between bg-amber-50/90 border border-amber-300 rounded-xl px-3 py-1.5">
+                <div className="flex items-center justify-between bg-amber-50/90 border border-amber-300/90 rounded-xl px-3 py-1.5 shadow-[0_2px_6px_rgba(245,158,11,0.12)]">
                   <span className="text-xs font-black text-slate-800">Permissible*</span>
-                  <span className="text-xs font-black text-amber-800 bg-amber-100/80 px-2.5 py-0.5 rounded-lg border border-amber-400">
+                  <span className="text-xs font-black text-amber-800 bg-amber-100/90 px-2.5 py-0.5 rounded-lg border border-amber-400/80 shadow-2xs">
                     {b2} {unit}
                   </span>
                 </div>
               </div>
             </div>
 
-            <p className="text-[10px] text-slate-400 italic font-medium text-center mt-2">
+            <p className="relative z-10 text-[10px] text-slate-500 italic font-medium text-center mt-2">
               *Absence of alternate source (IS 10500:2012)
             </p>
           </div>
 
           {/* CARD B: DONUT 3D CHART CARD */}
-          <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs">
-            <div className="bg-[#1a2356] text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-xs tracking-wide mb-2">
+          <div className="relative bg-gradient-to-b from-white via-slate-50/80 to-indigo-50/30 rounded-2xl p-4 border border-white/90 shadow-[0_16px_36px_-6px_rgba(26,35,86,0.18),0_6px_16px_-2px_rgba(0,0,0,0.04),inset_0_2px_1px_0_rgba(255,255,255,0.95)] hover:-translate-y-1 hover:shadow-[0_20px_40px_-6px_rgba(26,35,86,0.25)] transition-all duration-300 overflow-hidden">
+            <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[40%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+
+            <div className="relative z-10 bg-gradient-to-r from-[#1a2356] via-[#28357a] to-[#1a2356] text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-[0_6px_14px_rgba(26,35,86,0.4),inset_0_1px_0_rgba(255,255,255,0.3)] tracking-wide mb-2">
               Compliance Status: {toProperCase(paramName)} ({selectedParamKey})
             </div>
 
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-2">
+            <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-4 py-2">
               {/* 3D Donut Chart Component */}
               <Compliance3DDonutChart
                 withinCount={paramMetrics.withinCount}
@@ -1023,43 +1172,45 @@ export default function KpiView({
 
               {/* Donut Legend */}
               <div className="space-y-3 flex-1 text-xs w-full">
-                <div className="flex items-center justify-between font-bold border-b border-slate-100 pb-2">
+                <div className="flex items-center justify-between font-bold border-b border-slate-200/80 pb-2">
                   <div className="flex items-center gap-2">
-                    <span className="w-3.5 h-3.5 rounded-md bg-emerald-500 shadow-xs border border-emerald-600 shrink-0" />
+                    <span className="w-3.5 h-3.5 rounded-md bg-emerald-500 shadow-[0_2px_6px_rgba(16,185,129,0.4)] border border-emerald-600 shrink-0" />
                     <span className="text-slate-700">Within Limit (≤{b2})</span>
                   </div>
                   <span className="text-slate-900 font-black">
-                    {paramMetrics.withinCount.toLocaleString()}{" "}
+                    {paramMetrics.withinCount}{" "}
                     <span className="text-emerald-700 text-[11px]">({paramMetrics.withinPct.toFixed(2)}%)</span>
                   </span>
                 </div>
 
                 <div className="flex items-center justify-between font-bold">
                   <div className="flex items-center gap-2">
-                    <span className="w-3.5 h-3.5 rounded-md bg-amber-500 shadow-xs border border-amber-600 shrink-0" />
+                    <span className="w-3.5 h-3.5 rounded-md bg-amber-500 shadow-[0_2px_6px_rgba(245,158,11,0.4)] border border-amber-600 shrink-0" />
                     <span className="text-slate-700">Exceeding (&gt;{b2})</span>
                   </div>
                   <span className="text-slate-900 font-black">
-                    {paramMetrics.exceedanceCount.toLocaleString()}{" "}
+                    {paramMetrics.exceedanceCount}{" "}
                     <span className="text-amber-600 text-[11px]">({paramMetrics.exceedancePct.toFixed(2)}%)</span>
                   </span>
                 </div>
 
-                <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200/80 text-[11px] text-slate-600 font-semibold flex items-center justify-between">
+                <div className="p-2.5 bg-white/90 rounded-xl border border-slate-200/90 text-[11px] text-slate-600 font-semibold flex items-center justify-between shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
                   <span>Evaluated Samples:</span>
-                  <span className="font-black text-slate-900">{(paramMetrics.withinCount + paramMetrics.exceedanceCount).toLocaleString()}</span>
+                  <span className="font-black text-slate-900">{paramMetrics.withinCount + paramMetrics.exceedanceCount}</span>
                 </div>
               </div>
             </div>
           </div>
 
           {/* CARD C: TOP 5 STATES / DISTRICTS / BLOCKS BY EXCEEDANCE BAR CHART */}
-          <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs flex-1 flex flex-col justify-between">
-            <div className="bg-[#1a2356] text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-xs tracking-wide mb-3">
+          <div className="relative bg-gradient-to-b from-white via-slate-50/80 to-indigo-50/30 rounded-2xl p-4 border border-white/90 shadow-[0_16px_36px_-6px_rgba(26,35,86,0.18),0_6px_16px_-2px_rgba(0,0,0,0.04),inset_0_2px_1px_0_rgba(255,255,255,0.95)] hover:-translate-y-1 hover:shadow-[0_20px_40px_-6px_rgba(26,35,86,0.25)] transition-all duration-300 flex-1 flex flex-col justify-between overflow-hidden">
+            <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[40%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+
+            <div className="relative z-10 bg-gradient-to-r from-[#1a2356] via-[#28357a] to-[#1a2356] text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-[0_6px_14px_rgba(26,35,86,0.4),inset_0_1px_0_rgba(255,255,255,0.3)] tracking-wide mb-3">
               Top 5 {toProperCase(top5PluralLabel)} {isStateSelected ? (isDistrictSelected ? `in ${toProperCase(selectedDistrict)}` : `in ${toProperCase(selectedState)}`) : ""} by {selectedParamKey} Exceedance
             </div>
 
-            <div className="space-y-3 py-1">
+            <div className="relative z-10 space-y-3 py-1">
               {paramMetrics.top5ChartData.length > 0 ? (
                 paramMetrics.top5ChartData.map((item) => (
                   <div key={item.name} className="space-y-1.5 overflow-visible">
@@ -1067,9 +1218,9 @@ export default function KpiView({
                       <span className="truncate max-w-[170px] inline-block leading-normal py-0.5">{item.name}</span>
                       <span className="font-black text-slate-900 leading-normal shrink-0">{item.exceedPct}%</span>
                     </div>
-                    <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+                    <div className="w-full bg-slate-100/90 rounded-full h-3.5 p-0.5 overflow-hidden shadow-[inset_0_2px_4px_rgba(0,0,0,0.1)] border border-slate-200/80">
                       <div
-                        className="h-3 rounded-full transition-all duration-500"
+                        className="h-2.5 rounded-full transition-all duration-500 shadow-[0_2px_6px_rgba(0,0,0,0.15)]"
                         style={{
                           width: `${Math.min(100, (item.exceedPct / (paramMetrics.topRegionPct || 100)) * 100)}%`,
                           backgroundColor: item.fill
@@ -1085,14 +1236,14 @@ export default function KpiView({
               )}
             </div>
 
-            <p className="text-[10px] text-slate-400 font-bold text-center mt-3 uppercase tracking-wider">
+            <p className="relative z-10 text-[10px] text-slate-400 font-bold text-center mt-3 uppercase tracking-wider">
               Top {top5PluralLabel} non-compliant against BIS limits
             </p>
           </div>
         </div>
 
         {/* RIGHT COLUMN: DEDICATED KPI CHOROPLETH SPATIAL MAP */}
-        <div className={`${showGisAnalysis ? "lg:col-span-7" : "lg:col-span-12"} bg-amber-50/20 border border-amber-200/80 rounded-2xl p-3.5 shadow-sm transition-all duration-300`}>
+        <div className={`${showGisAnalysis ? "lg:col-span-7" : "lg:col-span-12"} bg-gradient-to-b from-amber-50/50 via-amber-50/20 to-white border border-amber-200/90 rounded-2xl p-3.5 shadow-[0_16px_36px_-6px_rgba(217,119,6,0.18),inset_0_2px_1px_0_rgba(255,255,255,0.95)] transition-all duration-300`}>
           <KpiChoroplethMap
             rawData={rawData}
             setRawData={setRawData}
@@ -1121,44 +1272,44 @@ export default function KpiView({
         </div>
       </div>
 
-      {/* BOTTOM DARK NAVY FOOTER BANNER */}
-      <div className="bg-[#19224d] text-white rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 shadow-md border border-indigo-900">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-indigo-600/30 text-indigo-300 rounded-xl border border-indigo-500/30 shrink-0">
+      {/* BOTTOM DARK NAVY FOOTER BANNER WITH 3D DEPTH */}
+      <div className="bg-gradient-to-r from-[#141b3d] via-[#1e295d] to-[#141b3d] text-white rounded-2xl p-4 sm:p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 shadow-[0_12px_30px_rgba(20,27,61,0.4),inset_0_1px_0_rgba(255,255,255,0.15)] border border-indigo-900/80">
+        <div className="flex items-center gap-3 bg-white/5 p-2.5 rounded-xl border border-white/10 shadow-inner">
+          <div className="p-2.5 bg-indigo-600/40 text-indigo-300 rounded-xl border border-indigo-400/40 shrink-0 shadow-[0_4px_10px_rgba(79,70,229,0.3)]">
             <Calendar className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Assessment Period</span>
+            <span className="text-[10px] font-bold text-indigo-200 uppercase tracking-wider block">Assessment Period</span>
             <span className="text-sm font-black text-white">{assessmentPeriodText}</span>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-blue-600/30 text-blue-300 rounded-xl border border-blue-500/30 shrink-0">
+        <div className="flex items-center gap-3 bg-white/5 p-2.5 rounded-xl border border-white/10 shadow-inner">
+          <div className="p-2.5 bg-blue-600/40 text-blue-300 rounded-xl border border-blue-400/40 shrink-0 shadow-[0_4px_10px_rgba(37,99,235,0.3)]">
             <Droplets className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Parameter Assessed</span>
+            <span className="text-[10px] font-bold text-indigo-200 uppercase tracking-wider block">Parameter Assessed</span>
             <span className="text-sm font-black text-white truncate max-w-[200px] block">{paramName}</span>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-emerald-600/30 text-emerald-300 rounded-xl border border-emerald-500/30 shrink-0">
+        <div className="flex items-center gap-3 bg-white/5 p-2.5 rounded-xl border border-white/10 shadow-inner">
+          <div className="p-2.5 bg-emerald-600/40 text-emerald-300 rounded-xl border border-emerald-400/40 shrink-0 shadow-[0_4px_10px_rgba(5,150,105,0.3)]">
             <Shield className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Standard Reference</span>
+            <span className="text-[10px] font-bold text-indigo-200 uppercase tracking-wider block">Standard Reference</span>
             <span className="text-sm font-black text-white">BIS IS 10500:2012</span>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-teal-600/30 text-teal-300 rounded-xl border border-teal-500/30 shrink-0">
+        <div className="flex items-center gap-3 bg-white/5 p-2.5 rounded-xl border border-white/10 shadow-inner">
+          <div className="p-2.5 bg-teal-600/40 text-teal-300 rounded-xl border border-teal-400/40 shrink-0 shadow-[0_4px_10px_rgba(13,148,136,0.3)]">
             <Globe className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Coverage</span>
+            <span className="text-[10px] font-bold text-indigo-200 uppercase tracking-wider block">Coverage</span>
             <span className="text-sm font-black text-white">{paramMetrics.stateCount} States/UTs | {paramMetrics.districtCount} Districts</span>
           </div>
         </div>

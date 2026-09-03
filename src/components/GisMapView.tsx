@@ -40,7 +40,7 @@ import {
   FileJson,
   AlertTriangle
 } from "lucide-react";
-import { PARAM_CONFIG } from "../data/config";
+import { PARAM_CONFIG, hasBisLimit } from "../data/config";
 import { INDIA_BOUNDARY } from "../data/india_boundary";
 import { 
   featureMatchesSelection, 
@@ -190,9 +190,7 @@ const BASEMAP_STYLES = {
   "Google Road Map": { bg: "#f5f5f5", grid: "rgba(0,0,0,0.04)", outline: "#cbd5e1" },
   "Google Satellite": { bg: "#050a12", grid: "rgba(255,255,255,0.08)", outline: "#334155" },
   "Google Hybrid": { bg: "#060b14", grid: "rgba(255,255,255,0.1)", outline: "#475569" },
-  "OpenStreetMap": { bg: "#fdfbfa", grid: "rgba(0,0,0,0.05)", outline: "#94a3b8" },
-  "CartoDB Light": { bg: "#f8fafc", grid: "rgba(15, 23, 42, 0.04)", outline: "#cbd5e1" },
-  "CartoDB Dark": { bg: "#0f172a", grid: "rgba(255, 255, 255, 0.04)", outline: "#334155" }
+  "OpenStreetMap": { bg: "#fdfbfa", grid: "rgba(0,0,0,0.05)", outline: "#94a3b8" }
 };
 
 // Web Mercator Tile conversions
@@ -1983,9 +1981,8 @@ export default function GisMapView({
         });
       });
     }
-    // Exclude HCO3, CO3, Na, and K from GIS Map section
-    const excludeKeys = ["hco3", "co3", "na", "k"];
-    params = params.filter(p => !excludeKeys.includes(p.toLowerCase()));
+    // Exclude parameters without BIS limits from GIS Map selection
+    params = params.filter(p => hasBisLimit(p));
 
     // Ensure all calculated agricultural & hazard parameters are always listed
     const extraParams = ["SAR", "RSC", "TDS", "Alkalinity", "SSP", "Na%", "PI", "KR", "MH"];
@@ -2371,8 +2368,10 @@ export default function GisMapView({
     const uniqueStates = new Set<string>();
     const uniqueDistricts = new Set<string>();
     data.forEach(d => {
-      if (d[stateKey]) uniqueStates.add(String(d[stateKey]).trim());
-      if (d[districtKey]) uniqueDistricts.add(String(d[districtKey]).trim());
+      const st = String(d[stateKey] || "").trim();
+      const dt = String(d[districtKey] || "").trim();
+      if (st) uniqueStates.add(st);
+      if (dt) uniqueDistricts.add(st ? `${st}__${dt}` : dt);
     });
 
     const useDistricts = uniqueStates.size <= 1 && uniqueDistricts.size > 0;
@@ -2623,10 +2622,6 @@ export default function GisMapView({
         return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/${tz}/${cleanY}/${cleanX}`;
       } else if (basemap === "ESRI Terrain") {
         return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/${tz}/${cleanY}/${cleanX}`;
-      } else if (basemap === "CartoDB Light") {
-        return `https://basemaps.cartocdn.com/light_all/${tz}/${cleanX}/${cleanY}.png`;
-      } else if (basemap === "CartoDB Dark") {
-        return `https://basemaps.cartocdn.com/dark_all/${tz}/${cleanX}/${cleanY}.png`;
       } else {
         // Default OpenStreetMap
         return `https://tile.openstreetmap.org/${tz}/${cleanX}/${cleanY}.png`;
@@ -3363,8 +3358,6 @@ export default function GisMapView({
         attribution = "Source: Esri, Maxar, Earthstar Geographics, USDA, USGS, AeroGRID, IGN, and the GIS User Community";
       } else if (basemap.startsWith("Google")) {
         attribution = "Source: Map data ©2026 Google";
-      } else if (basemap.startsWith("CartoDB")) {
-        attribution = "Source: © CartoDB, © OpenStreetMap contributors";
       }
 
       ctx.save();
@@ -4584,8 +4577,8 @@ export default function GisMapView({
     }
 
     const pStyle = {
-      bg: panelBackgroundStyle === "transparent" ? "rgba(255, 255, 255, 0)" : (panelBackgroundStyle === "glass" ? "rgba(255, 255, 255, 0.82)" : "rgba(255, 255, 255, 0.98)"),
-      border: panelBackgroundStyle === "transparent" ? "rgba(0,0,0,0)" : "#cbd5e1",
+      bg: panelBackgroundStyle.includes("transparent") ? "rgba(255, 255, 255, 0)" : (panelBackgroundStyle.includes("glass") ? "rgba(255, 255, 255, 0.82)" : "rgba(255, 255, 255, 0.98)"),
+      border: panelBackgroundStyle.includes("transparent") ? "rgba(0,0,0,0)" : "#cbd5e1",
       text: legendTextColor
     };
 
@@ -4782,7 +4775,7 @@ export default function GisMapView({
     }
 
     let northArrowElement = "";
-    if (northArrowType !== "none") {
+    if (Boolean(northArrowType)) {
       let arrowX = w - margin - 35;
       let arrowY = margin + 45;
       if (northArrowPos === "top-left") { arrowX = margin + 35; arrowY = margin + 45; }
@@ -5460,9 +5453,9 @@ ${svgStatsPanel}
     setBatchGenerating(true);
     setBatchProgress(0);
 
-    const queue = availableParams.map(p => ({
+    const queue: { name: string; status: "idle" | "done" }[] = availableParams.map(p => ({
       name: `${p}_Comparison_CGWB_DPI600.png`,
-      status: "idle" as const
+      status: "idle"
     }));
     setExportQueue(queue);
 
@@ -7749,7 +7742,7 @@ ${svgStatsPanel}
                       <label className="block text-[9px] text-slate-400 font-bold mb-1 uppercase tracking-wide">MAP TITLE 3D EFFECT</label>
                       <select
                         value={mapTitle3dEffect}
-                        onChange={(e) => setMapTitle3dEffect(e.target.value)}
+                        onChange={(e) => setMapTitle3dEffect(e.target.value as "none" | "emboss" | "deboss")}
                         className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-2 focus:outline-none text-slate-800 cursor-pointer"
                       >
                         <option value="none">None (Standard Flat)</option>
@@ -7762,7 +7755,7 @@ ${svgStatsPanel}
                       <label className="block text-[9px] text-slate-400 font-bold mb-1 uppercase tracking-wide">MAP SUBTITLE 3D EFFECT</label>
                       <select
                         value={mapSubtitle3dEffect}
-                        onChange={(e) => setMapSubtitle3dEffect(e.target.value)}
+                        onChange={(e) => setMapSubtitle3dEffect(e.target.value as "none" | "emboss" | "deboss")}
                         className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-2 focus:outline-none text-slate-800 cursor-pointer"
                       >
                         <option value="none">None (Standard Flat)</option>
@@ -7775,7 +7768,7 @@ ${svgStatsPanel}
                       <label className="block text-[9px] text-slate-400 font-bold mb-1 uppercase tracking-wide">MAP LEGEND 3D EFFECT</label>
                       <select
                         value={legend3dEffect}
-                        onChange={(e) => setLegend3dEffect(e.target.value)}
+                        onChange={(e) => setLegend3dEffect(e.target.value as "none" | "emboss" | "deboss")}
                         className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-2 focus:outline-none text-slate-800 cursor-pointer"
                       >
                         <option value="none">None (Standard Flat)</option>

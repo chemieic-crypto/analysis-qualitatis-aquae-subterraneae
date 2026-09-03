@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback } from "react";
 import { DataHeaders } from "../types";
-import { PARAM_CONFIG } from "../data/config";
+import { PARAM_CONFIG, hasBisLimit } from "../data/config";
 import { 
   TrendingUp, 
   BarChart2, 
@@ -65,8 +65,8 @@ export default function RankingStatsView({
     
     // Exclude parameters without BIS limits from ranking & statistics
     baseParams = baseParams.filter(key => {
-      const paramId = headerMap[key];
-      return !["Na", "K", "HCO3", "CO3"].includes(paramId);
+      const paramId = headerMap[key] || key;
+      return hasBisLimit(paramId) && hasBisLimit(key);
     });
     
     const hasCa = !!headerMap["Ca"];

@@ -30,6 +30,8 @@ interface UsslDiagramProps {
   is3d?: boolean;
   bubbleSizeMultiplier?: number;
   customTitle?: string;
+  showLocationLabels?: boolean;
+  showAllPoints?: boolean;
 }
 
 export const UsslDiagram = React.memo(({
@@ -41,6 +43,8 @@ export const UsslDiagram = React.memo(({
   is3d = true,
   bubbleSizeMultiplier = 1,
   customTitle,
+  showLocationLabels = false,
+  showAllPoints = true,
 }: UsslDiagramProps) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const margin = { top: 50, right: 30, bottom: 50, left: 60 };
@@ -64,14 +68,14 @@ export const UsslDiagram = React.memo(({
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [title3dEffect, setTitle3dEffect] = useState<"none" | "emboss" | "deboss">("emboss");
 
-  // Systematic Downsampling to prevent UI hanging under large datasets
-  const maxSafePoints = 1200;
+  // Downsampling logic (allows plotting up to 50,000 points without dropping locations)
+  const maxSafePoints = showAllPoints ? 50000 : 25000;
   const isDownsampled = data.length > maxSafePoints;
   const displayData = useMemo(() => {
     if (!isDownsampled) return data;
     const step = Math.ceil(data.length / maxSafePoints);
     return data.filter((_, idx) => idx % step === 0);
-  }, [data, isDownsampled]);
+  }, [data, isDownsampled, maxSafePoints]);
 
   const getX = (ec: number) => {
     const logMin = Math.log10(100);
@@ -276,25 +280,45 @@ export const UsslDiagram = React.memo(({
         radius *= bubbleSizeMultiplier;
       }
       const stateStr = stateHeader ? d[stateHeader] : d.State || d.STATE;
+      const locNameStr = d._calc?.locName || d.Location || d.LOCATION || d.Site || `Loc #${i + 1}`;
       const bubbleId = `bubble-${String(color).replace(/#/g, "")}`;
       const fillValue = is3d ? `url(#${bubbleId})` : color;
+      const strokeVal = is3d ? "rgba(255,255,255,0.4)" : darkenColor(color, 25);
+      const strokeW = is3d ? 0.2 : 0.35;
+      const cx = getX(d._calc.ecVal || 0);
+      const cy = getY(d._calc.sar);
+
       return (
-        <circle
-          key={i}
-          cx={getX(d._calc.ecVal || 0)}
-          cy={getY(d._calc.sar)}
-          r={radius}
-          fill={fillValue}
-          fillOpacity="0.95"
-          stroke={is3d ? "rgba(255,255,255,0.4)" : "none"}
-          strokeWidth={is3d ? 0.2 : 0}
-          className="transition-all duration-300 hover:opacity-80 cursor-pointer"
-        >
-          <title>{`${d._calc.locName}\nEC: ${d._calc.ecVal}\nSAR: ${d._calc.sar.toFixed(2)}` + (stateStr ? `\nState: ${stateStr}` : "")}</title>
-        </circle>
+        <g key={i} className="cursor-pointer">
+          <circle
+            cx={cx}
+            cy={cy}
+            r={radius}
+            fill={fillValue}
+            fillOpacity="0.92"
+            stroke={strokeVal}
+            strokeWidth={strokeW}
+            className="transition-all duration-300 hover:opacity-100 cursor-pointer"
+          >
+            <title>{`${locNameStr}\nEC: ${d._calc.ecVal}\nSAR: ${d._calc.sar.toFixed(2)}` + (stateStr ? `\nState: ${stateStr}` : "")}</title>
+          </circle>
+          {showLocationLabels && (
+            <text
+              x={cx + radius + 1.2}
+              y={cy + 1.2}
+              fontSize={4.2}
+              fontWeight="600"
+              fill="#1e293b"
+              pointerEvents="none"
+              opacity={0.85}
+            >
+              {locNameStr}
+            </text>
+          )}
+        </g>
       );
     });
-  }, [displayData, pointColors, pointSizes, getPointKey, stateHeader, is3d, bubbleSizeMultiplier]);
+  }, [displayData, pointColors, pointSizes, getPointKey, stateHeader, is3d, bubbleSizeMultiplier, showLocationLabels]);
 
   return (
     <div className="bg-transparent p-6 flex flex-col items-center w-full transition-colors duration-300 relative group">
@@ -554,6 +578,18 @@ export const UsslDiagram = React.memo(({
           {renderedPoints}
         </svg>
         </div>
+
+        {/* Dynamic Point Color Legend */}
+        {pointColors && Object.keys(pointColors).length > 0 && (
+          <div className="flex flex-wrap items-center justify-center gap-2 mt-2 pt-3 border-t border-slate-200/80 max-w-[650px] w-full px-4">
+            {Object.entries(pointColors).map(([key, color]) => (
+              <div key={key} className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 text-[10px] font-bold shadow-xs">
+                <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs" style={{ backgroundColor: color }} />
+                <span className="truncate max-w-[150px]">{key}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Full Screen Modal View */}

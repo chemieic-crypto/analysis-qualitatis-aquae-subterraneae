@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { DataHeaders, ExceedingLocationItem } from "../types";
-import { PARAM_CONFIG, ALL_REMEDIAL_MEASURES } from "../data/config";
+import { PARAM_CONFIG, ALL_REMEDIAL_MEASURES, hasBisLimit } from "../data/config";
 import { getStats } from "../utils/math";
 import { generateParamDonutChart } from "../utils/chartHelpers";
 import { downloadMhtmlWordDoc } from "../utils/export";
@@ -55,12 +55,12 @@ export default function PamphletView({
   const [selectedPamphletParams, setSelectedPamphletParams] = useState<string[]>([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   
-  // Filter out Na, K, HCO3, CO3 from pamphlet parameter list (parameters without BIS limits)
+  // Filter out parameters without BIS limits from pamphlet parameter list
   const availableParams = React.useMemo(() => {
     if (!headers || !headers.params) return [];
     return headers.params.filter(p => {
       const paramId = headerMap[p] || p;
-      return !["Na", "K", "HCO3", "CO3"].includes(paramId);
+      return hasBisLimit(paramId) && hasBisLimit(p);
     });
   }, [headers, headerMap]);
 
@@ -507,8 +507,8 @@ export default function PamphletView({
 
           if (isExceeding) {
             exceededParams.push(configKey);
-            const wholeNumbers = ["EC", "NO3", "TH", "Ca", "SO4", "Mg", "Cl"];
-            const decimalPlaces = wholeNumbers.includes(configKey) ? 0 : 4;
+            const wholeNumbers = ["TH", "Ca", "SO4", "Mg", "Cl"];
+            const decimalPlaces = configKey === "EC" ? 1 : configKey === "NO3" ? 2 : configKey === "F" ? 3 : wholeNumbers.includes(configKey) ? 0 : 4;
             exceededDetails.push(`${configKey} (${val.toFixed(decimalPlaces)} ${config.unit})`);
             if (heavyMetalsList.includes(configKey)) hasHeavyMetal = true;
           }
@@ -1298,7 +1298,7 @@ export default function PamphletView({
             <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3" />
             <line x1="${padding.left}" y1="${y}" x2="${padding.left + 5}" y2="${y}" stroke="#1e293b" stroke-width="1.5" />
             <line x1="${width - padding.right - 5}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="#1e293b" stroke-width="1.5" />
-            <text x="${padding.left - 8}" y="${y + 3.5}" font-size="9" fill="#1e293b" font-weight="bold" font-family="'Times New Roman', Times, serif" text-anchor="end">${val.toLocaleString()}</text>
+            <text x="${padding.left - 8}" y="${y + 3.5}" font-size="9" fill="#1e293b" font-weight="bold" font-family="'Times New Roman', Times, serif" text-anchor="end">${val}</text>
           `;
         });
 
@@ -2120,23 +2120,32 @@ export default function PamphletView({
 
   const handleExportWord = async (format: "doc" | "html" | "docx" = "doc") => {
     const titleVal = selectedDistrict || selectedState || "India";
-    await downloadMhtmlWordDoc(pamphletHtml, `GWQ_Assessment_Pamphlet_${titleVal}`, format);
+    let htmlToExport = pamphletHtml;
+    if (!htmlToExport) {
+      await handleGenerate();
+      htmlToExport = pamphletHtml;
+    }
+    if (htmlToExport) {
+      await downloadMhtmlWordDoc(htmlToExport, `GWQ_Assessment_Pamphlet_${titleVal}`, format);
+    }
   };
 
   const selectSummaryOptionsLength = selectedPamphletParams.length;
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      <div className="glossy-panel p-4 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl space-y-4 sm:space-y-6">
+      <div className="glossy-panel p-4 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl border border-white/95 shadow-[0_24px_50px_-10px_rgba(15,23,42,0.12),inset_0_2.5px_0_rgba(255,255,255,1),inset_0_0_20px_rgba(255,255,255,0.8)] space-y-4 sm:space-y-6">
         
         {/* Heading */}
-        <div className="border-b border-white/50 pb-4 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+        <div className="border-b border-slate-200/80 pb-5 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
           <div>
-            <h3 className="text-xl sm:text-2xl font-black text-indigo-900 flex items-center gap-2.5 sm:gap-3 drop-shadow-md">
-              <LayoutTemplate className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-600 shrink-0" />
-              District GWQ Assessment Report
+            <h3 className="text-xl sm:text-2xl font-black text-slate-900 flex items-center gap-2.5 sm:gap-3 tracking-tight">
+              <div className="p-2.5 bg-gradient-to-br from-indigo-500 to-indigo-700 text-white rounded-2xl shadow-[0_8px_18px_rgba(79,70,229,0.35),inset_0_1.5px_0_rgba(255,255,255,0.7)] border border-indigo-400/50 shrink-0">
+                <LayoutTemplate className="w-5 h-5 sm:w-6 sm:h-6 text-white shrink-0" />
+              </div>
+              <span className="pristine-header-gradient">District GWQ Assessment Report & Pamphlet</span>
             </h3>
-            <p className="text-xs sm:text-sm text-slate-600 font-medium mt-1">
+            <p className="text-xs sm:text-sm text-slate-800 font-extrabold mt-1">
               Generate a comprehensive, colorful official pamphlet summarizing water quality based on current filters.
             </p>
           </div>
@@ -2144,59 +2153,58 @@ export default function PamphletView({
             <button
               onClick={handleGenerate}
               disabled={isGenerating || selectSummaryOptionsLength === 0}
-              className="glossy-btn-indigo px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm flex items-center gap-2 whitespace-nowrap disabled:opacity-50 flex-1 sm:flex-initial justify-center"
+              className="glossy-btn-indigo px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm flex items-center gap-2 whitespace-nowrap disabled:opacity-50 flex-1 sm:flex-initial justify-center cursor-pointer"
             >
-              <FileCheck2 className="w-4 h-4 shrink-0" /> Generate Pamphlet
+              <FileCheck2 className="w-4 h-4 shrink-0 text-white" /> Generate Pamphlet
             </button>
-            {hasGenerated && (
-              <>
-                <button
-                  onClick={() => handleExportWord("docx")}
-                  className="glossy-btn-emerald px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm flex items-center gap-2 whitespace-nowrap cursor-pointer flex-1 sm:flex-initial justify-center"
-                  title="Best for modern Microsoft Word, Google Docs, and WPS Office."
-                >
-                  <FileDown className="w-4 h-4 shrink-0" /> Export DOCX (.docx)
-                </button>
-                <button
-                  onClick={() => handleExportWord("doc")}
-                  className="glossy-btn-emerald/80 px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-bold text-xs sm:text-sm flex items-center gap-2 whitespace-nowrap cursor-pointer flex-1 sm:flex-initial justify-center"
-                  title="Legacy format for Microsoft Word."
-                >
-                  <FileDown className="w-4 h-4 shrink-0" /> Export Word (.doc)
-                </button>
-                <button
-                  onClick={() => handleExportWord("html")}
-                  className="glossy-btn-indigo px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm flex items-center gap-2 whitespace-nowrap cursor-pointer flex-1 sm:flex-initial justify-center"
-                  title="Best for Google Docs, Google Drive, and Mobile WPS Office."
-                >
-                  <Globe className="w-4 h-4 shrink-0" /> Export Google Docs/WPS (.html)
-                </button>
-              </>
-            )}
+            <button
+              onClick={() => handleExportWord("docx")}
+              disabled={isGenerating || selectSummaryOptionsLength === 0}
+              className="glossy-btn-emerald px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm flex items-center gap-2 whitespace-nowrap disabled:opacity-50 cursor-pointer flex-1 sm:flex-initial justify-center"
+              title="Best for modern Microsoft Word, Google Docs, and WPS Office."
+            >
+              <FileDown className="w-4 h-4 shrink-0 text-white" /> Export DOCX (.docx)
+            </button>
+            <button
+              onClick={() => handleExportWord("doc")}
+              disabled={isGenerating || selectSummaryOptionsLength === 0}
+              className="glossy-btn-emerald/90 px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm flex items-center gap-2 whitespace-nowrap disabled:opacity-50 cursor-pointer flex-1 sm:flex-initial justify-center text-white"
+              title="Legacy format for Microsoft Word."
+            >
+              <FileDown className="w-4 h-4 shrink-0 text-white" /> Export Word (.doc)
+            </button>
+            <button
+              onClick={() => handleExportWord("html")}
+              disabled={isGenerating || selectSummaryOptionsLength === 0}
+              className="glossy-btn-indigo px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm flex items-center gap-2 whitespace-nowrap disabled:opacity-50 cursor-pointer flex-1 sm:flex-initial justify-center text-white"
+              title="Best for Google Docs, Google Drive, and Mobile WPS Office."
+            >
+              <Globe className="w-4 h-4 shrink-0 text-white" /> Export Google Docs/WPS (.html)
+            </button>
           </div>
         </div>
 
         {/* Parameter choose selector list specifically for pamphlet summary builder */}
-        <div className="bg-white/40 shadow-inner p-4 sm:p-6 rounded-2xl border border-white/60 relative z-30">
-          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-2 drop-shadow-sm">
+        <div className="bg-gradient-to-b from-white/90 via-slate-50/80 to-slate-100/70 shadow-[0_12px_28px_rgba(15,23,42,0.06),inset_0_2px_0_rgba(255,255,255,1)] p-4 sm:p-6 rounded-2xl border border-white/90 relative z-30 backdrop-blur-lg">
+          <label className="text-[11px] font-black text-slate-900 uppercase tracking-widest block mb-2 drop-shadow-2xs">
             Select Parameters to Analyze in Pamphlet
           </label>
           <div className="relative">
             <button
               onClick={() => setDropdownOpen(!dropdownOpen)}
-              className="w-full glossy-input rounded-xl p-3 font-bold text-slate-700 flex justify-between items-center text-left bg-white text-xs select-none"
+              className="w-full glossy-input rounded-xl p-3 font-black text-slate-900 flex justify-between items-center text-left bg-white text-xs select-none border border-slate-300 shadow-sm cursor-pointer"
             >
               <span className="truncate">
                 {selectedPamphletParams.length === availableParams.length
                   ? "All Parameters Selected"
                   : `${selectedPamphletParams.length}/${availableParams.length} Selected`}
               </span>
-              <ChevronDown className="w-4 h-4 text-slate-500 shrink-0ml-1.5" />
+              <ChevronDown className="w-4 h-4 text-slate-600 shrink-0 ml-1.5" />
             </button>
             
             {dropdownOpen && (
-              <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 shadow-2xl rounded-2xl z-[120] max-h-60 overflow-y-auto custom-scrollbar p-2">
-                <label className="flex items-center gap-2 p-2 hover:bg-slate-50 rounded-lg cursor-pointer border-b border-slate-100 font-bold text-xs text-slate-700">
+              <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-300 shadow-2xl rounded-2xl z-[120] max-h-60 overflow-y-auto custom-scrollbar p-2">
+                <label className="flex items-center gap-2 p-2 hover:bg-slate-100 rounded-xl cursor-pointer border-b border-slate-200 font-black text-xs text-slate-900">
                   <input
                     type="checkbox"
                     checked={selectedPamphletParams.length === availableParams.length}
@@ -2206,7 +2214,7 @@ export default function PamphletView({
                   <span>Select All</span>
                 </label>
                 {availableParams.map((val) => (
-                  <label key={val} className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg cursor-pointer text-xs font-semibold text-slate-600">
+                  <label key={val} className="flex items-center gap-3 p-2 hover:bg-slate-100 rounded-xl cursor-pointer text-xs font-bold text-slate-800">
                     <input
                       type="checkbox"
                       checked={selectedPamphletParams.includes(val)}
@@ -2222,55 +2230,55 @@ export default function PamphletView({
         </div>
 
         {/* Map uploading triggers */}
-        <div className="bg-white/40 shadow-inner p-6 rounded-2xl border border-white/60">
-          <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-3 drop-shadow-sm">
+        <div className="bg-gradient-to-b from-white/90 via-slate-50/80 to-slate-100/70 shadow-[0_12px_28px_rgba(15,23,42,0.06),inset_0_2px_0_rgba(255,255,255,1)] p-6 rounded-2xl border border-white/90 backdrop-blur-lg">
+          <h4 className="text-[11px] font-black text-slate-900 uppercase tracking-widest block mb-3 drop-shadow-2xs">
             Additional Map Uploads (Optional)
           </h4>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm transition-all hover:shadow-md">
-              <label className="text-xs font-bold text-slate-700 block mb-2 flex items-center gap-2">
-                <Map className="w-4 h-4 text-indigo-500" /> 1. Upload EC IDW Map (Displayed in EC Section)
+            <div className="bg-white/95 p-4.5 rounded-2xl border border-slate-200 shadow-sm transition-all hover:shadow-md">
+              <label className="text-xs font-black text-slate-900 block mb-2 flex items-center gap-2">
+                <Map className="w-4 h-4 text-indigo-600 shrink-0" /> 1. Upload EC IDW Map (Displayed in EC Section)
               </label>
               <input
                 type="file"
                 accept="image/*"
                 onChange={(e) => handleMapUpload(e, "ec")}
-                className="text-xs w-full cursor-pointer file:mr-2 file:py-1.5 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
+                className="text-xs w-full cursor-pointer font-bold text-slate-700 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-black file:bg-indigo-100 file:text-indigo-900 hover:file:bg-indigo-200"
               />
             </div>
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm transition-all hover:shadow-md">
-              <label className="text-xs font-bold text-slate-700 block mb-2 flex items-center gap-2">
-                <Map className="w-4 h-4 text-emerald-500" /> 2. Upload Overall Contamination Map (Displayed in Summary)
+            <div className="bg-white/95 p-4.5 rounded-2xl border border-slate-200 shadow-sm transition-all hover:shadow-md">
+              <label className="text-xs font-black text-slate-900 block mb-2 flex items-center gap-2">
+                <Map className="w-4 h-4 text-emerald-600 shrink-0" /> 2. Upload Overall Contamination Map (Displayed in Summary)
               </label>
               <input
                 type="file"
                 accept="image/*"
                 onChange={(e) => handleMapUpload(e, "summary")}
-                className="text-xs w-full cursor-pointer file:mr-2 file:py-1.5 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100"
+                className="text-xs w-full cursor-pointer font-bold text-slate-700 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-black file:bg-emerald-100 file:text-emerald-900 hover:file:bg-emerald-200"
               />
             </div>
           </div>
         </div>
 
         {/* Real-time Generated preview document space */}
-        <div className="bg-white/40 p-2 md:p-8 rounded-2xl shadow-inner border border-white/60 min-h-[400px]">
+        <div className="pristine-doc-canvas p-4 md:p-8 min-h-[400px]">
           {isGenerating ? (
             <div className="flex flex-col items-center justify-center py-20 gap-4">
               <div className="w-12 h-12 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
-              <p className="font-bold text-indigo-600 animate-pulse drop-shadow-sm text-center">
+              <p className="font-black text-indigo-950 animate-pulse drop-shadow-xs text-center text-sm">
                 Analyzing comprehensive data variables...<br />
-                <span className="text-xs text-slate-400 mt-2 block">Synthesizing executive assessment pamphlet...</span>
+                <span className="text-xs text-slate-600 mt-2 block font-extrabold">Synthesizing executive assessment pamphlet...</span>
               </p>
             </div>
           ) : hasGenerated ? (
             <div 
-              className="w-full h-full bg-white p-4 md:p-8 border border-slate-200 rounded-xl overflow-auto shadow-inner"
+              className="w-full h-full bg-white p-4 md:p-8 border border-slate-200 rounded-2xl overflow-auto shadow-inner"
               dangerouslySetInnerHTML={{ __html: pamphletHtml }}
             />
           ) : (
-            <div className="flex flex-col items-center justify-center py-20 gap-4 opacity-60">
-              <LayoutTemplate className="w-16 h-16 text-slate-400" />
-              <p className="font-bold text-slate-500 uppercase tracking-widest text-center text-xs">
+            <div className="flex flex-col items-center justify-center py-20 gap-4 opacity-75">
+              <LayoutTemplate className="w-16 h-16 text-indigo-400" />
+              <p className="font-black text-slate-700 uppercase tracking-widest text-center text-xs leading-relaxed">
                 Click "Generate Pamphlet" to compile WQ metrics <br />
                 and construct the official assessment pamphlet layout.
               </p>

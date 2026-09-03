@@ -1,5 +1,22 @@
 import { ParamConfigMap, RemedialMeasuresMap } from "../types";
 
+export const NO_BIS_LIMIT_PARAMS = new Set([
+  'Sr', 'Li', 'Co', 'Na', 'K', 'SiO2', 'PO4', 'HCO3', 'CO3'
+]);
+
+export function hasBisLimit(paramKey: string): boolean {
+  if (!paramKey) return false;
+  const keyUpper = paramKey.trim();
+  if (NO_BIS_LIMIT_PARAMS.has(keyUpper)) return false;
+  // Check mapped or case variants if needed
+  for (const p of NO_BIS_LIMIT_PARAMS) {
+    if (p.toLowerCase() === keyUpper.toLowerCase()) return false;
+  }
+  const cfg = PARAM_CONFIG[keyUpper];
+  if (cfg && cfg.hasBisLimit === false) return false;
+  return true;
+}
+
 export const DEFAULT_PARAM_CONFIG: ParamConfigMap = {
   'pH': { b1: 6.5, b2: 8.5, unit: '', name: 'pH Level', keywords: ['ph', 'ph level', 'hydrogen'] },
   'TDS': { b1: 500, b2: 2000, unit: 'mg/L', name: 'Total Dissolved Solids', keywords: ['tds', 'total dissolved solids'] },
@@ -23,17 +40,23 @@ export const DEFAULT_PARAM_CONFIG: ParamConfigMap = {
   'Se': { b1: 0.01, b2: 0.01, unit: 'mg/L', name: 'Selenium', keywords: ['se', 'selenium'] },
   'Ca': { b1: 75, b2: 200, unit: 'mg/L', name: 'Calcium', keywords: ['ca', 'calcium'] },
   'Mg': { b1: 30, b2: 100, unit: 'mg/L', name: 'Magnesium', keywords: ['mg', 'magnesium'] },
-  'Na': { b1: 200, b2: 200, unit: 'mg/L', name: 'Sodium', keywords: ['na', 'sodium', 'na+'] },
-  'HCO3': { b1: 200, b2: 600, unit: 'mg/L', name: 'Bicarbonate', keywords: ['hco3', 'bicarbonate', 'hco3-'] },
-  'CO3': { b1: 10, b2: 30, unit: 'mg/L', name: 'Carbonate', keywords: ['co3', 'carbonate', 'co3--'] },
+  'Na': { b1: 0, b2: 0, unit: 'mg/L', name: 'Sodium', keywords: ['na', 'sodium', 'na+'], hasBisLimit: false },
+  'K': { b1: 0, b2: 0, unit: 'mg/L', name: 'Potassium', keywords: ['k', 'potassium', 'k+'], hasBisLimit: false },
+  'HCO3': { b1: 0, b2: 0, unit: 'mg/L', name: 'Bicarbonate', keywords: ['hco3', 'bicarbonate', 'hco3-'], hasBisLimit: false },
+  'CO3': { b1: 0, b2: 0, unit: 'mg/L', name: 'Carbonate', keywords: ['co3', 'carbonate', 'co3--'], hasBisLimit: false },
   'SO4': { b1: 200, b2: 400, unit: 'mg/L', name: 'Sulphate', keywords: ['so4', 'sulphate', 'sulfate'] },
+  'SiO2': { b1: 0, b2: 0, unit: 'mg/L', name: 'Silica', keywords: ['sio2', 'silica'], hasBisLimit: false },
+  'PO4': { b1: 0, b2: 0, unit: 'mg/L', name: 'Phosphate', keywords: ['po4', 'phosphate'], hasBisLimit: false },
+  'Li': { b1: 0, b2: 0, unit: 'mg/L', name: 'Lithium', keywords: ['li', 'lithium'], hasBisLimit: false },
   'Mn': { b1: 0.1, b2: 0.3, unit: 'mg/L', name: 'Manganese', keywords: ['Mn', 'Manganese'] },
   'Al': { b1: 0.03, b2: 0.2, unit: 'mg/L', name: 'Alluminium', keywords: ['Al', 'Alluminium'] },
   'Ba': { b1: 0.7, b2: 0.7, unit: 'mg/L', name: 'Barium', keywords: ['Ba', 'Barium'] },
   'B': { b1: 0.5, b2: 2.4, unit: 'mg/L', name: 'Boran', keywords: ['B', 'Boran'] },
+  'Co': { b1: 0, b2: 0, unit: 'mg/L', name: 'Cobalt', keywords: ['co', 'cobalt'], hasBisLimit: false },
+  'Sr': { b1: 0, b2: 0, unit: 'mg/L', name: 'Strontium', keywords: ['sr', 'strontium'], hasBisLimit: false },
   'Mo': { b1: 0.05, b2: 0.07, unit: 'mg/L', name: 'Molybdnum', keywords: ['Mo', 'Molybdnum'] },
-  'SAR': { b1: 26, b2: 26, unit: '', name: 'Sodium Adsorption Ratio', keywords: ['sar', 'sodium adsorption ratio'] },
-  'RSC': { b1: 2.5, b2: 2.5, unit: 'meq/L', name: 'Residual Sodium Carbonate', keywords: ['rsc', 'residual sodium carbonate'] },
+  'SAR': { b1: 10, b2: 26, unit: '', name: 'Sodium Adsorption Ratio', keywords: ['sar', 'sodium adsorption ratio', 'sodium-adsorption-ratio'] },
+  'RSC': { b1: 1.25, b2: 2.5, unit: 'meq/L', name: 'Residual Sodium Carbonate', keywords: ['rsc', 'residual sodium carbonate', 'residual-sodium-carbonate'] },
 };
 
 // Mutable PARAM_CONFIG copy that consumes files read from directly

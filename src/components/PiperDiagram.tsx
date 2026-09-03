@@ -30,6 +30,8 @@ interface PiperDiagramProps {
   is3d?: boolean;
   bubbleSizeMultiplier?: number;
   customTitle?: string;
+  showLocationLabels?: boolean;
+  showAllPoints?: boolean;
 }
 
 export const PiperDiagram = React.memo(({
@@ -41,6 +43,8 @@ export const PiperDiagram = React.memo(({
   is3d = true,
   bubbleSizeMultiplier = 1,
   customTitle,
+  showLocationLabels = false,
+  showAllPoints = true,
 }: PiperDiagramProps) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [titleConfig, setTitleConfig] = useState<LabelConfig>({
@@ -62,14 +66,14 @@ export const PiperDiagram = React.memo(({
   const [editingTitle, setEditingTitle] = useState(false);
   const [title3dEffect, setTitle3dEffect] = useState<"none" | "emboss" | "deboss">("emboss");
 
-  // Systematic Downsampling to prevent UI hanging under large datasets
-  const maxSafePoints = 1200;
+  // Downsampling logic (allows plotting up to 50,000 points without dropping locations)
+  const maxSafePoints = showAllPoints ? 50000 : 25000;
   const isDownsampled = data.length > maxSafePoints;
   const displayData = useMemo(() => {
     if (!isDownsampled) return data;
     const step = Math.ceil(data.length / maxSafePoints);
     return data.filter((_, idx) => idx % step === 0);
-  }, [data, isDownsampled]);
+  }, [data, isDownsampled, maxSafePoints]);
 
   const SQRT3 = Math.sqrt(3);
   const H = (100 * SQRT3) / 2;
@@ -351,26 +355,42 @@ export const PiperDiagram = React.memo(({
         radius *= bubbleSizeMultiplier;
       }
       const stateStr = stateHeader ? d[stateHeader] : d.State || d.STATE;
-      const tip = `${d._calc.locName}\nFacies: ${d._calc.facies}` + (stateStr ? `\nState: ${stateStr}` : "");
+      const locNameStr = d._calc?.locName || d.Location || d.LOCATION || d.Site || `Loc #${i + 1}`;
+      const tip = `${locNameStr}\nFacies: ${d._calc.facies}` + (stateStr ? `\nState: ${stateStr}` : "");
 
       const bubbleId = `bubble-${String(color).replace(/#/g, "")}`;
       const fillValue = is3d ? `url(#${bubbleId})` : color;
+      const strokeVal = is3d ? "rgba(255,255,255,0.4)" : darkenColor(color, 25);
+      const strokeW = is3d ? 0.2 : 0.35;
 
       return (
         <g key={i} className="cursor-pointer">
-          <circle cx={tx(xc)} cy={ty(yc)} r={radius} fill={fillValue} fillOpacity="0.95" stroke={is3d ? "rgba(255,255,255,0.4)" : "none"} strokeWidth={is3d ? 0.2 : 0}>
+          <circle cx={tx(xc)} cy={ty(yc)} r={radius} fill={fillValue} fillOpacity="0.92" stroke={strokeVal} strokeWidth={strokeW}>
             <title>{tip}</title>
           </circle>
-          <circle cx={tx(xa)} cy={ty(ya)} r={radius} fill={fillValue} fillOpacity="0.95" stroke={is3d ? "rgba(255,255,255,0.4)" : "none"} strokeWidth={is3d ? 0.2 : 0}>
+          <circle cx={tx(xa)} cy={ty(ya)} r={radius} fill={fillValue} fillOpacity="0.92" stroke={strokeVal} strokeWidth={strokeW}>
             <title>{tip}</title>
           </circle>
-          <circle cx={tx(xd)} cy={ty(yd)} r={radius} fill={fillValue} fillOpacity="0.95" stroke={is3d ? "rgba(255,255,255,0.4)" : "none"} strokeWidth={is3d ? 0.2 : 0}>
+          <circle cx={tx(xd)} cy={ty(yd)} r={radius} fill={fillValue} fillOpacity="0.92" stroke={strokeVal} strokeWidth={strokeW}>
             <title>{tip}</title>
           </circle>
+          {showLocationLabels && (
+            <text
+              x={tx(xd) + radius + 1.2}
+              y={ty(yd) + 1.2}
+              fontSize={4.2}
+              fontWeight="600"
+              fill="#1e293b"
+              pointerEvents="none"
+              opacity={0.85}
+            >
+              {locNameStr}
+            </text>
+          )}
         </g>
       );
     });
-  }, [displayData, pointColors, pointSizes, getPointKey, stateHeader, SQRT3, is3d, bubbleSizeMultiplier]);
+  }, [displayData, pointColors, pointSizes, getPointKey, stateHeader, SQRT3, is3d, bubbleSizeMultiplier, showLocationLabels]);
 
   return (
     <div className="bg-transparent p-6 flex flex-col items-center w-full transition-colors duration-300 relative group">
@@ -650,6 +670,18 @@ export const PiperDiagram = React.memo(({
           {renderedPoints}
         </svg>
         </div>
+
+        {/* Dynamic Point Color Legend */}
+        {pointColors && Object.keys(pointColors).length > 0 && (
+          <div className="flex flex-wrap items-center justify-center gap-2 mt-2 pt-3 border-t border-slate-200/80 max-w-[650px] w-full px-4">
+            {Object.entries(pointColors).map(([key, color]) => (
+              <div key={key} className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 text-[10px] font-bold shadow-xs">
+                <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs" style={{ backgroundColor: color }} />
+                <span className="truncate max-w-[150px]">{key}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Full Screen Modal View */}

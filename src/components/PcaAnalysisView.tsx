@@ -641,11 +641,12 @@ export default function PcaAnalysisView({
 
     // 4. Unified Biplot
     if (chartRef4.current) {
-      const xScores = filteredDataset.map((_, i) => pcaResults.scores[i][xAxisPC]);
-      const yScores = filteredDataset.map((_, i) => pcaResults.scores[i][yAxisPC]);
-      const maxX = Math.max(...xScores.map(Math.abs));
-      const maxY = Math.max(...yScores.map(Math.abs));
-      const scale = Math.max(maxX, maxY) * 0.85 || 1;
+      const xScores = filteredDataset.map((_, i) => pcaResults.scores[i]?.[xAxisPC] ?? 0);
+      const yScores = filteredDataset.map((_, i) => pcaResults.scores[i]?.[yAxisPC] ?? 0);
+      const maxX = xScores.length > 0 ? Math.max(...xScores.map(Math.abs)) : 1;
+      const maxY = yScores.length > 0 ? Math.max(...yScores.map(Math.abs)) : 1;
+      const rawMax = Math.max(maxX, maxY);
+      const scale = (isFinite(rawMax) && rawMax > 0) ? rawMax * 0.85 : 1;
 
       const biplotSeries: any[] = [
         {

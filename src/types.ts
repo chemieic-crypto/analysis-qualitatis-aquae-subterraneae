@@ -4,6 +4,7 @@ export interface ParamConfigItem {
   unit: string;
   name: string;
   keywords: string[];
+  hasBisLimit?: boolean;
 }
 
 export interface RemedialMeasure {

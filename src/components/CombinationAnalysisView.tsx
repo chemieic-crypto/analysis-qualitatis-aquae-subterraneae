@@ -1,9 +1,11 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { DataHeaders, ShapefileLayer } from "../types";
-import { PARAM_CONFIG } from "../data/config";
+import { PARAM_CONFIG, hasBisLimit } from "../data/config";
 import { 
   SlidersHorizontal, Download, Layers, Compass, 
-  CheckCircle, Table, MapPin, Info
+  CheckCircle, Table, MapPin, Info, FileSpreadsheet,
+  FileText, Search, Grid, AlertTriangle, FilterX,
+  ChevronLeft, ChevronRight, RefreshCw, BarChart2
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import ExcelJS from "exceljs";
@@ -47,6 +49,12 @@ export function CombinationAnalysisView({
   const [activeParams, setActiveParams] = useState<Record<string, boolean>>({});
   const [strictData, setStrictData] = useState<boolean>(false);
 
+  // Combination Filter & Search States
+  const [selectedComboFilter, setSelectedComboFilter] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(25);
+
   // Synchronize local filter state with globally passed selected props
   useEffect(() => {
     setLocalState(selectedState || "All");
@@ -65,7 +73,7 @@ export function CombinationAnalysisView({
   }, [selectedSeason]);
 
   // Map Controls
-  const [mapTheme, setMapTheme] = useState<"light" | "dark" | "satellite" | "terrain" | "topo" | "osm">("light");
+  const [mapTheme, setMapTheme] = useState<"osm" | "satellite" | "terrain" | "topo">("osm");
   const [pointSize, setPointSize] = useState<number>(7);
   const [mapStatusFilters, setMapStatusFilters] = useState({ clean: true, single: true, multi: true });
 
@@ -268,7 +276,7 @@ export function CombinationAnalysisView({
   const activeSet = useMemo(() => {
     return Object.keys(activeParams).some(k => activeParams[k])
       ? Object.keys(activeParams).filter(k => activeParams[k])
-      : Object.keys(PARAM_CONFIG).filter(p => !!columnMapping[p]);
+      : Object.keys(PARAM_CONFIG).filter(p => !!columnMapping[p] && hasBisLimit(p));
   }, [activeParams, columnMapping]);
 
   // Donut chart data
@@ -303,6 +311,71 @@ export function CombinationAnalysisView({
       }))
       .sort((a, b) => b.count - a.count);
   }, [currentFilteredData]);
+
+  // Pairwise Co-Occurrence Matrix Calculation
+  const pairwiseMatrix = useMemo(() => {
+    const matrix: Record<string, Record<string, number>> = {};
+    activeSet.forEach(p1 => {
+      matrix[p1] = {};
+      activeSet.forEach(p2 => {
+        matrix[p1][p2] = 0;
+      });
+    });
+
+    currentFilteredData.filter(r => r.failCount > 1).forEach(r => {
+      const failedNames = r.failedParams.map((fp: any) => fp.name);
+      for (let i = 0; i < failedNames.length; i++) {
+        for (let j = 0; j < failedNames.length; j++) {
+          const p1 = failedNames[i];
+          const p2 = failedNames[j];
+          if (matrix[p1] && matrix[p1][p2] !== undefined) {
+            matrix[p1][p2]++;
+          }
+        }
+      }
+    });
+
+    return matrix;
+  }, [currentFilteredData, activeSet]);
+
+  // Display Filtered Data with Selected Combination Filter & Search Query
+  const displayFilteredData = useMemo(() => {
+    let result = currentFilteredData;
+
+    if (selectedComboFilter) {
+      result = result.filter(r => {
+        const comboKey = r.failedParams.map((p: any) => p.name).sort().join(' + ');
+        return comboKey === selectedComboFilter;
+      });
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      result = result.filter(r => {
+        const station = String(r[columnMapping['Station']] || '').toLowerCase();
+        const state = String(r[columnMapping['State']] || '').toLowerCase();
+        const district = String(r[columnMapping['District']] || '').toLowerCase();
+        const block = String(r[columnMapping['Block']] || '').toLowerCase();
+        const failedStr = r.failedParams.map((fp: any) => fp.name).join(' ').toLowerCase();
+
+        return station.includes(q) || state.includes(q) || district.includes(q) || block.includes(q) || failedStr.includes(q);
+      });
+    }
+
+    return result;
+  }, [currentFilteredData, selectedComboFilter, searchQuery, columnMapping]);
+
+  // KPI Statistics Summary
+  const kpiStats = useMemo(() => {
+    const total = currentFilteredData.length;
+    const clean = currentFilteredData.filter(r => r.failCount === 0).length;
+    const single = currentFilteredData.filter(r => r.failCount === 1).length;
+    const multi = currentFilteredData.filter(r => r.failCount > 1).length;
+    const maxFail = currentFilteredData.reduce((max, r) => Math.max(max, r.failCount), 0);
+    const topCombo = comboAnalysis.length > 0 ? comboAnalysis[0] : null;
+
+    return { total, clean, single, multi, maxFail, topCombo };
+  }, [currentFilteredData, comboAnalysis]);
 
   // Leaflet Map instance setup
   useEffect(() => {
@@ -342,12 +415,10 @@ export function CombinationAnalysisView({
       }
     });
 
-    const tileUrls = {
-      light: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-      dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+    const tileUrls: Record<string, string> = {
+      osm: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
       satellite: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
       topo: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
-      osm: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
       terrain: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}"
     };
 
@@ -548,7 +619,18 @@ export function CombinationAnalysisView({
       }
     };
 
-    // 1. Detailed well data
+    // 1. Executive Summary Sheet
+    const summaryData = [
+      { Metric: "Total Matched Monitoring Wells", Value: kpiStats.total },
+      { Metric: "Compliant Wells (0 Exceedances)", Value: `${kpiStats.clean} (${kpiStats.total > 0 ? ((kpiStats.clean/kpiStats.total)*100).toFixed(2) : 0}%)` },
+      { Metric: "Single Parameter Exceedances", Value: `${kpiStats.single} (${kpiStats.total > 0 ? ((kpiStats.single/kpiStats.total)*100).toFixed(2) : 0}%)` },
+      { Metric: "Multiple Parameter Exceedances (Hotspots)", Value: `${kpiStats.multi} (${kpiStats.total > 0 ? ((kpiStats.multi/kpiStats.total)*100).toFixed(2) : 0}%)` },
+      { Metric: "Maximum Co-Occurring Exceedances", Value: kpiStats.maxFail },
+      { Metric: "Most Frequent Parameter Combination", Value: kpiStats.topCombo ? `${kpiStats.topCombo.key} (${kpiStats.topCombo.count} sites)` : "None" }
+    ];
+    addJsonSheet("Executive Summary", summaryData);
+
+    // 2. Detailed well data
     const rawExport = currentFilteredData.map(r => {
       const { failedParams, failCount, _latNum, _lonNum, _mprScoreNum, ...rest } = r;
       
@@ -560,7 +642,8 @@ export function CombinationAnalysisView({
         'Latitude': r[columnMapping['latitude']] || '',
         'Longitude': r[columnMapping['longitude']] || '',
         'Failed Count': failCount,
-        'Failed Parameters': failedParams.map(p => p.name).join(', ')
+        'Failed Parameters': failedParams.map(p => p.name).join(', '),
+        'Multi-Param Ratio (MPR)': _mprScoreNum ? _mprScoreNum.toFixed(4) : "0.0000"
       };
 
       // Add individual parameters as columns
@@ -576,7 +659,7 @@ export function CombinationAnalysisView({
     });
     addJsonSheet("Detailed Well Log", rawExport);
 
-    // 2. Combo breakdown matrix
+    // 3. Combo breakdown matrix
     const comboExport = comboAnalysis.map(c => ({
       'Combination of Exceeded Parameters': c.key,
       'Number of Wells': c.count,
@@ -584,7 +667,118 @@ export function CombinationAnalysisView({
     }));
     addJsonSheet("Combination Matrix", comboExport);
 
+    // 4. Pairwise Co-Occurrence Matrix Sheet
+    const pairwiseRows: any[] = [];
+    activeSet.forEach(p1 => {
+      const row: Record<string, any> = { "Parameter": p1 };
+      activeSet.forEach(p2 => {
+        row[p2] = pairwiseMatrix[p1]?.[p2] || 0;
+      });
+      pairwiseRows.push(row);
+    });
+    addJsonSheet("Pairwise Co-Occurrence", pairwiseRows);
+
     await downloadExcelJSWorkbook(wb, "Water_Quality_Combination_Report.xlsx");
+  };
+
+  // Export Formatted Word Document Report (.docx / .doc)
+  const exportDocxReport = () => {
+    const htmlContent = `
+      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+      <head>
+        <meta charset='utf-8'>
+        <title>Water Quality Combination Analysis Report</title>
+        <style>
+          body { font-family: 'Times New Roman', serif; font-size: 11pt; line-height: 1.5; margin: 20px; color: #1e293b; }
+          h1 { font-size: 18pt; font-weight: bold; color: #0f172a; text-align: center; border-bottom: 2px solid #3b82f6; padding-bottom: 8px; margin-bottom: 20px; }
+          h2 { font-size: 14pt; font-weight: bold; color: #1e3a8a; margin-top: 20px; margin-bottom: 10px; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 12px; margin-bottom: 20px; font-size: 10pt; }
+          th { background-color: #1e293b; color: #ffffff; font-weight: bold; padding: 8px; border: 1px solid #334155; text-align: left; }
+          td { border: 1px solid #cbd5e1; padding: 6px 8px; text-align: left; }
+          tr:nth-child(even) { background-color: #f8fafc; }
+          .summary-card { background-color: #f1f5f9; border-left: 4px solid #3b82f6; padding: 12px; margin-bottom: 15px; border-radius: 4px; }
+          .badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 9pt; }
+          .badge-clean { background-color: #dcfce7; color: #166534; }
+          .badge-fail { background-color: #ffe4e6; color: #9f1239; }
+        </style>
+      </head>
+      <body>
+        <h1>Water Quality Combination Analysis Report</h1>
+        <p><strong>Generated On:</strong> ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+        <p><strong>Scope:</strong> Multi-Parameter Hydrochemical Overlap Analysis</p>
+
+        <div className="summary-card">
+          <h2>Executive Summary</h2>
+          <ul>
+            <li><strong>Total Monitoring Stations Evaluated:</strong> ${kpiStats.total}</li>
+            <li><strong>Compliant Stations (0 Exceedances):</strong> ${kpiStats.clean} (${kpiStats.total > 0 ? ((kpiStats.clean / kpiStats.total) * 100).toFixed(2) : "0.00"}%)</li>
+            <li><strong>Single Parameter Exceedances:</strong> ${kpiStats.single} (${kpiStats.total > 0 ? ((kpiStats.single / kpiStats.total) * 100).toFixed(2) : "0.00"}%)</li>
+            <li><strong>Multiple Parameter Exceedances (Hotspots):</strong> ${kpiStats.multi} (${kpiStats.total > 0 ? ((kpiStats.multi / kpiStats.total) * 100).toFixed(2) : "0.00"}%)</li>
+            <li><strong>Maximum Simultaneous Exceedances:</strong> ${kpiStats.maxFail} parameters at a single site</li>
+            <li><strong>Top Exceedance Combination:</strong> ${kpiStats.topCombo ? `${kpiStats.topCombo.key} (${kpiStats.topCombo.count} stations, ${kpiStats.topCombo.percentage}%)` : "None"}</li>
+          </ul>
+        </div>
+
+        <h2>Parameter Combination Breakdown</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Exceeded Parameter Combination</th>
+              <th>Number of Stations</th>
+              <th>Percentage (%)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${comboAnalysis.map((c, i) => `
+              <tr>
+                <td>${i + 1}</td>
+                <td><strong>${c.key}</strong></td>
+                <td>${c.count}</td>
+                <td>${c.percentage}%</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+
+        <h2>State-Level Severity Distribution</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>State / UT</th>
+              <th>Total Stations</th>
+              <th>Clean</th>
+              <th>1 Exceedance</th>
+              <th>2 Exceedances</th>
+              <th>3+ Exceedances</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${stateStats.map(st => `
+              <tr>
+                <td><strong>${st.state}</strong></td>
+                <td>${st.total}</td>
+                <td>${st.clean}</td>
+                <td>${st.one}</td>
+                <td>${st.two}</td>
+                <td>${st.three + st.fourPlus}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob(['\ufeff' + htmlContent], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'Water_Quality_Combination_Analysis_Report.doc';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Pure CSS conic gradient donut calculation helper
@@ -794,6 +988,83 @@ export function CombinationAnalysisView({
       {/* 2. Map & Main Report Sections */}
       <div className="flex-1 flex flex-col gap-6">
 
+        {/* KPI Cards Row */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-2xs flex flex-col justify-between">
+            <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Total Sites</span>
+            <div className="flex items-baseline gap-1 mt-1">
+              <span className="text-xl font-black text-slate-800">{kpiStats.total}</span>
+              <span className="text-[9px] text-slate-400 font-bold">wells</span>
+            </div>
+          </div>
+
+          <div className="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-2xs flex flex-col justify-between">
+            <span className="text-[9px] font-black uppercase text-emerald-600 tracking-wider">Compliant (0)</span>
+            <div className="flex items-baseline gap-1 mt-1">
+              <span className="text-xl font-black text-emerald-600">{kpiStats.clean}</span>
+              <span className="text-[9px] text-emerald-700 font-bold">
+                ({kpiStats.total > 0 ? ((kpiStats.clean / kpiStats.total) * 100).toFixed(1) : 0}%)
+              </span>
+            </div>
+          </div>
+
+          <div className="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-2xs flex flex-col justify-between">
+            <span className="text-[9px] font-black uppercase text-amber-600 tracking-wider">Single Fail (1)</span>
+            <div className="flex items-baseline gap-1 mt-1">
+              <span className="text-xl font-black text-amber-600">{kpiStats.single}</span>
+              <span className="text-[9px] text-amber-700 font-bold">
+                ({kpiStats.total > 0 ? ((kpiStats.single / kpiStats.total) * 100).toFixed(1) : 0}%)
+              </span>
+            </div>
+          </div>
+
+          <div className="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-2xs flex flex-col justify-between">
+            <span className="text-[9px] font-black uppercase text-rose-600 tracking-wider">Multi Fail (≥2)</span>
+            <div className="flex items-baseline gap-1 mt-1">
+              <span className="text-xl font-black text-rose-600">{kpiStats.multi}</span>
+              <span className="text-[9px] text-rose-700 font-bold">
+                ({kpiStats.total > 0 ? ((kpiStats.multi / kpiStats.total) * 100).toFixed(1) : 0}%)
+              </span>
+            </div>
+          </div>
+
+          <div className="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-2xs flex flex-col justify-between">
+            <span className="text-[9px] font-black uppercase text-indigo-600 tracking-wider">Max Simultaneous</span>
+            <div className="flex items-baseline gap-1 mt-1">
+              <span className="text-xl font-black text-indigo-600">{kpiStats.maxFail}</span>
+              <span className="text-[9px] text-indigo-700 font-bold">params</span>
+            </div>
+          </div>
+
+          <div className="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-2xs flex flex-col justify-between col-span-2 md:col-span-1">
+            <span className="text-[9px] font-black uppercase text-purple-600 tracking-wider">Top Combo</span>
+            <div className="mt-1 truncate" title={kpiStats.topCombo ? kpiStats.topCombo.key : "None"}>
+              <span className="text-xs font-black text-purple-700 block truncate">
+                {kpiStats.topCombo ? kpiStats.topCombo.key : "None"}
+              </span>
+              <span className="text-[8px] text-purple-500 font-bold">
+                {kpiStats.topCombo ? `${kpiStats.topCombo.count} sites (${kpiStats.topCombo.percentage}%)` : ""}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Selected Combination Active Filter Banner */}
+        {selectedComboFilter && (
+          <div className="bg-indigo-600 text-white px-4 py-2.5 rounded-2xl flex items-center justify-between shadow-md text-xs font-bold animate-[fadeIn_0.2s_ease-out]">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-300 shrink-0" />
+              <span>Filtering View & Map for Combination: <strong>{selectedComboFilter}</strong> ({displayFilteredData.length} matching wells)</span>
+            </div>
+            <button 
+              onClick={() => setSelectedComboFilter("")}
+              className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              <FilterX className="w-3 h-3" /> Clear Filter
+            </button>
+          </div>
+        )}
+
         {/* Map Header and View */}
         <div className="bg-white rounded-3xl p-4 border border-slate-100 shadow-sm relative">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-50 pb-3 mb-3">
@@ -807,17 +1078,19 @@ export function CombinationAnalysisView({
 
             {/* Map theme controls */}
             <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[9px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200/80 shadow-2xs">
+                <CheckCircle className="w-3 h-3 text-emerald-600" />
+                No API Key Required
+              </span>
               <select
                 value={mapTheme}
                 onChange={e => setMapTheme(e.target.value as any)}
                 className="bg-slate-50 border border-slate-200 rounded-xl px-2 py-1 text-[9px] font-black uppercase tracking-wider outline-none text-slate-600"
               >
-                <option value="light">Classic Light</option>
-                <option value="dark">Dark Canvas</option>
-                <option value="satellite">Satellite View</option>
-                <option value="terrain">Esri Terrain</option>
-                <option value="topo">Esri Topographic</option>
                 <option value="osm">OpenStreetMap</option>
+                <option value="satellite">Satellite View</option>
+                <option value="topo">Esri Topographic</option>
+                <option value="terrain">Esri Terrain</option>
               </select>
             </div>
           </div>
@@ -852,6 +1125,11 @@ export function CombinationAnalysisView({
                 <span className="w-2.5 h-2.5 rounded-full bg-[#ef4444]" /> Multi Fail
               </label>
             </div>
+
+            <div className="flex items-center gap-1.5 text-[9px] font-extrabold text-emerald-700 bg-emerald-50/80 px-2.5 py-1 rounded-lg border border-emerald-200/80">
+              <CheckCircle className="w-3 h-3 text-emerald-600" />
+              <span>Keyless Open-Access Tile Server Active</span>
+            </div>
           </div>
         </div>
 
@@ -859,9 +1137,10 @@ export function CombinationAnalysisView({
         <div className="bg-white rounded-3xl border border-slate-100 shadow-sm flex flex-col overflow-hidden">
           
           {/* Scrollable Tab header */}
-          <div className="flex border-b border-slate-100 overflow-x-auto bg-slate-50/50 p-2 gap-1 scrollbar-none">
+          <div className="flex border-b border-slate-100 overflow-x-auto bg-slate-50/50 p-2 gap-1 scrollbar-none items-center">
             {[
               { id: "overview", label: "Overview", icon: Table },
+              { id: "pairwise", label: "Pairwise Co-Occurrence", icon: Grid },
               { id: "bganalysis", label: "Exceedance Analysis", icon: Info },
               { id: "state", label: "States Severity", icon: Layers },
               { id: "district", label: "Districts Severity", icon: Layers }
@@ -871,7 +1150,7 @@ export function CombinationAnalysisView({
                 <button
                   key={t.id}
                   onClick={() => setActiveTab(t.id)}
-                  className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 shrink-0 transition-all ${
+                  className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 shrink-0 transition-all cursor-pointer ${
                     activeTab === t.id 
                       ? 'bg-white shadow-sm border border-slate-100 text-indigo-600' 
                       : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50'
@@ -883,14 +1162,25 @@ export function CombinationAnalysisView({
               );
             })}
 
-            {/* Excel Download button at header end */}
-            <button 
-              onClick={exportMultiSheet}
-              className="ml-auto bg-emerald-600 text-white hover:bg-emerald-700 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 shrink-0 shadow-sm"
-            >
-              <Download className="w-3.5 h-3.5" />
-              Export Report
-            </button>
+            {/* Export buttons at header end */}
+            <div className="ml-auto flex items-center gap-2 shrink-0">
+              <button 
+                onClick={exportDocxReport}
+                className="bg-indigo-600 text-white hover:bg-indigo-700 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 shrink-0 shadow-sm cursor-pointer transition-colors"
+                title="Download formatted Word Document report"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                Word (.doc)
+              </button>
+              <button 
+                onClick={exportMultiSheet}
+                className="bg-emerald-600 text-white hover:bg-emerald-700 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 shrink-0 shadow-sm cursor-pointer transition-colors"
+                title="Download multi-sheet styled Excel workbook"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                Excel (.xlsx)
+              </button>
+            </div>
           </div>
 
           {/* Active Tab contents */}
@@ -932,21 +1222,35 @@ export function CombinationAnalysisView({
 
                   {/* Combination Lists */}
                   <div className="border border-slate-100 rounded-3xl p-5 flex flex-col">
-                    <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-3 block">Exceedance Combo Breakdown</span>
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest block">Exceedance Combo Breakdown</span>
+                      <span className="text-[9px] text-indigo-600 font-bold">Click card to filter map</span>
+                    </div>
                     <div className="flex-1 overflow-y-auto max-h-[300px] space-y-2 pr-1">
                       {comboAnalysis.length > 0 ? (
-                        comboAnalysis.map(c => (
-                          <div key={c.key} className="p-2.5 rounded-xl border border-slate-100 bg-slate-50 flex justify-between items-center text-[10px]">
-                            <div>
-                              <strong className="text-slate-800 uppercase block">{c.key}</strong>
-                              <span className="text-[9px] text-slate-400 font-bold uppercase">{c.key.split('+').length} params fail</span>
-                            </div>
-                            <div className="text-right ml-4">
-                              <span className="text-indigo-600 font-black block">{c.count} Sites</span>
-                              <span className="text-[8px] bg-indigo-50 text-indigo-700 px-1 rounded font-black">{c.percentage}%</span>
-                            </div>
-                          </div>
-                        ))
+                        comboAnalysis.map(c => {
+                          const isSelected = selectedComboFilter === c.key;
+                          return (
+                            <button
+                              key={c.key}
+                              onClick={() => setSelectedComboFilter(isSelected ? "" : c.key)}
+                              className={`w-full text-left p-2.5 rounded-xl border transition-all cursor-pointer flex justify-between items-center text-[10px] ${
+                                isSelected 
+                                  ? 'border-indigo-500 bg-indigo-50/80 shadow-xs ring-1 ring-indigo-500' 
+                                  : 'border-slate-100 bg-slate-50 hover:border-slate-200 hover:bg-slate-100/60'
+                              }`}
+                            >
+                              <div>
+                                <strong className="text-slate-800 uppercase block font-black">{c.key}</strong>
+                                <span className="text-[9px] text-slate-400 font-bold uppercase">{c.key.split('+').length} params fail</span>
+                              </div>
+                              <div className="text-right ml-4">
+                                <span className="text-indigo-600 font-black block">{c.count} Sites</span>
+                                <span className="text-[8px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-black">{c.percentage}%</span>
+                              </div>
+                            </button>
+                          );
+                        })
                       ) : (
                         <p className="text-[10px] text-slate-400 font-medium italic p-4 text-center">No contamination combinations detected with current filters.</p>
                       )}
@@ -954,41 +1258,242 @@ export function CombinationAnalysisView({
                   </div>
                 </div>
 
-                {/* Top 50 Well log table */}
-                <div className="border border-slate-100 rounded-3xl overflow-hidden overflow-x-auto custom-scrollbar">
-                  <div className="bg-slate-50 px-4 py-3 border-b border-slate-100 text-[10px] font-black text-slate-500 uppercase tracking-wider">
-                    Recent well records (Top 50)
+                {/* Searchable and Paginated Well Records Table */}
+                <div className="border border-slate-100 rounded-3xl overflow-hidden bg-white shadow-2xs">
+                  <div className="bg-slate-50 px-5 py-3.5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">Matched Well Records</h4>
+                      <p className="text-[9px] text-slate-400 font-bold uppercase">
+                        Showing {Math.min((currentPage - 1) * pageSize + 1, displayFilteredData.length)} - {Math.min(currentPage * pageSize, displayFilteredData.length)} of {displayFilteredData.length} records
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Search Bar */}
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input 
+                          type="text"
+                          placeholder="Search station, state, block, parameter..."
+                          value={searchQuery}
+                          onChange={e => {
+                            setSearchQuery(e.target.value);
+                            setCurrentPage(1);
+                          }}
+                          className="bg-white border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-[10px] font-medium text-slate-700 outline-none w-56 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                        />
+                        {searchQuery && (
+                          <button 
+                            onClick={() => setSearchQuery('')} 
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Page Size Selector */}
+                      <select
+                        value={pageSize}
+                        onChange={e => {
+                          setPageSize(Number(e.target.value));
+                          setCurrentPage(1);
+                        }}
+                        className="bg-white border border-slate-200 rounded-xl px-2 py-1.5 text-[10px] font-bold text-slate-700 outline-none cursor-pointer"
+                      >
+                        <option value={10}>10 / page</option>
+                        <option value={25}>25 / page</option>
+                        <option value={50}>50 / page</option>
+                        <option value={100}>100 / page</option>
+                      </select>
+                    </div>
                   </div>
-                  <table className="w-full text-left text-[11px] whitespace-nowrap">
-                    <thead className="bg-slate-900 text-white text-[9px] font-black uppercase">
+
+                  <div className="overflow-x-auto custom-scrollbar">
+                    <table className="w-full text-left text-[11px] whitespace-nowrap">
+                      <thead className="bg-slate-900 text-white text-[9px] font-black uppercase">
+                        <tr>
+                          <th className="p-3">#</th>
+                          <th className="p-3">Station Location</th>
+                          <th className="p-3">State</th>
+                          <th className="p-3">District</th>
+                          <th className="p-3">Block</th>
+                          <th className="p-3 text-center">Exceedances</th>
+                          <th className="p-3">Failed Parameters</th>
+                          <th className="p-3 text-right">MPR Score</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-bold text-slate-600">
+                        {displayFilteredData.length > 0 ? (
+                          displayFilteredData.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((r, i) => {
+                            const globalIdx = (currentPage - 1) * pageSize + i + 1;
+                            const comboKey = r.failedParams.map((p: any) => p.name).sort().join(' + ');
+                            return (
+                              <tr key={i} className="hover:bg-indigo-50/30 transition-colors">
+                                <td className="p-3 text-slate-400 font-mono text-[10px]">{globalIdx}</td>
+                                <td className="p-3 font-black text-slate-800">{r[columnMapping['Station']] || 'Well Site'}</td>
+                                <td className="p-3">{r[columnMapping['State']] || '-'}</td>
+                                <td className="p-3">{r[columnMapping['District']] || '-'}</td>
+                                <td className="p-3">{r[columnMapping['Block']] || '-'}</td>
+                                <td className="p-3 text-center">
+                                  <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black ${
+                                    r.failCount === 0 
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+                                      : r.failCount === 1 
+                                      ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                      : 'bg-rose-50 text-rose-700 border border-rose-200'
+                                  }`}>
+                                    {r.failCount} {r.failCount === 1 ? 'Fail' : 'Fails'}
+                                  </span>
+                                </td>
+                                <td className="p-3">
+                                  {r.failedParams.length > 0 ? (
+                                    <button
+                                      onClick={() => setSelectedComboFilter(selectedComboFilter === comboKey ? "" : comboKey)}
+                                      className="text-left font-bold text-rose-600 hover:underline cursor-pointer max-w-[200px] truncate block"
+                                      title={`Click to filter map for combination: ${comboKey}`}
+                                    >
+                                      {comboKey}
+                                    </button>
+                                  ) : (
+                                    <span className="text-emerald-600 font-extrabold">Compliant</span>
+                                  )}
+                                </td>
+                                <td className="p-3 text-right font-black text-slate-800 font-mono">
+                                  {r._mprScoreNum.toFixed(4)}
+                                </td>
+                              </tr>
+                            );
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan={8} className="p-8 text-center text-slate-400 text-xs font-bold italic">
+                              No monitoring well records matched the current search query or combination filters.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Pagination Footer */}
+                  {displayFilteredData.length > pageSize && (
+                    <div className="bg-slate-50 px-5 py-3 border-t border-slate-100 flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-slate-500">
+                        Page {currentPage} of {Math.ceil(displayFilteredData.length / pageSize)}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                          disabled={currentPage === 1}
+                          className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                        </button>
+                        <span className="text-xs font-black text-slate-700 px-3 py-1 bg-white rounded-lg border border-slate-200">
+                          {currentPage} / {Math.ceil(displayFilteredData.length / pageSize)}
+                        </span>
+                        <button
+                          onClick={() => setCurrentPage(prev => Math.min(prev + 1, Math.ceil(displayFilteredData.length / pageSize)))}
+                          disabled={currentPage >= Math.ceil(displayFilteredData.length / pageSize)}
+                          className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: PAIRWISE CO-OCCURRENCE MATRIX */}
+            {activeTab === "pairwise" && (
+              <div className="space-y-6">
+                <div className="bg-slate-900 text-white p-4.5 rounded-2xl flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-black uppercase tracking-wider text-indigo-400">Pairwise Co-Occurrence Heatmap & Co-Exceedance Matrix</h4>
+                    <p className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">
+                      Counts how many monitoring wells simultaneously exceed permissible limits for each parameter pair
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setSelectedComboFilter("")}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold px-3 py-1.5 rounded-xl border border-slate-700 transition-colors cursor-pointer flex items-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3 h-3" /> Reset Matrix Filter
+                  </button>
+                </div>
+
+                <div className="border border-slate-100 rounded-3xl overflow-hidden overflow-x-auto custom-scrollbar bg-white p-4">
+                  <table className="w-full text-center text-[11px] border-collapse">
+                    <thead>
                       <tr>
-                        <th className="p-2.5">Location</th>
-                        <th className="p-2.5">State</th>
-                        <th className="p-2.5">District</th>
-                        <th className="p-2.5 text-center">Failed Count</th>
-                        <th className="p-2.5">Failed Parameters</th>
-                        <th className="p-2.5 text-right">MPR</th>
+                        <th className="p-3 border border-slate-200 bg-slate-900 text-white text-[10px] font-black uppercase text-left">
+                          Parameter \ Parameter
+                        </th>
+                        {activeSet.map(p => (
+                          <th key={p} className="p-2.5 border border-slate-200 bg-slate-800 text-indigo-300 text-[10px] font-black uppercase min-w-[70px]">
+                            {p}
+                          </th>
+                        ))}
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100 font-bold text-slate-600">
-                      {currentFilteredData.slice(0, 50).map((r, i) => (
-                        <tr key={i} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="p-2.5 font-black text-slate-800">{r[columnMapping['Station']] || 'Well'}</td>
-                          <td className="p-2.5">{r[columnMapping['State']] || '-'}</td>
-                          <td className="p-2.5">{r[columnMapping['District']] || '-'}</td>
-                          <td className="p-2.5 text-center">
-                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${
-                              r.failCount === 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
-                            }`}>{r.failCount}</span>
+                    <tbody>
+                      {activeSet.map(p1 => (
+                        <tr key={p1} className="hover:bg-slate-50 transition-colors">
+                          <td className="p-3 border border-slate-200 bg-slate-100 font-black text-slate-800 text-left text-[10px]">
+                            {p1}
                           </td>
-                          <td className="p-2.5 text-rose-600 max-w-[150px] truncate" title={r.failedParams.map((p: any) => p.name).join(', ')}>
-                            {r.failedParams.map((p: any) => p.name).join(', ') || 'None'}
-                          </td>
-                          <td className="p-2.5 text-right font-black">{r._mprScoreNum.toFixed(4)}</td>
+                          {activeSet.map(p2 => {
+                            const count = pairwiseMatrix[p1]?.[p2] || 0;
+                            const isSelf = p1 === p2;
+                            // Calculate color intensity
+                            const maxVal = Math.max(1, ...activeSet.map(x => Math.max(...activeSet.map(y => pairwiseMatrix[x]?.[y] || 0))));
+                            const ratio = isSelf ? 0 : count / maxVal;
+                            
+                            let bgStyle = {};
+                            if (isSelf) {
+                              bgStyle = { backgroundColor: '#f1f5f9', color: '#94a3b8' };
+                            } else if (count > 0) {
+                              const alpha = Math.max(0.15, Math.min(0.85, ratio));
+                              bgStyle = { backgroundColor: `rgba(225, 29, 72, ${alpha})`, color: ratio > 0.4 ? '#ffffff' : '#881337' };
+                            } else {
+                              bgStyle = { backgroundColor: '#f8fafc', color: '#cbd5e1' };
+                            }
+
+                            return (
+                              <td 
+                                key={p2} 
+                                style={bgStyle}
+                                className={`p-2.5 border border-slate-200 font-black text-xs font-mono transition-all ${
+                                  !isSelf && count > 0 ? 'cursor-pointer hover:scale-105' : ''
+                                }`}
+                                title={isSelf ? `${p1} self-matching` : `${count} wells exceed both ${p1} and ${p2}`}
+                                onClick={() => {
+                                  if (!isSelf && count > 0) {
+                                    const pairKey = [p1, p2].sort().join(' + ');
+                                    setSelectedComboFilter(pairKey);
+                                  }
+                                }}
+                              >
+                                {isSelf ? '—' : count}
+                              </td>
+                            );
+                          })}
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                </div>
+
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-[10px] text-slate-600 flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2 font-bold">
+                    <span>Co-Occurrence Heat Intensity:</span>
+                    <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800">Low Co-Occurrence</span>
+                    <span className="px-2 py-0.5 rounded bg-rose-600 text-white">High Co-Occurrence</span>
+                  </div>
+                  <span className="font-medium italic">Click any highlighted cell to filter map and wells for that co-occurrence pair.</span>
                 </div>
               </div>
             )}
@@ -1058,11 +1563,11 @@ export function CombinationAnalysisView({
                   <div className="bg-slate-50 border border-slate-100 rounded-3xl p-5 space-y-4 text-[11px] leading-relaxed text-slate-700 font-medium">
                     <h5 className="font-black text-xs text-indigo-900 border-b border-indigo-100 pb-2 mb-2">Selection Insight</h5>
                     <p>
-                      <strong>{currentFilteredData.filter(r => r.failCount > 0).length.toLocaleString()} stations</strong> exceed at least one chemical parameter above permissible limits.
+                      <strong>{currentFilteredData.filter(r => r.failCount > 0).length} stations</strong> exceed at least one chemical parameter above permissible limits.
                     </p>
                     <hr className="border-slate-150" />
                     <p>
-                      The remaining <strong>{currentFilteredData.filter(r => r.failCount === 0).length.toLocaleString()} stations</strong> remain completely clean and comply with active standards.
+                      The remaining <strong>{currentFilteredData.filter(r => r.failCount === 0).length} stations</strong> remain completely clean and comply with active standards.
                     </p>
                     <hr className="border-slate-150" />
                     <p>

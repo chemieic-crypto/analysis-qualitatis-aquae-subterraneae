@@ -16,6 +16,11 @@ export function formatExcelJSWorksheet(
   // Enable grid lines
   ws.views = [{ showGridLines: true }];
 
+  // If worksheet was already custom formatted by a specialized module, preserve custom styles
+  if ((ws as any)._customFormatted) {
+    return;
+  }
+
   // Compute column widths dynamically with safety padding
   (ws.columns || []).forEach((col) => {
     if (!col) return;
@@ -105,10 +110,10 @@ export function formatExcelJSWorksheet(
           color: { argb: "FF1E293B" },
         };
 
-        // Number format for floats / ints
+        // Number format for floats / ints (no thousands grouping comma)
         if (isNumeric) {
           if (!cell.numFmt) {
-            cell.numFmt = Number.isInteger(cell.value as number) ? "#,##0" : "#,##0.00";
+            cell.numFmt = Number.isInteger(cell.value as number) ? "0" : "0.00";
           }
         }
 
@@ -137,6 +142,21 @@ export function formatExcelJSWorksheet(
   });
 }
 
+export async function getExcelJSBlob(
+  workbook: ExcelJS.Workbook,
+  headerRowCountMap?: Record<string, number>
+): Promise<Blob> {
+  workbook.worksheets.forEach((ws) => {
+    const hCount = headerRowCountMap?.[ws.name] || 1;
+    formatExcelJSWorksheet(ws, hCount);
+  });
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  return new Blob([buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+}
+
 /**
  * Format and trigger ExcelJS workbook download
  */
@@ -145,15 +165,7 @@ export async function downloadExcelJSWorkbook(
   fileName: string,
   headerRowCountMap?: Record<string, number>
 ) {
-  workbook.worksheets.forEach((ws) => {
-    const hCount = headerRowCountMap?.[ws.name] || 1;
-    formatExcelJSWorksheet(ws, hCount);
-  });
-
-  const buffer = await workbook.xlsx.writeBuffer();
-  const blob = new Blob([buffer], {
-    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  });
+  const blob = await getExcelJSBlob(workbook, headerRowCountMap);
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

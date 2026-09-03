@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
+import { safeHtml2canvas } from "../utils/colorSanitizer";
 import { DataHeaders, ShapefileLayer } from "../types";
 import { norm, buildDistrictStateMap, isStateAll, isDistrictAll, featureMatchesSelection, toProperCase } from "../utils/shapefileFilter";
 import { PARAM_CONFIG } from "../data/config";
@@ -287,27 +288,22 @@ export default function KpiChoroplethMap({
     setIsExportingJpeg(true);
     if (showToast) showToast("Rendering High Density 600 DPI JPEG image...", "success");
 
-    const captureScale = 4; // ~400 DPI high-resolution capture
-
     try {
-      const html2canvasModule = (await import("html2canvas")).default;
       let canvas: HTMLCanvasElement | null = null;
 
-      // 1. Primary html2canvas capture attempt
+      // 1. Primary html2canvas capture attempt with safeHtml2canvas (scale 6 = 600 DPI)
       try {
-        canvas = await html2canvasModule(mapExportContainerRef.current, {
-          scale: captureScale,
+        canvas = await safeHtml2canvas(mapExportContainerRef.current, {
+          scale: 6,
           useCORS: true,
-          allowTaint: true,
+          allowTaint: false,
           backgroundColor: "#ffffff",
           logging: false,
           ignoreElements: (el) => el.getAttribute("data-export-hide") === "true",
           onclone: (clonedDoc) => {
-            // Remove elements marked to hide during export
             const hideEls = clonedDoc.querySelectorAll('[data-export-hide="true"]');
             hideEls.forEach((el) => el.remove());
 
-            // Safely fix overflow on HTML div containers only (avoid SVG elements)
             const htmlDivs = clonedDoc.querySelectorAll("div, section, article, p, span");
             htmlDivs.forEach((el) => {
               if (el instanceof HTMLElement && el.style) {
@@ -315,7 +311,6 @@ export default function KpiChoroplethMap({
               }
             });
 
-            // Ensure tile image tags have crossorigin attribute
             const svgImages = clonedDoc.querySelectorAll("image");
             svgImages.forEach((img) => {
               const href = img.getAttribute("href") || img.getAttribute("xlink:href");
@@ -326,26 +321,10 @@ export default function KpiChoroplethMap({
           }
         });
       } catch (h2cErr) {
-        console.warn("Primary html2canvas capture failed, trying fallback:", h2cErr);
+        console.warn("Primary safeHtml2canvas capture failed, trying fallback:", h2cErr);
       }
 
-      // 2. Secondary fallback with lower scale if scale 4 failed
-      if (!canvas) {
-        try {
-          canvas = await html2canvasModule(mapExportContainerRef.current, {
-            scale: 2,
-            useCORS: false,
-            allowTaint: true,
-            backgroundColor: "#ffffff",
-            logging: false,
-            ignoreElements: (el) => el.getAttribute("data-export-hide") === "true"
-          });
-        } catch (fErr) {
-          console.warn("Secondary html2canvas fallback failed:", fErr);
-        }
-      }
-
-      // 3. Direct SVG Vector Rasterization Fallback (100% reliable for SVG map layers)
+      // 2. Direct SVG Vector Rasterization Fallback (100% reliable for SVG map layers)
       if (!canvas) {
         const svgEl = mapExportContainerRef.current.querySelector("svg");
         if (svgEl) {
@@ -354,7 +333,7 @@ export default function KpiChoroplethMap({
           const URLObj = window.URL || (window as any).webkitURL;
           const blobURL = URLObj.createObjectURL(svgBlob);
 
-          const img = new Image();
+          const img = new window.Image();
           await new Promise((resolve, reject) => {
             img.onload = resolve;
             img.onerror = reject;
@@ -512,36 +491,47 @@ export default function KpiChoroplethMap({
       const dt = String(row[districtCol] || "").trim();
       const blk = String(row[blockCol] || row["BLOCK"] || row["Block"] || "").trim();
 
-      let regKey = "";
-      if (reportingLevel === "Block" || !isDistrictAll(selectedDistrict)) {
-        regKey = blk || dt || st || "Unknown";
-      } else if (reportingLevel === "District" || !isStateAll(selectedState)) {
-        regKey = dt || st || "Unknown";
-      } else {
-        regKey = st || "Unknown";
-      }
-      const normKey = norm(regKey);
+      let primaryKey = "";
+      let qualifiedKey = "";
 
-      if (!map[normKey]) {
-        map[normKey] = { total: 0, exceed: 0, pct: 0, sum: 0, validCount: 0 };
+      if (reportingLevel === "Block" || !isDistrictAll(selectedDistrict)) {
+        primaryKey = blk || dt || st || "Unknown";
+        qualifiedKey = (st && dt && blk) ? `${st}__${dt}__${blk}` : ((dt && blk) ? `${dt}__${blk}` : primaryKey);
+      } else if (reportingLevel === "District" || !isStateAll(selectedState)) {
+        primaryKey = dt || st || "Unknown";
+        qualifiedKey = (st && dt) ? `${st}__${dt}` : primaryKey;
+      } else {
+        primaryKey = st || "Unknown";
+        qualifiedKey = primaryKey;
       }
+
+      const keysToUpdate = new Set<string>();
+      if (qualifiedKey) keysToUpdate.add(norm(qualifiedKey));
+      if (primaryKey) keysToUpdate.add(norm(primaryKey));
 
       const val = getRowVal(row);
-      if (val !== null) {
-        map[normKey].total++;
-        map[normKey].sum += val;
-        map[normKey].validCount++;
 
-        if (activeParam === "pH") {
-          if (val < 6.5 || val > 8.5) {
-            map[normKey].exceed++;
-          }
-        } else {
-          if (b2 > 0 && val > b2) {
-            map[normKey].exceed++;
+      keysToUpdate.forEach((normKey) => {
+        if (!map[normKey]) {
+          map[normKey] = { total: 0, exceed: 0, pct: 0, sum: 0, validCount: 0 };
+        }
+
+        if (val !== null) {
+          map[normKey].total++;
+          map[normKey].sum += val;
+          map[normKey].validCount++;
+
+          if (activeParam === "pH") {
+            if (val < 6.5 || val > 8.5) {
+              map[normKey].exceed++;
+            }
+          } else {
+            if (b2 > 0 && val > b2) {
+              map[normKey].exceed++;
+            }
           }
         }
-      }
+      });
     });
 
     // Compute percentages
@@ -589,6 +579,16 @@ export default function KpiChoroplethMap({
     return { color: rangeClasses[rangeClasses.length - 1].color, label: rangeClasses[rangeClasses.length - 1].label };
   };
 
+  // Fast O(1) Normalized Map for regionMetricsMap
+  const normalizedRegionMap = useMemo(() => {
+    const map = new Map<string, { total: number; exceed: number; pct: number; sum: number; validCount: number }>();
+    Object.entries(regionMetricsMap).forEach(([key, metric]) => {
+      const n = norm(key);
+      if (n) map.set(n, metric as any);
+    });
+    return map;
+  }, [regionMetricsMap]);
+
   // Helper to extract feature metric and region name matching regionMetricsMap
   const getFeatureMetricAndName = (feature: any) => {
     const props = feature.properties || {};
@@ -624,11 +624,14 @@ export default function KpiChoroplethMap({
 
     const candidates: string[] = [];
     if (reportingLevel === "Block" || !isDistrictAll(selectedDistrict)) {
+      if (featureState && featureDistrict && featureBlock) candidates.push(`${featureState}__${featureDistrict}__${featureBlock}`);
+      if (featureDistrict && featureBlock) candidates.push(`${featureDistrict}__${featureBlock}`);
       if (featureBlock) candidates.push(featureBlock);
       if (featureDistrict) candidates.push(featureDistrict);
       if (featureName) candidates.push(featureName);
       if (featureState) candidates.push(featureState);
     } else if (reportingLevel === "District" || !isStateAll(selectedState)) {
+      if (featureState && featureDistrict) candidates.push(`${featureState}__${featureDistrict}`);
       if (featureDistrict) candidates.push(featureDistrict);
       if (featureBlock) candidates.push(featureBlock);
       if (featureName) candidates.push(featureName);
@@ -640,31 +643,25 @@ export default function KpiChoroplethMap({
       if (featureBlock) candidates.push(featureBlock);
     }
 
-    // 1. Direct match
+    // 1. Direct O(1) Map match
     for (const name of candidates) {
       const n = norm(name);
-      if (n && regionMetricsMap[n] && regionMetricsMap[n].total > 0) {
-        return { displayName: name, metric: regionMetricsMap[n] };
-      }
-    }
-
-    // 2. Substring / fuzzy match
-    for (const name of candidates) {
-      const n = norm(name);
-      if (!n) continue;
-      for (const [mapKey, metricValUntyped] of Object.entries(regionMetricsMap)) {
-        const metricVal = metricValUntyped as any;
-        if (metricVal && metricVal.total > 0 && (mapKey === n || mapKey.includes(n) || n.includes(mapKey))) {
-          return { displayName: name, metric: metricVal };
+      if (n) {
+        const metric = normalizedRegionMap.get(n);
+        if (metric && metric.total > 0) {
+          return { displayName: name, metric };
         }
       }
     }
 
-    // 3. District to State fallback
+    // 2. District to State fallback
     if (featureDistrict && districtStateMap) {
       const mappedSt = districtStateMap[featureDistrict.toLowerCase()] || districtStateMap[norm(featureDistrict)];
-      if (mappedSt && regionMetricsMap[norm(mappedSt)] && regionMetricsMap[norm(mappedSt)].total > 0) {
-        return { displayName: `${featureDistrict} (${mappedSt})`, metric: regionMetricsMap[norm(mappedSt)] };
+      if (mappedSt) {
+        const metric = normalizedRegionMap.get(norm(mappedSt));
+        if (metric && metric.total > 0) {
+          return { displayName: `${featureDistrict} (${mappedSt})`, metric };
+        }
       }
     }
 
@@ -762,23 +759,17 @@ export default function KpiChoroplethMap({
     return counts;
   }, [regionMetricsMap, rangeClasses]);
 
-  // Top 5 Exceeding Regions for Map Display / Image Export
+  // Top 5 Exceeding Regions for Map Display / Image Export (Fast O(N log N) sorting)
   const top5ExceedingRegions = useMemo(() => {
     const list: { name: string; pct: number; exceed: number; total: number }[] = [];
     Object.entries(regionMetricsMap).forEach(([normName, metricUntyped]) => {
       const metric = metricUntyped as any;
       if (metric && metric.total >= 1) {
-        let displayName = normName;
-        for (const f of geoFeatures) {
-          const res = getFeatureMetricAndName(f);
-          if (norm(res.displayName) === normName || normName.includes(norm(res.displayName))) {
-            displayName = res.displayName;
-            break;
-          }
-        }
-        displayName = toProperCase(displayName);
+        const cleanName = normName.includes("__")
+          ? normName.split("__").pop() || normName
+          : normName;
         list.push({
-          name: displayName,
+          name: toProperCase(cleanName),
           pct: metric.pct,
           exceed: metric.exceed,
           total: metric.total
@@ -790,7 +781,7 @@ export default function KpiChoroplethMap({
       return b.exceed - a.exceed;
     });
     return list.slice(0, 5);
-  }, [regionMetricsMap, geoFeatures]);
+  }, [regionMetricsMap]);
 
   // Shapefile Upload Handler
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {

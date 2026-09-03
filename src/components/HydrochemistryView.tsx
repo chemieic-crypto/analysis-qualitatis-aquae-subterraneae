@@ -88,7 +88,8 @@ export const formatAdvanced = (value: any, decimals: number = 2): string => {
   const num = Number(value);
   return num.toLocaleString(undefined, {
     minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals
+    maximumFractionDigits: decimals,
+    useGrouping: false
   });
 };
 
@@ -270,40 +271,40 @@ export default function HydrochemistryView({
       return {
         ...row,
         "S.No.": idx + 1,
-        // Calculated columns explicitly requested
-        "meq_Ca": Number(meq_Ca.toFixed(4)),
-        "meq_Mg": Number(meq_Mg.toFixed(4)),
-        "meq_Na": Number(meq_Na.toFixed(4)),
-        "meq_K": Number(meq_K.toFixed(4)),
-        "meq_Cl": Number(meq_Cl.toFixed(4)),
-        "meq_SO4": Number(meq_SO4.toFixed(4)),
-        "meq_HCO3": Number(meq_HCO3.toFixed(4)),
-        "meq_CO3": Number(meq_CO3.toFixed(4)),
-        "Total_Cation_meq": Number(totalCations.toFixed(4)),
-        "Total_Anion_meq": Number(totalAnions.toFixed(4)),
-        "Charge_Balance_Error_Pct": Number(cbe.toFixed(3)),
+        // Calculated columns with FULL UNROUNDED double-precision float values
+        "meq_Ca": meq_Ca,
+        "meq_Mg": meq_Mg,
+        "meq_Na": meq_Na,
+        "meq_K": meq_K,
+        "meq_Cl": meq_Cl,
+        "meq_SO4": meq_SO4,
+        "meq_HCO3": meq_HCO3,
+        "meq_CO3": meq_CO3,
+        "Total_Cation_meq": totalCations,
+        "Total_Anion_meq": totalAnions,
+        "Charge_Balance_Error_Pct": cbe,
         "Charge_Balance_Error_Comment": cbeComment,
-        "SAR": Number(sar.toFixed(3)),
-        "RSC": Number(rsc.toFixed(3)),
-        "Pct_Sodium": Number(pctSodium.toFixed(2)),
+        "SAR": sar,
+        "RSC": rsc,
+        "Pct_Sodium": pctSodium,
         "Ussl_Class": usslClass,
         "Hydrochemical_Facies": facies,
-        "Na_Na_plus_Ca_meq": Number(na_na_ca.toFixed(4)),
-        "Cl_Cl_plus_HCO3_meq": Number(cl_cl_hco3.toFixed(4)),
-        "Gibbs_Log_TDS": Number(gibbsLogTds.toFixed(4)),
-        "Gibbs_Anion_Ratio": Number(gibbsAnionRatio.toFixed(4)),
-        "Gibbs_Cation_Ratio": Number(gibbsCationRatio.toFixed(4)),
-        "pct_Ca": Number(pct_Ca.toFixed(2)),
-        "pct_Mg": Number(pct_Mg.toFixed(2)),
-        "pct_Na_plus_K": Number(pct_Na_K.toFixed(2)),
-        "pct_Cl": Number(pct_Cl.toFixed(2)),
-        "pct_SO4": Number(pct_SO4.toFixed(2)),
-        "pct_HCO3_plus_CO3": Number(pct_HCO3_CO3.toFixed(2)),
-        "PI_calc": Number(pi.toFixed(2)),
-        "Kelly_Index_calc": Number(kellyIndex.toFixed(3)),
-        "Magnesium_Hazard_calc": Number(magnesiumHazard.toFixed(2)),
-        "Total_Alkalinity_calc": Number(totalAlkalinityCalc.toFixed(2)),
-        "TDS_calc": Number(tdsCalc.toFixed(2)),
+        "Na_Na_plus_Ca_meq": na_na_ca,
+        "Cl_Cl_plus_HCO3_meq": cl_cl_hco3,
+        "Gibbs_Log_TDS": gibbsLogTds,
+        "Gibbs_Anion_Ratio": gibbsAnionRatio,
+        "Gibbs_Cation_Ratio": gibbsCationRatio,
+        "pct_Ca": pct_Ca,
+        "pct_Mg": pct_Mg,
+        "pct_Na_plus_K": pct_Na_K,
+        "pct_Cl": pct_Cl,
+        "pct_SO4": pct_SO4,
+        "pct_HCO3_plus_CO3": pct_HCO3_CO3,
+        "PI_calc": pi,
+        "Kelly_Index_calc": kellyIndex,
+        "Magnesium_Hazard_calc": magnesiumHazard,
+        "Total_Alkalinity_calc": totalAlkalinityCalc,
+        "TDS_calc": tdsCalc,
         // Heavy metals mapping
         "Fe": columnMapping["Fe"] ? getNum("Fe") : undefined,
         "As": columnMapping["As"] ? getNum("As") : undefined,
@@ -681,9 +682,9 @@ export default function HydrochemistryView({
                           {row["Charge_Balance_Error_Comment"]}
                         </span>
                       </td>
-                      <td className="px-4 py-2.5 font-mono font-bold text-indigo-700 text-right whitespace-nowrap">{formatAdvanced(row["SAR"], 3)}</td>
-                      <td className="px-4 py-2.5 font-mono text-indigo-700 text-right whitespace-nowrap">{formatAdvanced(row["RSC"], 3)}</td>
-                      <td className="px-4 py-2.5 font-mono text-slate-700 text-right whitespace-nowrap">{formatAdvanced(row["Pct_Sodium"], 2)}%</td>
+                      <td className="px-4 py-2.5 font-mono font-bold text-indigo-700 text-right whitespace-nowrap">{formatAdvanced(row["SAR"], 4)}</td>
+                      <td className="px-4 py-2.5 font-mono text-indigo-700 text-right whitespace-nowrap">{formatAdvanced(row["RSC"], 4)}</td>
+                      <td className="px-4 py-2.5 font-mono text-slate-700 text-right whitespace-nowrap">{formatAdvanced(row["Pct_Sodium"], 4)}%</td>
                       <td className="px-4 py-2.5 text-center whitespace-nowrap">
                         <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 font-bold border border-amber-100 font-mono">
                           {row["Ussl_Class"]}
@@ -697,11 +698,11 @@ export default function HydrochemistryView({
                       <td className="px-4 py-2.5 font-mono text-slate-600 text-right whitespace-nowrap">{formatAdvanced(row["Gibbs_Log_TDS"], 4)}</td>
                       <td className="px-4 py-2.5 font-mono text-slate-600 text-right whitespace-nowrap">{formatAdvanced(row["Gibbs_Anion_Ratio"], 4)}</td>
                       <td className="px-4 py-2.5 font-mono text-slate-600 text-right whitespace-nowrap">{formatAdvanced(row["Gibbs_Cation_Ratio"], 4)}</td>
-                      <td className="px-4 py-2.5 font-mono text-slate-600 text-right whitespace-nowrap">{formatAdvanced(row["PI_calc"], 2)}</td>
-                      <td className="px-4 py-2.5 font-mono text-slate-600 text-right whitespace-nowrap">{formatAdvanced(row["Kelly_Index_calc"], 3)}</td>
-                      <td className="px-4 py-2.5 font-mono text-slate-600 text-right whitespace-nowrap">{formatAdvanced(row["Magnesium_Hazard_calc"], 2)}%</td>
-                      <td className="px-4 py-2.5 font-mono font-bold text-emerald-800 bg-emerald-50/25 text-right whitespace-nowrap">{formatAdvanced(row["Total_Alkalinity_calc"], 2)}</td>
-                      <td className="px-4 py-2.5 font-mono font-bold text-emerald-800 bg-emerald-50/25 text-right whitespace-nowrap">{formatAdvanced(row["TDS_calc"], 2)}</td>
+                      <td className="px-4 py-2.5 font-mono text-slate-600 text-right whitespace-nowrap">{formatAdvanced(row["PI_calc"], 4)}</td>
+                      <td className="px-4 py-2.5 font-mono text-slate-600 text-right whitespace-nowrap">{formatAdvanced(row["Kelly_Index_calc"], 4)}</td>
+                      <td className="px-4 py-2.5 font-mono text-slate-600 text-right whitespace-nowrap">{formatAdvanced(row["Magnesium_Hazard_calc"], 4)}%</td>
+                      <td className="px-4 py-2.5 font-mono font-bold text-emerald-800 bg-emerald-50/25 text-right whitespace-nowrap">{formatAdvanced(row["Total_Alkalinity_calc"], 4)}</td>
+                      <td className="px-4 py-2.5 font-mono font-bold text-emerald-800 bg-emerald-50/25 text-right whitespace-nowrap">{formatAdvanced(row["TDS_calc"], 4)}</td>
                       <td className="px-4 py-2.5 font-mono text-indigo-800 text-right whitespace-nowrap">{formatAdvanced(row["pct_Ca"], 2)}%</td>
                       <td className="px-4 py-2.5 font-mono text-indigo-800 text-right whitespace-nowrap">{formatAdvanced(row["pct_Mg"], 2)}%</td>
                       <td className="px-4 py-2.5 font-mono text-indigo-800 text-right whitespace-nowrap">{formatAdvanced(row["pct_Na_plus_K"], 2)}%</td>

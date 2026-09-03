@@ -24,6 +24,7 @@ import CalculatoriusView from "./components/CalculatoriusView";
 import KpiView from "./components/KpiView";
 import { generateOfflineChartBase64 } from "./utils/chartHelpers";
 import { isStateAll, isDistrictAll, norm } from "./utils/shapefileFilter";
+import { downloadWaterQualityTemplate } from "./utils/templateGenerator";
 
 import {
   Database,
@@ -65,43 +66,15 @@ import Exporting from "highcharts/modules/exporting";
 import OfflineExporting from "highcharts/modules/offline-exporting";
 // @ts-ignore
 import Heatmap from "highcharts/modules/heatmap";
+import { initHighchartsModule } from "./utils/chartHelpers";
 
-// Safe loader to prevent ESM default-wrap failures in Vite
-function initHighchartsModule(module: any, core: any) {
-  if (typeof module === "function") {
-    module(core);
-  } else if (module && typeof module.default === "function") {
-    module.default(core);
-  }
-}
-
-// Initialize Highcharts 3D and Cylinder modules to enable offline reports securely
+// Initialize Highcharts modules safely
 if (typeof Highcharts === "object") {
-  try {
-    initHighchartsModule(Highcharts3D, Highcharts);
-  } catch (err) {
-    console.warn("Highcharts3D module initialization skipped:", err);
-  }
-  try {
-    initHighchartsModule(Cylinder, Highcharts);
-  } catch (err) {
-    console.warn("Highcharts Cylinder module initialization skipped:", err);
-  }
-  try {
-    initHighchartsModule(Exporting, Highcharts);
-  } catch (err) {
-    console.warn("Highcharts Exporting module initialization skipped:", err);
-  }
-  try {
-    initHighchartsModule(OfflineExporting, Highcharts);
-  } catch (err) {
-    console.warn("Highcharts OfflineExporting module initialization skipped:", err);
-  }
-  try {
-    initHighchartsModule(Heatmap, Highcharts);
-  } catch (err) {
-    console.warn("Highcharts Heatmap module initialization skipped:", err);
-  }
+  initHighchartsModule(Highcharts3D, Highcharts);
+  initHighchartsModule(Cylinder, Highcharts);
+  initHighchartsModule(Exporting, Highcharts);
+  initHighchartsModule(OfflineExporting, Highcharts);
+  initHighchartsModule(Heatmap, Highcharts);
 }
 
 export default function App() {
@@ -151,7 +124,7 @@ export default function App() {
     year: "Year",
     season: "Season",
     source: "Source",
-    params: ["pH", "TDS", "TH", "EC", "Cl", "NO3", "F"]
+    params: ["pH", "TDS", "TH", "EC", "Cl", "NO3", "F", "SAR", "RSC"]
   });
   const [headerMap, setHeaderMap] = useState<Record<string, string>>({
     "pH": "pH",
@@ -160,7 +133,9 @@ export default function App() {
     "EC": "EC",
     "Cl": "Cl",
     "NO3": "NO3",
-    "F": "F"
+    "F": "F",
+    "SAR": "SAR",
+    "RSC": "RSC"
   });
 
   // Filters State
@@ -203,7 +178,7 @@ export default function App() {
   const [toasts, setToasts] = useState<{ id: string; message: string; type: "success" | "error" }[]>([]);
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
-    const id = `${Date.now()}`;
+    const id = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -343,8 +318,14 @@ export default function App() {
       });
 
       if (matchedKey) {
-        guessed.params.push(header);
+        if (!guessed.params.includes(matchedKey)) {
+          guessed.params.push(matchedKey);
+        }
+        if (!guessed.params.includes(header)) {
+          guessed.params.push(header);
+        }
         map[header] = matchedKey;
+        map[matchedKey] = header;
       }
     });
 
@@ -1001,9 +982,9 @@ export default function App() {
           }
 
           if (isExceeding) {
-            const wholeNums = ["EC", "NO3", "TH", "Ca", "SO4", "Mg", "Cl"];
-            const decimalPlaces = wholeNums.includes(key) ? 0 : 4;
-            const zFormat = wholeNums.includes(key) ? "0" : key === "F" ? "0.00" : "0.000";
+            const wholeNums = ["TH", "Ca", "SO4", "Mg", "Cl"];
+            const decimalPlaces = key === "EC" ? 1 : key === "NO3" ? 2 : key === "F" ? 3 : wholeNums.includes(key) ? 0 : 4;
+            const zFormat = key === "EC" ? "0.0" : key === "NO3" ? "0.00" : key === "F" ? "0.000" : wholeNums.includes(key) ? "0" : "0.000";
 
             if (isExpInd) {
               indRows.push([
@@ -1129,7 +1110,7 @@ export default function App() {
       <div className="w-full mx-auto max-w-none">
         
         {/* Official Bilingual Header Branding */}
-        <div className="bg-white rounded-3xl p-5 md:p-6 mb-8 border border-slate-200/80 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-6 relative overflow-hidden">
+        <div className="bg-gradient-to-r from-white/95 via-sky-50/70 to-indigo-50/80 backdrop-blur-xl rounded-3xl p-5 md:p-6 mb-8 border border-white/90 shadow-[0_14px_36px_-6px_rgba(30,58,138,0.12),inset_0_1.5px_0_0_rgba(255,255,255,1)] flex flex-col md:flex-row justify-between items-start md:items-center gap-6 relative overflow-hidden">
           <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-cyan-400 via-blue-600 to-indigo-600"></div>
           
           <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 w-full md:w-auto">
@@ -1340,6 +1321,13 @@ export default function App() {
           </div>
 
           <div className="flex flex-col gap-2">
+            <button
+              onClick={downloadWaterQualityTemplate}
+              className="w-full glossy-btn-indigo px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-sm text-white bg-gradient-to-r from-indigo-600 via-indigo-700 to-blue-700 border border-indigo-500/80 hover:opacity-95"
+            >
+              <Download className="w-3.5 h-3.5 text-white" /> Download Data Template (.xlsx)
+            </button>
+
             {rawData.length > 0 && (
               <button
                 onClick={handleExportIndividual}
@@ -1367,7 +1355,7 @@ export default function App() {
         </div>
 
         {/* Desktop Tab Controls Bar */}
-        <div className="hidden md:flex flex-wrap gap-x-3.5 gap-y-3 mb-8 select-none p-4 bg-white rounded-3xl border border-slate-200 shadow-sm">
+        <div className="hidden md:flex flex-wrap gap-x-3.5 gap-y-3 mb-8 select-none p-4 bg-gradient-to-r from-white/95 via-slate-50/80 to-white/95 backdrop-blur-xl rounded-3xl border border-white/90 shadow-[0_12px_32px_-4px_rgba(15,23,42,0.08),inset_0_1.5px_0_0_rgba(255,255,255,1)]">
           {[
             { id: "kpi", label: "KPI Analysis", icon: Award, baseColor: "amber" },
             { id: "single", label: "Detailed Analysis", icon: LayoutDashboard, baseColor: "blue" },
@@ -1392,62 +1380,62 @@ export default function App() {
             
             const colorMap: Record<string, { activeBg: string; ring: string; iconColor: string }> = {
               blue: {
-                activeBg: "bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-blue-500/30 border-blue-700",
+                activeBg: "bg-gradient-to-r from-blue-600 via-blue-600 to-indigo-700 text-white shadow-[0_8px_20px_rgba(37,99,235,0.35),inset_0_1.5px_0_rgba(255,255,255,0.6)] border-blue-700",
                 ring: "ring-blue-400",
                 iconColor: "text-blue-600",
               },
               indigo: {
-                activeBg: "bg-gradient-to-r from-indigo-600 to-indigo-700 text-white shadow-indigo-500/30 border-indigo-700",
+                activeBg: "bg-gradient-to-r from-indigo-600 via-indigo-600 to-indigo-800 text-white shadow-[0_8px_20px_rgba(79,70,229,0.35),inset_0_1.5px_0_rgba(255,255,255,0.6)] border-indigo-700",
                 ring: "ring-indigo-400",
                 iconColor: "text-indigo-600",
               },
               violet: {
-                activeBg: "bg-gradient-to-r from-violet-600 to-violet-700 text-white shadow-violet-500/30 border-violet-700",
+                activeBg: "bg-gradient-to-r from-violet-600 via-violet-600 to-purple-700 text-white shadow-[0_8px_20px_rgba(124,58,237,0.35),inset_0_1.5px_0_rgba(255,255,255,0.6)] border-violet-700",
                 ring: "ring-violet-400",
                 iconColor: "text-violet-600",
               },
               purple: {
-                activeBg: "bg-gradient-to-r from-purple-600 to-purple-700 text-white shadow-purple-500/30 border-purple-700",
+                activeBg: "bg-gradient-to-r from-purple-600 via-purple-600 to-purple-800 text-white shadow-[0_8px_20px_rgba(147,51,234,0.35),inset_0_1.5px_0_rgba(255,255,255,0.6)] border-purple-700",
                 ring: "ring-purple-400",
                 iconColor: "text-purple-600",
               },
               teal: {
-                activeBg: "bg-gradient-to-r from-teal-600 to-teal-700 text-white shadow-teal-500/30 border-teal-700",
+                activeBg: "bg-gradient-to-r from-teal-600 via-teal-600 to-emerald-700 text-white shadow-[0_8px_20px_rgba(13,148,136,0.35),inset_0_1.5px_0_rgba(255,255,255,0.6)] border-teal-700",
                 ring: "ring-teal-400",
                 iconColor: "text-teal-600",
               },
               cyan: {
-                activeBg: "bg-gradient-to-r from-cyan-600 to-cyan-700 text-white shadow-cyan-500/30 border-cyan-700",
+                activeBg: "bg-gradient-to-r from-cyan-600 via-cyan-600 to-blue-700 text-white shadow-[0_8px_20px_rgba(8,145,178,0.35),inset_0_1.5px_0_rgba(255,255,255,0.6)] border-cyan-700",
                 ring: "ring-cyan-400",
                 iconColor: "text-cyan-600",
               },
               emerald: {
-                activeBg: "bg-gradient-to-r from-emerald-600 to-emerald-700 text-white shadow-emerald-500/30 border-emerald-700",
+                activeBg: "bg-gradient-to-r from-emerald-600 via-emerald-600 to-teal-700 text-white shadow-[0_8px_20px_rgba(5,150,105,0.35),inset_0_1.5px_0_rgba(255,255,255,0.6)] border-emerald-700",
                 ring: "ring-emerald-400",
                 iconColor: "text-emerald-600",
               },
               amber: {
-                activeBg: "bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-amber-500/30 border-amber-600",
+                activeBg: "bg-gradient-to-r from-amber-500 via-amber-600 to-orange-600 text-white shadow-[0_8px_20px_rgba(217,119,6,0.35),inset_0_1.5px_0_rgba(255,255,255,0.6)] border-amber-600",
                 ring: "ring-amber-400",
                 iconColor: "text-amber-600",
               },
               orange: {
-                activeBg: "bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-orange-500/30 border-orange-600",
+                activeBg: "bg-gradient-to-r from-orange-500 via-orange-600 to-red-600 text-white shadow-[0_8px_20px_rgba(234,88,12,0.35),inset_0_1.5px_0_rgba(255,255,255,0.6)] border-orange-600",
                 ring: "ring-orange-400",
                 iconColor: "text-orange-600",
               },
               fuchsia: {
-                activeBg: "bg-gradient-to-r from-fuchsia-600 to-fuchsia-700 text-white shadow-fuchsia-500/30 border-fuchsia-700",
+                activeBg: "bg-gradient-to-r from-fuchsia-600 via-fuchsia-600 to-pink-700 text-white shadow-[0_8px_20px_rgba(192,38,211,0.35),inset_0_1.5px_0_rgba(255,255,255,0.6)] border-fuchsia-700",
                 ring: "ring-fuchsia-400",
                 iconColor: "text-fuchsia-600",
               },
               rose: {
-                activeBg: "bg-gradient-to-r from-rose-600 to-rose-700 text-white shadow-rose-500/30 border-rose-700",
+                activeBg: "bg-gradient-to-r from-rose-600 via-rose-600 to-rose-800 text-white shadow-[0_8px_20px_rgba(225,29,72,0.35),inset_0_1.5px_0_rgba(255,255,255,0.6)] border-rose-700",
                 ring: "ring-rose-400",
                 iconColor: "text-rose-600",
               },
               red: {
-                activeBg: "bg-gradient-to-r from-red-600 to-red-700 text-white shadow-red-500/30 border-red-700",
+                activeBg: "bg-gradient-to-r from-red-600 via-red-600 to-rose-700 text-white shadow-[0_8px_20px_rgba(220,38,38,0.35),inset_0_1.5px_0_rgba(255,255,255,0.6)] border-red-700",
                 ring: "ring-red-400",
                 iconColor: "text-red-600",
               },
@@ -1460,10 +1448,10 @@ export default function App() {
                 key={tabItem.id}
                 onClick={() => setActiveTab(tabItem.id as any)}
                 className={`
-                  whitespace-nowrap px-4 py-2.5 rounded-2xl font-extrabold text-xs flex items-center gap-2 select-none transition-all duration-150 cursor-pointer border
+                  whitespace-nowrap px-4 py-2.5 rounded-2xl font-extrabold text-xs flex items-center gap-2 select-none transition-all duration-200 cursor-pointer border
                   ${isActive 
-                    ? `${style.activeBg} shadow-md translate-y-[1px] ring-2 ${style.ring} ring-offset-2` 
-                    : `bg-white hover:bg-slate-50 text-slate-700 border-slate-200/90 shadow-xs hover:border-slate-300 hover:translate-y-[-1px] active:translate-y-[1px]`
+                    ? `${style.activeBg} translate-y-[1px] ring-2 ${style.ring} ring-offset-2 backdrop-blur-md` 
+                    : `bg-gradient-to-b from-white/95 via-white/80 to-slate-100/90 text-slate-800 border-white/95 backdrop-blur-md shadow-[0_6px_16px_rgba(15,23,42,0.06),inset_0_2px_0_rgba(255,255,255,1),inset_0_0_10px_rgba(255,255,255,0.8),inset_0_-1.5px_0_rgba(0,0,0,0.05)] hover:border-indigo-300 hover:text-indigo-950 hover:translate-y-[-1.5px] hover:shadow-[0_10px_22px_rgba(79,70,229,0.18),inset_0_2px_0_rgba(255,255,255,1)] active:translate-y-[1px]`
                   }
                 `}
               >
@@ -1493,6 +1481,15 @@ export default function App() {
                 <option value="Segoe UI">Segoe UI</option>
               </select>
             </div>
+
+            <button
+              onClick={downloadWaterQualityTemplate}
+              className="px-3.5 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-2 shadow-sm text-white bg-gradient-to-r from-indigo-600 via-indigo-700 to-blue-700 border border-indigo-400/80 hover:shadow-md hover:scale-[1.02] transition-all cursor-pointer"
+              title="Download official Excel template with pre-configured static details and parameter unit headers"
+            >
+              <Download className="w-3.5 h-3.5 text-white" /> Download Template (.xlsx)
+            </button>
+
             {rawData.length > 0 && (
               <button
                 onClick={handleExportIndividual}
@@ -1518,24 +1515,36 @@ export default function App() {
         </div>
 
         {/* Tab Canvas Content Blocks */}
-        <div>
+        <div className="glass-tab-view space-y-6">
           
           {/* Default Upload Placement Helper */}
           {rawData.length === 0 && activeTab !== "about" && activeTab !== "guidelines" && (
             <div className="mb-6 mx-auto max-w-full bg-slate-900 border-l-4 border-amber-500 rounded-2xl p-4 shadow-md backdrop-blur-sm">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-amber-500/20 rounded-xl">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-amber-500 animate-bounce" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                    <line x1="12" y1="9" x2="12" y2="13" />
-                    <line x1="12" y1="17" x2="12.01" y2="17" />
-                  </svg>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-amber-500/20 rounded-xl shrink-0">
+                    <Database className="w-5 h-5 text-amber-400 animate-pulse" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-white uppercase tracking-wider">No Custom Spreadsheet Loaded</h4>
+                    <p className="text-[10px] font-bold text-slate-300 tracking-wide mt-0.5">
+                      Download our pre-structured Excel data template with static location details & parameter units, populate your measurements, and upload.
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="text-xs font-black text-white uppercase tracking-wider">No Active Spreadsheet Data Loaded</h4>
-                  <p className="text-[10px] font-bold text-slate-300 uppercase tracking-wide mt-0.5">
-                    Currently rendering structured empty template columns & rows. Please use the upload panel above to run compliance operations on actual row models.
-                  </p>
+
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <button
+                    onClick={downloadWaterQualityTemplate}
+                    className="px-3.5 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 flex items-center gap-2 shadow-sm transition-all"
+                  >
+                    <Download className="w-3.5 h-3.5 text-slate-950" /> Download Data Template (.xlsx)
+                  </button>
+
+                  <label className="cursor-pointer px-3.5 py-2 rounded-xl text-xs font-black bg-indigo-600 hover:bg-indigo-500 text-white flex items-center gap-2 shadow-sm transition-all">
+                    <UploadCloud className="w-3.5 h-3.5 text-white" /> Upload Data File
+                    <input type="file" onChange={handleFileUpload} className="hidden" accept=".xlsx, .xls, .csv" />
+                  </label>
                 </div>
               </div>
             </div>

@@ -2,6 +2,7 @@ import { PARAM_CONFIG } from "../data/config";
 import { ShapefileLayer } from "../types";
 import { featureMatchesSelection, isStateAll, isDistrictAll, norm } from "./shapefileFilter";
 import { INDIA_BOUNDARY } from "../data/india_boundary";
+import { safeMin, safeMax } from "./math";
 
 export const getMonsoonPercentile = (sortedArr: number[], p: number): number => {
   if (!sortedArr.length) return 0;
@@ -47,7 +48,7 @@ export const generateMonsoonDualOgiveSVG = (
   const sortedPre = [...preVals].sort((a, b) => a - b);
   const sortedPost = [...postVals].sort((a, b) => a - b);
 
-  const maxVal = Math.max(...sortedPre, ...sortedPost, 0.001);
+  const maxVal = safeMax(sortedPre, sortedPost, 0.001);
   const minVal = 0;
 
   const width = 960;
@@ -260,7 +261,7 @@ export const generateMonsoonAveragePlotSVG = (
     }
   });
 
-  const maxVal = Math.max(...dataItems.map((d) => Math.max(d.preMean, d.postMean)), 0.001) * 1.15;
+  const maxVal = safeMax(dataItems.map((d) => safeMax(d.preMean, d.postMean)), 0.001) * 1.15;
 
   const padLeft = 65;
   const padRight = 30;
@@ -374,7 +375,7 @@ export const generateMonsoonViolinPlotSVG = (
       const idx = Math.min(bins - 1, Math.max(0, Math.floor(((v - minVal) / Math.max(0.0001, maxVal - minVal)) * bins)));
       counts[idx]++;
     });
-    const maxCount = Math.max(...counts, 1);
+    const maxCount = safeMax(counts, 1);
     return counts.map((c) => c / maxCount);
   };
 
@@ -555,7 +556,7 @@ export const generateMonsoonExceedanceBarSVG = (
     }
   });
 
-  const maxVal = Math.max(...dataItems.map((d) => Math.max(d.preExc, d.postExc)), 10) * 1.15;
+  const maxVal = safeMax(dataItems.map((d) => safeMax(d.preExc, d.postExc)), 10) * 1.15;
 
   const padLeft = 65;
   const padRight = 30;
@@ -634,7 +635,7 @@ export const generateMonsoonScatterBiPlotSVG = (
   const isSingleLimit = config ? config.b1 === config.b2 && configKey !== "pH" : false;
   const limit = config ? (isSingleLimit ? config.b1 : config.b2) : 0;
 
-  const maxVal = Math.max(...pairedList.map((p) => Math.max(p.preVal, p.postVal)), limit || 1) * 1.1;
+  const maxVal = safeMax(pairedList.map((p) => safeMax(p.preVal, p.postVal)), limit || 1) * 1.1;
 
   const width = 650;
   const height = 520;
@@ -1611,8 +1612,8 @@ export const generateSideBySideIonicBiPlotSVG = (
   const allX = [...prePts.map(p => p.x), ...postPts.map(p => p.x)];
   const allY = [...prePts.map(p => p.y), ...postPts.map(p => p.y)];
 
-  const maxX = Math.max(...allX, 0.1) * 1.15;
-  const maxY = Math.max(...allY, 0.1) * 1.15;
+  const maxX = safeMax(allX, 0.1) * 1.15;
+  const maxY = safeMax(allY, 0.1) * 1.15;
   const maxAxis = meta.hasEquiline ? Math.max(maxX, maxY) : 0;
 
   const width = 960;
@@ -1766,8 +1767,8 @@ export const generateMonsoonShiftVectorBiPlotSVG = (
   const allX = [...vectors.map(v => v.preX), ...vectors.map(v => v.postX)];
   const allY = [...vectors.map(v => v.preY), ...vectors.map(v => v.postY)];
 
-  const maxX = Math.max(...allX, 0.1) * 1.15;
-  const maxY = Math.max(...allY, 0.1) * 1.15;
+  const maxX = safeMax(allX, 0.1) * 1.15;
+  const maxY = safeMax(allY, 0.1) * 1.15;
   const maxAxis = meta.hasEquiline ? Math.max(maxX, maxY) : 0;
 
   const width = 920;
@@ -1887,7 +1888,7 @@ export const generateSideBySideParamChartSVG = (
 
   if (!data.length) return "";
 
-  const maxVal = Math.max(...data.map(d => Math.max(d.preVal, d.postVal)), 0.1) * 1.15;
+  const maxVal = safeMax(data.map(d => safeMax(d.preVal, d.postVal)), 0.1) * 1.15;
 
   const width = 960;
   const topPad = 80;

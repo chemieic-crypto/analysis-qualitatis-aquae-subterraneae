@@ -209,24 +209,69 @@ export const convertOklchAndOklabInStyle = (styleValue: string): string => {
 };
 
 export const sanitizeColorsForHtml2canvas = (clonedDoc: Document) => {
-  // 1. Convert style attributes
+  // 1. Sanitize style attributes for oklch, oklab, backdrop-filters, and inset box shadows
   try {
-    const styledElements = clonedDoc.querySelectorAll('[style*="oklch" i], [style*="oklab" i]');
-    styledElements.forEach((el: any) => {
+    const allElements = clonedDoc.querySelectorAll("*");
+    allElements.forEach((el: any) => {
+      if (!(el instanceof HTMLElement)) return;
       try {
-        const styleProps = ["color", "backgroundColor", "borderColor", "border", "background", "boxShadow"];
-        styleProps.forEach((prop) => {
-          const val = el.style[prop as any];
-          if (val) {
-            let newVal = val;
-            if (newVal.toLowerCase().includes("oklch") || newVal.toLowerCase().includes("oklab")) {
-              newVal = replaceOklabAndOklchNested(newVal);
-            }
-            if (newVal !== val) {
-              el.style[prop as any] = newVal;
+        if (el.style) {
+          // Remove backdrop-filter which causes solid black/grey box distortions in html2canvas
+          if (el.style.backdropFilter) {
+            el.style.backdropFilter = "none";
+          }
+          if ((el.style as any).webkitBackdropFilter) {
+            (el.style as any).webkitBackdropFilter = "none";
+          }
+
+          // Strip CSS filters (e.g. drop-shadow) that cause text vertical offset or blur artifacting in html2canvas
+          if (el.style.filter && (el.style.filter.includes("drop-shadow") || el.style.filter.includes("blur"))) {
+            el.style.filter = "none";
+          }
+
+          // Strip hover/transition transforms on cards & badges so they capture flat and aligned
+          if (el.style.transform && (el.style.transform.includes("translate") || el.style.transform.includes("scale"))) {
+            if (!el.tagName.toLowerCase().includes("path") && !el.tagName.toLowerCase().includes("g")) {
+              el.style.transform = "none";
             }
           }
-        });
+
+          // Fix box shadows with inset or multiple layers that html2canvas cannot render
+          const bs = el.style.boxShadow;
+          if (bs && (bs.includes("inset") || bs.split(",").length > 2)) {
+            el.style.boxShadow = "0 4px 12px rgba(0, 0, 0, 0.08)";
+          }
+
+          // Prevent text clipping in html2canvas caused by tight line-heights or overflow:hidden/truncate
+          const tagName = el.tagName.toLowerCase();
+          if (["span", "p", "h1", "h2", "h3", "h4", "h5", "h6", "div", "b", "strong", "a"].includes(tagName)) {
+            el.style.setProperty("overflow", "visible", "important");
+            el.style.setProperty("text-overflow", "clip", "important");
+            
+            const lh = el.style.lineHeight;
+            if (!lh || lh === "1" || lh === "none" || lh.includes("none")) {
+              el.style.setProperty("line-height", "1.35", "important");
+            }
+          }
+
+          // Ensure card containers don't clip text or subpixel elements
+          if (el.classList.contains("group") || el.classList.contains("rounded-2xl") || el.classList.contains("rounded-xl")) {
+            el.style.setProperty("overflow", "visible", "important");
+          }
+
+          const styleProps = ["color", "backgroundColor", "borderColor", "border", "background", "boxShadow"];
+          styleProps.forEach((prop) => {
+            const val = el.style[prop as any];
+            if (val && typeof val === "string") {
+              if (val.toLowerCase().includes("oklch") || val.toLowerCase().includes("oklab")) {
+                const newVal = replaceOklabAndOklchNested(val);
+                if (newVal !== val) {
+                  el.style[prop as any] = newVal;
+                }
+              }
+            }
+          });
+        }
       } catch (err) {}
     });
   } catch (err) {}
@@ -308,8 +353,8 @@ export const safeHtml2canvas = async (
 
   // Calculate target dimensions
   const finalOptions = { ...options };
-  const targetWidth = finalOptions.width || element.offsetWidth || 650;
-  const targetHeight = finalOptions.height || element.offsetHeight || 920;
+  const targetWidth = finalOptions.width || element.offsetWidth || 1200;
+  const targetHeight = finalOptions.height || element.offsetHeight || 800;
 
   // Assign a temporary unique ID if the element doesn't have one to find it in the cloned iframe document
   const originalId = element.id;
@@ -359,7 +404,7 @@ export const safeHtml2canvas = async (
   } catch (e) {}
   window.scrollTo(0, 0);
 
-  // Define onclone to sanitize OKLCH colors in the cloned document
+  // Define onclone to sanitize OKLCH colors, box shadows, and grid containers in the cloned document
   const originalOnClone = finalOptions.onclone;
   finalOptions.onclone = (clonedDoc: Document) => {
     // Find the cloned target element inside the iframe's cloned document
@@ -368,58 +413,43 @@ export const safeHtml2canvas = async (
       iframeClonedElement = clonedDoc.getElementById(originalId);
     }
 
-    // Unconstrain all ancestor elements in the cloned document to avoid clipping or shrinking
+    // Unconstrain ancestor elements without breaking display: flex / display: grid
     if (iframeClonedElement) {
       try {
-        // Reset element's own properties in cloned document to force perfect placement at (0, 0)
-        iframeClonedElement.style.setProperty("position", "absolute", "important");
-        iframeClonedElement.style.setProperty("left", "0", "important");
-        iframeClonedElement.style.setProperty("top", "0", "important");
-        iframeClonedElement.style.setProperty("margin", "0", "important");
         iframeClonedElement.style.setProperty("transform", "none", "important");
-        iframeClonedElement.style.setProperty("transform-origin", "top left", "important");
-        iframeClonedElement.style.setProperty("width", `${targetWidth}px`, "important");
-        iframeClonedElement.style.setProperty("height", `${targetHeight}px`, "important");
-        iframeClonedElement.style.setProperty("min-width", `${targetWidth}px`, "important");
-        iframeClonedElement.style.setProperty("min-height", `${targetHeight}px`, "important");
         iframeClonedElement.style.setProperty("max-width", "none", "important");
         iframeClonedElement.style.setProperty("max-height", "none", "important");
 
+        if (targetWidth > 0) {
+          iframeClonedElement.style.setProperty("width", `${targetWidth}px`, "important");
+          iframeClonedElement.style.setProperty("min-width", `${targetWidth}px`, "important");
+        }
+
         let current: HTMLElement | null = iframeClonedElement.parentElement;
         while (current && current !== clonedDoc.body && current !== clonedDoc.documentElement) {
-          current.style.setProperty("width", `${targetWidth}px`, "important");
-          current.style.setProperty("height", `${targetHeight}px`, "important");
           current.style.setProperty("max-width", "none", "important");
           current.style.setProperty("max-height", "none", "important");
-          current.style.setProperty("min-width", `${targetWidth}px`, "important");
-          current.style.setProperty("min-height", `${targetHeight}px`, "important");
           current.style.setProperty("overflow", "visible", "important");
           current.style.setProperty("transform", "none", "important");
           current.style.setProperty("clip-path", "none", "important");
           current.style.setProperty("mask", "none", "important");
-          current.style.setProperty("display", "block", "important");
-          current.style.setProperty("position", "relative", "important");
-          current.style.setProperty("margin", "0", "important");
-          current.style.setProperty("padding", "0", "important");
+          if (targetWidth > 0) {
+            current.style.setProperty("width", `${targetWidth}px`, "important");
+          }
           current = current.parentElement;
         }
 
+        const effectiveW = Math.max(1600, targetWidth);
+
         if (clonedDoc.body) {
           clonedDoc.body.style.setProperty("overflow", "visible", "important");
-          clonedDoc.body.style.setProperty("width", `${targetWidth}px`, "important");
-          clonedDoc.body.style.setProperty("height", `${targetHeight}px`, "important");
-          clonedDoc.body.style.setProperty("min-width", `${targetWidth}px`, "important");
-          clonedDoc.body.style.setProperty("min-height", `${targetHeight}px`, "important");
+          clonedDoc.body.style.setProperty("width", `${effectiveW}px`, "important");
           clonedDoc.body.style.setProperty("margin", "0", "important");
           clonedDoc.body.style.setProperty("padding", "0", "important");
-          clonedDoc.body.style.setProperty("position", "relative", "important");
         }
         if (clonedDoc.documentElement) {
           clonedDoc.documentElement.style.setProperty("overflow", "visible", "important");
-          clonedDoc.documentElement.style.setProperty("width", `${targetWidth}px`, "important");
-          clonedDoc.documentElement.style.setProperty("height", `${targetHeight}px`, "important");
-          clonedDoc.documentElement.style.setProperty("min-width", `${targetWidth}px`, "important");
-          clonedDoc.documentElement.style.setProperty("min-height", `${targetHeight}px`, "important");
+          clonedDoc.documentElement.style.setProperty("width", `${effectiveW}px`, "important");
           clonedDoc.documentElement.style.setProperty("margin", "0", "important");
           clonedDoc.documentElement.style.setProperty("padding", "0", "important");
         }
@@ -472,15 +502,22 @@ export const safeHtml2canvas = async (
   };
 
   try {
+    const renderScale = Math.min(3, Math.max(2, finalOptions.scale || 3));
+    const effectiveWindowW = Math.max(1600, targetWidth);
+    const effectiveWindowH = Math.max(1200, targetHeight);
+
     const html2canvasOptions = {
-      scale: 4,
       useCORS: true,
       allowTaint: false,
       logging: false,
       backgroundColor: "#ffffff",
       scrollX: 0,
       scrollY: 0,
-      ...finalOptions
+      ...finalOptions,
+      // Enforce controlled scale and window dimensions
+      scale: renderScale,
+      windowWidth: effectiveWindowW,
+      windowHeight: effectiveWindowH
     };
 
     const { onAfterCapture, ...pureHtml2canvasOptions } = html2canvasOptions;

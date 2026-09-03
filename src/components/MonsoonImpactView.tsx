@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { DataHeaders, ShapefileLayer } from "../types";
-import { PARAM_CONFIG } from "../data/config";
+import { PARAM_CONFIG, hasBisLimit } from "../data/config";
 import { 
   TableProperties, 
   FileSpreadsheet, 
@@ -44,7 +44,8 @@ export const formatAdvanced = (value: any, decimals: number = 2): string => {
   const num = Number(value);
   return num.toLocaleString(undefined, {
     minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals
+    maximumFractionDigits: decimals,
+    useGrouping: false
   });
 };
 
@@ -162,6 +163,102 @@ function getParamConfig(param: string) {
   };
 }
 
+export interface MonsoonImpactResult {
+  pctChange: number | null;
+  pctChangeDisplay: string;
+  status: "Improved" | "Deteriorated" | "No Significant Change";
+  categoryName: string;
+  explanation: string;
+}
+
+export function calculateMonsoonImpact(
+  preVal: number,
+  postVal: number,
+  limit: number
+): MonsoonImpactResult {
+  if (isNaN(preVal) || isNaN(postVal)) {
+    return {
+      pctChange: null,
+      pctChangeDisplay: "N/A",
+      status: "No Significant Change",
+      categoryName: "Invalid Data",
+      explanation: "Data missing or invalid for one or both periods."
+    };
+  }
+
+  // Rule 1: Pre = 0 & Post = 0 -> Both Concentrations Zero -> 0.00% -> No Significant Change
+  if (preVal === 0 && postVal === 0) {
+    return {
+      pctChange: 0,
+      pctChangeDisplay: "0.00%",
+      status: "No Significant Change",
+      categoryName: "Both Concentrations Zero",
+      explanation: "No contaminant detected in either season; steady undetectable baseline."
+    };
+  }
+
+  // Rule 2: Pre = 0 & Post <= Limit -> New Detection within Safe Limit -> N/A (Pre=0) -> No Significant Change
+  if (preVal === 0 && postVal <= limit) {
+    return {
+      pctChange: null,
+      pctChangeDisplay: "N/A (Pre=0)",
+      status: "No Significant Change",
+      categoryName: "New Detection within Safe Limit",
+      explanation: "Post-monsoon value emerged but remains safely below maximum permissible drinking limits."
+    };
+  }
+
+  // Rule 3: Pre = 0 & Post > Limit -> New Detection Exceeding Limit -> N/A (Pre=0) -> Deteriorated
+  if (preVal === 0 && postVal > limit) {
+    return {
+      pctChange: null,
+      pctChangeDisplay: "N/A (Pre=0)",
+      status: "Deteriorated",
+      categoryName: "New Detection Exceeding Limit",
+      explanation: "Water quality crossed the hazard threshold from zero, indicating sudden severe contamination."
+    };
+  }
+
+  // Rule 4: Post = 0 & Pre > Limit -> Contaminated Pre Dropped to Zero -> -100.00% -> Improved
+  if (postVal === 0 && preVal > limit) {
+    return {
+      pctChange: -100,
+      pctChangeDisplay: "-100.00%",
+      status: "Improved",
+      categoryName: "Contaminated Pre Dropped to Zero",
+      explanation: "Previously contaminated/unsafe aquifer was fully flushed or diluted down to non-detectable levels."
+    };
+  }
+
+  // Rule 5: Post = 0 & Pre <= Limit -> Safe Pre Dropped to Zero -> -100.00% -> No Significant Change
+  if (postVal === 0 && preVal <= limit) {
+    return {
+      pctChange: -100,
+      pctChangeDisplay: "-100.00%",
+      status: "No Significant Change",
+      categoryName: "Safe Pre Dropped to Zero",
+      explanation: "Pre-monsoon was already safely within permissible limits; reduction to 0 is not a critical category shift."
+    };
+  }
+
+  // Rule 6: Pre > 0 & Post > 0 -> Standard Positive Concentrations -> ((Post - Pre) / Pre) * 100
+  const pct = ((postVal - preVal) / preVal) * 100;
+  let status: "Improved" | "Deteriorated" | "No Significant Change" = "No Significant Change";
+  if (pct < -20) {
+    status = "Improved";
+  } else if (pct > 20) {
+    status = "Deteriorated";
+  }
+
+  return {
+    pctChange: pct,
+    pctChangeDisplay: `${pct > 0 ? "+" : ""}${pct.toFixed(2)}%`,
+    status,
+    categoryName: "Standard Positive Concentrations",
+    explanation: "Standard relative percentage change evaluated against the ±20% significant change boundary."
+  };
+}
+
 function runPairedTTest(pre: number[], post: number[], conf: number) {
   const n = pre.length;
   if (n < 2) return { t: 0, p: 1, tab: 0, meanDiff: 0, df: 0 };
@@ -176,14 +273,17 @@ function runPairedTTest(pre: number[], post: number[], conf: number) {
   
   let t, p;
   if (sem === 0) {
-    t = meanDiff === 0 ? 0 : (meanDiff > 0 ? Infinity : -Infinity);
-    p = meanDiff === 0 ? 1 : 0;
+    t = meanDiff === 0 ? 0 : (meanDiff > 0 ? 999.999 : -999.999);
+    p = meanDiff === 0 ? 1 : 0.0001;
   } else {
     t = meanDiff / sem;
     p = 2 * (1 - studentTCDF(Math.abs(t), df));
   }
   
-  return { t: isFinite(t) ? t : 0, p: isFinite(p) ? p : 1, tab: isFinite(tab) ? tab : 0, meanDiff, df };
+  if (!isFinite(t)) t = meanDiff >= 0 ? 999.999 : -999.999;
+  if (!isFinite(p) || p < 0) p = 1;
+
+  return { t, p, tab: isFinite(tab) ? tab : 0, meanDiff, df };
 }
 
 function runWilcoxon(a: number[], b: number[]) {
@@ -596,7 +696,11 @@ export default function MonsoonImpactView({
 
   // Get active mapped params (only those mapped in headerMap)
   const availableParams = useMemo(() => {
-    const baseParams = Object.keys(headerMap).filter(key => headerMap[key] && rawData.some(row => row[key] !== undefined || row[headerMap[key]] !== undefined));
+    let baseParams = Object.keys(headerMap).filter(key => headerMap[key] && rawData.some(row => row[key] !== undefined || row[headerMap[key]] !== undefined));
+    baseParams = baseParams.filter(key => {
+      const paramId = headerMap[key] || key;
+      return hasBisLimit(paramId) && hasBisLimit(key);
+    });
     const hasCa = !!headerMap["Ca"];
     const hasMg = !!headerMap["Mg"];
     const hasNa = !!headerMap["Na"];
@@ -739,16 +843,11 @@ export default function MonsoonImpactView({
           dataObj.shiftedUnsafeToSafe++;
         }
 
-        let pct = 0;
-        if (baseVal !== 0) {
-          pct = ((compVal - baseVal) / Math.abs(baseVal)) * 100;
-        } else if (baseVal === 0 && compVal !== 0) {
-          pct = compVal > 0 ? 100 : -100;
-        }
+        const impact = calculateMonsoonImpact(baseVal, compVal, limit);
 
-        if (pct < -20) {
+        if (impact.status === "Improved") {
           dataObj.improved++;
-        } else if (pct > 20) {
+        } else if (impact.status === "Deteriorated") {
           dataObj.deteriorated++;
         } else {
           dataObj.unchanged++;
@@ -873,14 +972,11 @@ export default function MonsoonImpactView({
           dataObj.shiftedUnsafeToSafe++;
         }
 
-        let pct = 0;
-        if (baseVal !== 0) {
-          pct = ((compVal - baseVal) / Math.abs(baseVal)) * 100;
-        }
+        const impact = calculateMonsoonImpact(baseVal, compVal, limit);
 
-        const isImproved = pct < -20;
-        const isDeteriorated = pct > 20;
-        const isUnchanged = !isImproved && !isDeteriorated;
+        const isImproved = impact.status === "Improved";
+        const isDeteriorated = impact.status === "Deteriorated";
+        const isUnchanged = impact.status === "No Significant Change";
 
         if (baseVal > limit) {
           dataObj.exceedBase++;
@@ -1207,27 +1303,44 @@ export default function MonsoonImpactView({
     if (!pairedResult.pairedList.length) return [];
 
     return pairedResult.pairedList.map((loc, index) => {
-      const chemData: Record<string, { base: number; comp: number; pctChange: number; status: "Improved" | "Deteriorated" | "No Significant Change" | "N/A" }> = {};
+      const chemData: Record<string, { 
+        base: number; 
+        comp: number; 
+        pctChange: number | null; 
+        pctChangeDisplay: string;
+        status: "Improved" | "Deteriorated" | "No Significant Change" | "N/A";
+        categoryName: string;
+        explanation: string;
+      }> = {};
 
       availableParams.forEach(p => {
         const base = getParamVal(loc.baseRow, p);
         const comp = getParamVal(loc.compRow, p);
+        const config = getParamConfig(p);
+        const limit = config ? (config.b2 !== null && config.b2 !== undefined ? config.b2 : config.b1) : 1000;
 
         if (!isNaN(base) && !isNaN(comp)) {
-          let pct = 0;
-          if (base !== 0) {
-            pct = ((comp - base) / Math.abs(base)) * 100;
-          } else if (base === 0 && comp !== 0) {
-            pct = comp > 0 ? 100 : -100;
-          }
+          const impact = calculateMonsoonImpact(base, comp, limit);
 
-          let status: "Improved" | "Deteriorated" | "No Significant Change" = "No Significant Change";
-          if (pct < -20) status = "Improved";
-          else if (pct > 20) status = "Deteriorated";
-
-          chemData[p] = { base, comp, pctChange: pct, status };
+          chemData[p] = { 
+            base, 
+            comp, 
+            pctChange: impact.pctChange, 
+            pctChangeDisplay: impact.pctChangeDisplay,
+            status: impact.status,
+            categoryName: impact.categoryName,
+            explanation: impact.explanation
+          };
         } else {
-          chemData[p] = { base: NaN, comp: NaN, pctChange: NaN, status: "N/A" };
+          chemData[p] = { 
+            base: NaN, 
+            comp: NaN, 
+            pctChange: null, 
+            pctChangeDisplay: "--", 
+            status: "N/A", 
+            categoryName: "N/A", 
+            explanation: "Data unavailable" 
+          };
         }
       });
 
@@ -1258,8 +1371,10 @@ export default function MonsoonImpactView({
       district: validSample.district,
       base: data.base,
       comp: data.comp,
-      pct: data.pctChange,
-      status: data.status
+      pctChangeDisplay: data.pctChangeDisplay,
+      status: data.status,
+      categoryName: data.categoryName,
+      explanation: data.explanation
     };
   }, [detailedMatrixData, activeParam]);
 
@@ -1369,8 +1484,9 @@ export default function MonsoonImpactView({
           const val = d.chemData[p]!;
           rowObj[`${p} Base`] = isNaN(val.base) ? "--" : val.base;
           rowObj[`${p} Compare`] = isNaN(val.comp) ? "--" : val.comp;
-          rowObj[`${p} % Change`] = isNaN(val.pctChange) ? "--" : val.pctChange.toFixed(2) + "%";
+          rowObj[`${p} % Change`] = val.pctChangeDisplay;
           rowObj[`${p} Status`] = val.status;
+          rowObj[`${p} Calculation Category`] = val.categoryName;
         });
 
         return rowObj;
@@ -1461,8 +1577,9 @@ export default function MonsoonImpactView({
         const val = d.chemData[p]!;
         rowObj[`${p} Base`] = isNaN(val.base) ? "--" : val.base;
         rowObj[`${p} Compare`] = isNaN(val.comp) ? "--" : val.comp;
-        rowObj[`${p} % Change`] = isNaN(val.pctChange) ? "--" : val.pctChange.toFixed(2) + "%";
+        rowObj[`${p} % Change`] = val.pctChangeDisplay;
         rowObj[`${p} Status`] = val.status;
+        rowObj[`${p} Calculation Category`] = val.categoryName;
       });
       return rowObj;
     });
@@ -3553,9 +3670,9 @@ export default function MonsoonImpactView({
                             <td key={`${p}-b`} className="p-3 text-right font-mono text-slate-600 border-l border-slate-250 bg-slate-50/20 tabular-nums">{formatAdvanced(val.base, p === "pH" || p === "SAR" || p === "RSC" ? 2 : 1)}</td>,
                             <td key={`${p}-c`} className="p-3 text-right font-mono text-slate-700 bg-slate-50/20 tabular-nums">{formatAdvanced(val.comp, p === "pH" || p === "SAR" || p === "RSC" ? 2 : 1)}</td>,
                             <td key={`${p}-p`} className={`p-3 text-right font-mono text-xs font-extrabold tabular-nums ${
-                              val.pctChange < -20 ? "text-emerald-600" : val.pctChange > 20 ? "text-rose-600" : "text-slate-500"
+                              val.status === "Improved" ? "text-emerald-600" : val.status === "Deteriorated" ? "text-rose-600" : "text-slate-500"
                             }`}>
-                              {(val.pctChange > 0 ? "+" : "") + formatAdvanced(val.pctChange, 1)}%
+                              {val.pctChangeDisplay}
                             </td>,
                             <td key={`${p}-s`} className="p-3 text-center border-r border-slate-250">
                               <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${badgeColor}`}>
@@ -3587,23 +3704,76 @@ export default function MonsoonImpactView({
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 text-slate-600 text-xs leading-relaxed font-bold">
               
-              <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-3">
+              <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-3 lg:col-span-2">
                 <h4 className="text-sm font-black text-slate-800 flex items-center gap-1.5">
                   <TrendingUp className="w-4 h-4 text-emerald-600" />
-                  1. Seasonal Trend Threshold Logic
+                  1. Dynamic Monsoon Trend Calculation Logic
                 </h4>
                 <p>
-                  Seasonal fluctuations in groundwater concentration occur primarily due to rainwater recharge and dissolution of minerals. 
-                  The comparison engine evaluates paired wells and computes the precise percentage change:
+                  Evaluates seasonal pre-monsoon (Pre) and post-monsoon (Post) paired concentrations against maximum permissible limits to categorize water quality impact:
                 </p>
-                <div className="bg-white p-3 rounded-xl border border-slate-200 font-mono text-sm text-center font-black text-indigo-700">
-                  % Change = ((Value_Compare - Value_Base) / |Value_Base|) * 100
+
+                <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                  <table className="w-full text-left text-[11px] border-collapse font-sans">
+                    <thead className="bg-slate-100 text-slate-800 font-extrabold uppercase tracking-wider text-[10px] border-b border-slate-200">
+                      <tr>
+                        <th className="p-2.5">Pre & Post Condition</th>
+                        <th className="p-2.5">Category Name</th>
+                        <th className="p-2.5 text-center">% Change Calculation</th>
+                        <th className="p-2.5 text-center">Status Outcome</th>
+                        <th className="p-2.5">Hydrologic Description</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                      <tr className="hover:bg-slate-50">
+                        <td className="p-2.5 font-bold font-mono text-slate-900">Pre = 0 & Post = 0</td>
+                        <td className="p-2.5 font-bold text-slate-800">Both Concentrations Zero</td>
+                        <td className="p-2.5 text-center font-mono font-bold text-slate-600">0.00%</td>
+                        <td className="p-2.5 text-center"><span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 font-bold border border-slate-200">No Significant Change</span></td>
+                        <td className="p-2.5 text-slate-500">No contaminant detected in either season; steady undetectable baseline.</td>
+                      </tr>
+                      <tr className="hover:bg-slate-50">
+                        <td className="p-2.5 font-bold font-mono text-slate-900">Pre = 0 & Post ≤ Limit</td>
+                        <td className="p-2.5 font-bold text-slate-800">New Detection within Safe Limit</td>
+                        <td className="p-2.5 text-center font-mono font-bold text-indigo-600">N/A (Pre=0)</td>
+                        <td className="p-2.5 text-center"><span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 font-bold border border-slate-200">No Significant Change</span></td>
+                        <td className="p-2.5 text-slate-500">Post-monsoon value emerged but remains safely below maximum permissible drinking limits.</td>
+                      </tr>
+                      <tr className="hover:bg-slate-50">
+                        <td className="p-2.5 font-bold font-mono text-slate-900">Pre = 0 & Post &gt; Limit</td>
+                        <td className="p-2.5 font-bold text-slate-800">New Detection Exceeding Limit</td>
+                        <td className="p-2.5 text-center font-mono font-bold text-indigo-600">N/A (Pre=0)</td>
+                        <td className="p-2.5 text-center"><span className="px-2 py-0.5 rounded text-[10px] bg-rose-600 text-white font-bold shadow-xs">Deteriorated</span></td>
+                        <td className="p-2.5 text-slate-500">Water quality crossed the hazard threshold from zero, indicating sudden severe contamination.</td>
+                      </tr>
+                      <tr className="hover:bg-slate-50">
+                        <td className="p-2.5 font-bold font-mono text-slate-900">Post = 0 & Pre &gt; Limit</td>
+                        <td className="p-2.5 font-bold text-slate-800">Contaminated Pre Dropped to Zero</td>
+                        <td className="p-2.5 text-center font-mono font-bold text-emerald-600">-100.00%</td>
+                        <td className="p-2.5 text-center"><span className="px-2 py-0.5 rounded text-[10px] bg-emerald-600 text-white font-bold shadow-xs">Improved</span></td>
+                        <td className="p-2.5 text-slate-500">Previously contaminated/unsafe aquifer was fully flushed or diluted down to non-detectable levels.</td>
+                      </tr>
+                      <tr className="hover:bg-slate-50">
+                        <td className="p-2.5 font-bold font-mono text-slate-900">Post = 0 & Pre ≤ Limit</td>
+                        <td className="p-2.5 font-bold text-slate-800">Safe Pre Dropped to Zero</td>
+                        <td className="p-2.5 text-center font-mono font-bold text-emerald-600">-100.00%</td>
+                        <td className="p-2.5 text-center"><span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 font-bold border border-slate-200">No Significant Change</span></td>
+                        <td className="p-2.5 text-slate-500">Pre-monsoon was already safely within permissible limits; reduction to 0 is not a critical category shift.</td>
+                      </tr>
+                      <tr className="hover:bg-slate-50">
+                        <td className="p-2.5 font-bold font-mono text-slate-900">Pre &gt; 0 & Post &gt; 0</td>
+                        <td className="p-2.5 font-bold text-slate-800">Standard Positive Concentrations</td>
+                        <td className="p-2.5 text-center font-mono font-bold text-purple-700">((Post - Pre) / Pre) × 100</td>
+                        <td className="p-2.5 text-center space-y-0.5">
+                          <div><span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-600 text-white font-bold">&lt; -20%: Improved</span></div>
+                          <div><span className="px-1.5 py-0.5 rounded text-[9px] bg-rose-600 text-white font-bold">&gt; +20%: Deteriorated</span></div>
+                          <div><span className="px-1.5 py-0.5 rounded text-[9px] bg-slate-100 text-slate-700 font-bold">±20%: Unchanged</span></div>
+                        </td>
+                        <td className="p-2.5 text-slate-500">Standard relative percentage change evaluated against the ±20% significant change boundary.</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
-                <ul className="list-disc pl-4 space-y-1 text-slate-500">
-                  <li><strong className="text-emerald-700">Improved</strong>: Concentration decreased by &gt; 20% post-monsoon (recharge dilution).</li>
-                  <li><strong className="text-rose-700">Deteriorated</strong>: Concentration increased by &gt; 20% (dissolution/surface flushing).</li>
-                  <li><strong className="text-slate-700">Unchanged</strong>: Drift remained within &plusmn; 20% boundary.</li>
-                </ul>
               </div>
 
               <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-3">
@@ -3639,19 +3809,44 @@ export default function MonsoonImpactView({
                 </p>
               </div>
 
-              <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-3">
+              <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-3 lg:col-span-2">
                 <h4 className="text-sm font-black text-slate-800 flex items-center gap-1.5">
                   <CheckCircle className="w-4 h-4 text-blue-600" />
-                  4. Live Math Trace Simulator
+                  4. Live Math Trace Simulator ({activeParam})
                 </h4>
                 {liveExplanationSample ? (
-                  <div className="space-y-1.5 font-mono text-[10px] bg-white p-3 rounded-xl border border-slate-200 text-slate-700">
-                    <p className="font-bold text-indigo-700">Active Example Well: {liveExplanationSample.id}</p>
-                    <p>Location: {liveExplanationSample.location} ({liveExplanationSample.district})</p>
-                    <p>Base Value: {liveExplanationSample.base}</p>
-                    <p>Compare Value: {liveExplanationSample.comp}</p>
-                    <p>Change: {((liveExplanationSample.comp - liveExplanationSample.base) / Math.abs(liveExplanationSample.base) * 100).toFixed(2)}%</p>
-                    <p>Calculated Status: <span className="font-black text-blue-600">{liveExplanationSample.status}</span></p>
+                  <div className="space-y-2 font-mono text-xs bg-white p-4 rounded-xl border border-slate-200 text-slate-700">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2 font-sans font-extrabold text-indigo-900">
+                      <span>Well ID: {liveExplanationSample.id} ({liveExplanationSample.location}, {liveExplanationSample.district})</span>
+                      <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-[10px] uppercase">{activeParam} Analysis</span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+                      <div>
+                        <span className="text-[10px] text-slate-400 font-sans uppercase font-bold block">Base (Pre)</span>
+                        <span className="text-sm font-bold text-amber-700">{liveExplanationSample.base}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 font-sans uppercase font-bold block">Compare (Post)</span>
+                        <span className="text-sm font-bold text-blue-700">{liveExplanationSample.comp}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 font-sans uppercase font-bold block">% Change</span>
+                        <span className="text-sm font-extrabold text-purple-700">{liveExplanationSample.pctChangeDisplay}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 font-sans uppercase font-bold block">Status</span>
+                        <span className={`text-xs font-black uppercase px-2 py-0.5 rounded inline-block mt-0.5 ${
+                          liveExplanationSample.status === "Improved" ? "bg-emerald-600 text-white" :
+                          liveExplanationSample.status === "Deteriorated" ? "bg-rose-600 text-white" : "bg-slate-200 text-slate-800"
+                        }`}>
+                          {liveExplanationSample.status}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="border-t border-slate-100 pt-2 font-sans text-xs">
+                      <p><span className="font-bold text-slate-800">Logic Category:</span> <strong className="text-purple-800">{liveExplanationSample.categoryName}</strong></p>
+                      <p className="text-slate-500 italic mt-0.5">"{liveExplanationSample.explanation}"</p>
+                    </div>
                   </div>
                 ) : (
                   <p className="text-slate-400 italic">No valid paired well is found to trace yet.</p>

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { DataHeaders } from "../types";
 import { PARAM_CONFIG } from "../data/config";
-import { GitMerge, X, CheckCircle, MapPin, FlaskConical } from "lucide-react";
+import { GitMerge, X, CheckCircle, MapPin, FlaskConical, Download } from "lucide-react";
+import { downloadWaterQualityTemplate } from "../utils/templateGenerator";
 
 interface MappingModalProps {
   isOpen: boolean;
@@ -94,10 +95,14 @@ export default function MappingModal({
     Object.entries(paramMappings).forEach(([paramKey, excelHeader]) => {
       const headerStr = excelHeader as string;
       if (headerStr) {
+        if (!finalHeaders.params.includes(paramKey)) {
+          finalHeaders.params.push(paramKey);
+        }
         if (!finalHeaders.params.includes(headerStr)) {
           finalHeaders.params.push(headerStr);
         }
         finalHeaderMap[headerStr] = paramKey;
+        finalHeaderMap[paramKey] = headerStr;
       }
     });
 
@@ -118,9 +123,18 @@ export default function MappingModal({
               Verify how your uploaded spreadsheet columns match our hydrochemical compliance parameters
             </p>
           </div>
-          <button onClick={onCancel} className="text-slate-400 hover:text-rose-500 transition-colors">
-            <X className="w-6 h-6" />
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={downloadWaterQualityTemplate}
+              className="px-3 py-1.5 rounded-xl font-bold text-xs bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1.5 shadow-sm transition-all"
+              title="Download standard Excel template with static details & units"
+            >
+              <Download className="w-3.5 h-3.5 text-white" /> Download Template (.xlsx)
+            </button>
+            <button onClick={onCancel} className="text-slate-400 hover:text-rose-500 transition-colors">
+              <X className="w-6 h-6" />
+            </button>
+          </div>
         </div>
 
         {/* Mappings Form */}

@@ -3,14 +3,12 @@ import Highcharts from "highcharts";
 import Highcharts3D from "highcharts/highcharts-3d";
 import ExcelJS from "exceljs";
 import { downloadExcelJSWorkbook } from "../utils/excelFormatter";
+import { safeMin, safeMax, getPercentile } from "../utils/math";
+import { initHighchartsModule } from "../utils/chartHelpers";
 import GraphSettingsPanel, { GraphSettings, DEFAULT_GRAPH_SETTINGS } from "./GraphSettingsPanel";
 
 // Initialize the 3D module
-if (typeof Highcharts3D === "function") {
-  (Highcharts3D as any)(Highcharts);
-} else if (Highcharts3D && typeof (Highcharts3D as any).default === "function") {
-  (Highcharts3D as any).default(Highcharts);
-}
+initHighchartsModule(Highcharts3D, Highcharts);
 import { 
   GitMerge, 
   BarChart3, 
@@ -39,7 +37,6 @@ import {
 } from "lucide-react";
 import { DataHeaders } from "../types";
 import { PARAM_CONFIG } from "../data/config";
-import { getPercentile } from "../utils/math";
 
 const VIRTUAL_PARAM_CONFIGS: Record<string, { b1: number; b2: number; unit: string; name: string }> = {
   SAR: { b1: 10, b2: 18, unit: "Ratio", name: "Sodium Adsorption Ratio" },
@@ -433,8 +430,8 @@ export default function AdvancedAnalysisView({
     }
     
     const xValues = points.map(p => p.x);
-    const minX = Math.min(...xValues);
-    const maxX = Math.max(...xValues);
+    const minX = safeMin(xValues);
+    const maxX = safeMax(xValues);
     const regressionLine = [
       [minX, slope * minX + intercept],
       [maxX, slope * maxX + intercept]
@@ -1129,34 +1126,36 @@ export default function AdvancedAnalysisView({
 
   // Helper to parse standard major ions from a row and return as milli-equivalents (meq)
   const getRowMeq = (row: any) => {
-    const getVal = (param: string): number => {
+    const getVal = (param: string): number | null => {
       const excelHeader = Object.keys(headerMap).find(key => headerMap[key] === param);
       const rawVal = excelHeader ? row[excelHeader] : row[param];
-      if (rawVal === undefined || rawVal === null || rawVal === "") return 0;
+      if (rawVal === undefined || rawVal === null || rawVal === "") return null;
       const cleaned = String(rawVal).replace(/[^0-9.-]/g, "");
       const num = parseFloat(cleaned);
-      return isNaN(num) ? 0 : num;
+      return isNaN(num) ? null : num;
     };
 
     const ca = getVal("Ca");
     const mg = getVal("Mg");
     const na = getVal("Na");
-    const k = getVal("K");
+    const k = getVal("K") || 0;
     const cl = getVal("Cl");
     const so4 = getVal("SO4");
     const hco3 = getVal("HCO3");
-    const co3 = getVal("CO3");
-    const ec = getVal("EC") || getVal("TDS") / 0.65 || 0;
-    const tds = getVal("TDS") || ec * 0.65 || 0;
+    const co3 = getVal("CO3") || 0;
+    const ecVal = getVal("EC");
+    const tdsVal = getVal("TDS");
+    const ec = ecVal !== null ? ecVal : (tdsVal !== null ? tdsVal / 0.65 : null);
+    const tds = tdsVal !== null ? tdsVal : (ecVal !== null ? ecVal * 0.65 : null);
 
     return {
-      Ca: ca / 20.04,
-      Mg: mg / 12.15,
-      Na: na / 22.99,
+      Ca: ca !== null ? ca / 20.04 : null,
+      Mg: mg !== null ? mg / 12.15 : null,
+      Na: na !== null ? na / 22.99 : null,
       K: k / 39.10,
-      Cl: cl / 35.45,
-      SO4: so4 / 48.03,
-      HCO3: hco3 / 61.02,
+      Cl: cl !== null ? cl / 35.45 : null,
+      SO4: so4 !== null ? so4 / 48.03 : null,
+      HCO3: hco3 !== null ? hco3 / 61.02 : null,
       CO3: co3 / 30.00,
       EC: ec,
       TDS: tds
@@ -1168,16 +1167,19 @@ export default function AdvancedAnalysisView({
     if (["SAR", "RSC", "TH", "SSP", "Na%", "PI", "KR", "MH", "USSL", "PIPER", "TDS", "Alkalinity"].includes(paramKey)) {
       const meq = getRowMeq(row);
       if (paramKey === "TDS") {
-        return meq.TDS || null;
+        return meq.TDS;
       }
       if (paramKey === "Alkalinity") {
+        if (meq.HCO3 === null) return null;
         return (meq.HCO3 + meq.CO3) * 50;
       }
       if (paramKey === "SAR") {
+        if (meq.Ca === null || meq.Mg === null || meq.Na === null) return null;
         const denom = Math.sqrt((meq.Ca + meq.Mg) / 2);
-        return denom > 0 ? meq.Na / denom : 0;
+        return denom > 0 ? meq.Na / denom : null;
       }
       if (paramKey === "RSC") {
+        if (meq.HCO3 === null || meq.Ca === null || meq.Mg === null) return null;
         return (meq.HCO3 + meq.CO3) - (meq.Ca + meq.Mg);
       }
       if (paramKey === "TH") {
@@ -1471,8 +1473,8 @@ export default function AdvancedAnalysisView({
       getBinIdx = (value: number) => customRangesLabels.findIndex(rng => rng.check(value));
     } else {
       const valuesOnly = samples.map(x => x.value);
-      const minVal = Math.min(...valuesOnly);
-      const maxVal = Math.max(...valuesOnly);
+      const minVal = safeMin(valuesOnly);
+      const maxVal = safeMax(valuesOnly);
       
       const numBins = Math.max(2, Math.min(20, customNumBins));
       const range = maxVal - minVal;
@@ -1699,8 +1701,8 @@ export default function AdvancedAnalysisView({
         };
       }
 
-      const min = Math.min(...values);
-      const max = Math.max(...values);
+      const min = safeMin(values);
+      const max = safeMax(values);
       const sum = values.reduce((acc, curr) => acc + curr, 0);
       const avg = sum / count;
       const p75 = getPercentile(values, 75);
@@ -1865,8 +1867,8 @@ export default function AdvancedAnalysisView({
         };
       }
 
-      const min = Math.min(...values);
-      const max = Math.max(...values);
+      const min = safeMin(values);
+      const max = safeMax(values);
       const sum = values.reduce((acc, curr) => acc + curr, 0);
       const avg = sum / count;
       const p75 = getPercentile(values, 75);
@@ -2039,8 +2041,8 @@ export default function AdvancedAnalysisView({
         };
       }
 
-      const min = Math.min(...values);
-      const max = Math.max(...values);
+      const min = safeMin(values);
+      const max = safeMax(values);
       const sum = values.reduce((acc, curr) => acc + curr, 0);
       const avg = sum / count;
       const p75 = getPercentile(values, 75);
@@ -2212,8 +2214,8 @@ export default function AdvancedAnalysisView({
         };
       }
 
-      const min = Math.min(...values);
-      const max = Math.max(...values);
+      const min = safeMin(values);
+      const max = safeMax(values);
       const sum = values.reduce((acc, curr) => acc + curr, 0);
       const avg = sum / count;
       const p75 = getPercentile(values, 75);
@@ -2310,8 +2312,8 @@ export default function AdvancedAnalysisView({
     const allVals = processedAquiferList.flatMap(item => item.values || []);
     if (allVals.length === 0) return null;
     const count = allVals.length;
-    const min = Math.min(...allVals);
-    const max = Math.max(...allVals);
+    const min = safeMin(allVals);
+    const max = safeMax(allVals);
     const avg = allVals.reduce((a, b) => a + b, 0) / count;
     const p75 = getPercentile(allVals, 75);
     const p90 = getPercentile(allVals, 90);
@@ -2326,8 +2328,8 @@ export default function AdvancedAnalysisView({
     const allVals = processedAquiferTappedList.flatMap(item => item.values || []);
     if (allVals.length === 0) return null;
     const count = allVals.length;
-    const min = Math.min(...allVals);
-    const max = Math.max(...allVals);
+    const min = safeMin(allVals);
+    const max = safeMax(allVals);
     const avg = allVals.reduce((a, b) => a + b, 0) / count;
     const p75 = getPercentile(allVals, 75);
     const p90 = getPercentile(allVals, 90);
@@ -2342,8 +2344,8 @@ export default function AdvancedAnalysisView({
     const allVals = processedStageExtractionList.flatMap(item => item.values || []);
     if (allVals.length === 0) return null;
     const count = allVals.length;
-    const min = Math.min(...allVals);
-    const max = Math.max(...allVals);
+    const min = safeMin(allVals);
+    const max = safeMax(allVals);
     const avg = allVals.reduce((a, b) => a + b, 0) / count;
     const p75 = getPercentile(allVals, 75);
     const p90 = getPercentile(allVals, 90);
@@ -2358,8 +2360,8 @@ export default function AdvancedAnalysisView({
     const allVals = processedSourceList.flatMap(item => item.values || []);
     if (allVals.length === 0) return null;
     const count = allVals.length;
-    const min = Math.min(...allVals);
-    const max = Math.max(...allVals);
+    const min = safeMin(allVals);
+    const max = safeMax(allVals);
     const avg = allVals.reduce((a, b) => a + b, 0) / count;
     const p75 = getPercentile(allVals, 75);
     const p90 = getPercentile(allVals, 90);
@@ -3226,9 +3228,12 @@ export default function AdvancedAnalysisView({
 
     // Add 1:1 line if applicable
     if (biplotType !== "ec-nasratio") {
-      const maxX = Math.max(...filteredBiplotScatterPoints.map(p => p.x));
-      const maxY = Math.max(...filteredBiplotScatterPoints.map(p => p.y));
-      const maxVal = Math.max(maxX, maxY) * 1.1 || 10;
+      const xVals = filteredBiplotScatterPoints.map(p => p.x).filter(v => typeof v === "number" && !isNaN(v));
+      const yVals = filteredBiplotScatterPoints.map(p => p.y).filter(v => typeof v === "number" && !isNaN(v));
+      const maxX = xVals.length > 0 ? Math.max(...xVals) : 10;
+      const maxY = yVals.length > 0 ? Math.max(...yVals) : 10;
+      const rawMax = Math.max(maxX, maxY);
+      const maxVal = (isFinite(rawMax) && rawMax > 0) ? rawMax * 1.1 : 10;
 
       allSeries.push({
         name: "1:1 Equiline (y = x)",

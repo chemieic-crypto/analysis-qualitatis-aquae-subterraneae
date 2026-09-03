@@ -1,4 +1,5 @@
-import Highcharts from "highcharts";
+import HighchartsImport from "highcharts";
+import HighchartsCore, { resolveHighchartsCore, safeInitPlugin } from "./initHighcharts";
 // @ts-ignore
 import Highcharts3D from "highcharts/highcharts-3d";
 // @ts-ignore
@@ -8,28 +9,25 @@ import Exporting from "highcharts/modules/exporting";
 // @ts-ignore
 import OfflineExporting from "highcharts/modules/offline-exporting";
 
-// Safe dynamic loader to initialize Highcharts modules perfectly
-function initHighchartsHelperModule(module: any, core: any) {
-  try {
-    if (typeof module === "function") {
-      module(core);
-    } else if (module && typeof module.default === "function") {
-      module.default(core);
-    }
-  } catch (err) {
-    console.warn("Highcharts module initialization deferred inside chartHelpers:", err);
-  }
+export function getHighchartsCore(raw?: any): any {
+  return resolveHighchartsCore(raw || HighchartsImport) || HighchartsCore;
 }
 
-// Auto-activate offline plugins to prevent getSVG crash
-if (typeof Highcharts === "object") {
-  initHighchartsHelperModule(Highcharts3D, Highcharts);
-  initHighchartsHelperModule(Cylinder, Highcharts);
-  initHighchartsHelperModule(Exporting, Highcharts);
-  initHighchartsHelperModule(OfflineExporting, Highcharts);
+export const Highcharts = getHighchartsCore(HighchartsImport);
 
-  if (typeof (Highcharts as any).setOptions === "function") {
-    (Highcharts as any).setOptions({
+export function initHighchartsModule(module: any, rawCore?: any) {
+  safeInitPlugin(module, rawCore || HighchartsCore);
+}
+
+// Auto-initialize plugins in chartHelpers
+safeInitPlugin(Highcharts3D, HighchartsCore);
+safeInitPlugin(Cylinder, HighchartsCore);
+safeInitPlugin(Exporting, HighchartsCore);
+safeInitPlugin(OfflineExporting, HighchartsCore);
+
+if (HighchartsCore && typeof HighchartsCore.setOptions === "function") {
+  try {
+    HighchartsCore.setOptions({
       chart: {
         style: {
           fontFamily: "'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif",
@@ -139,6 +137,8 @@ if (typeof Highcharts === "object") {
         enabled: false
       }
     });
+  } catch (err) {
+    console.warn("Highcharts setOptions failed:", err);
   }
 }
 
@@ -146,15 +146,22 @@ export function safeStringToBase64(str: string): string {
   try {
     const bytes = new TextEncoder().encode(str);
     let binary = "";
-    const chunkSize = 8192;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      const chunk = bytes.subarray(i, i + chunkSize);
-      binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+    const len = bytes.length;
+    const chunkSize = 0x8000;
+    for (let i = 0; i < len; i += chunkSize) {
+      binary += String.fromCharCode.apply(
+        null,
+        bytes.subarray(i, i + chunkSize) as unknown as number[]
+      );
     }
     return window.btoa(binary);
   } catch (e) {
     console.error("safeStringToBase64 failed:", e);
-    return "";
+    try {
+      return window.btoa(unescape(encodeURIComponent(str)));
+    } catch (_) {
+      return "";
+    }
   }
 }
 
@@ -313,6 +320,7 @@ export function generateFallbackSvg(options: Highcharts.Options, width: number, 
 }
 
 export function sanitizeSvgStringForCanvas(svgStr: string): string {
+  if (!svgStr) return "";
   let clean = svgStr;
   
   // 1. Remove @import rules (which trigger cross-origin blocking in sandboxed SVGs)
@@ -322,9 +330,20 @@ export function sanitizeSvgStringForCanvas(svgStr: string): string {
   // 2. Remove any external css links
   clean = clean.replace(/<link[^>]*href=["'][^"']*["'][^>]*>/gi, "");
   
-  // 3. Strip external web fonts
+  // 3. Strip external web fonts / urls in style attributes or font-face
   clean = clean.replace(/url\(['"]?https?:[^'"()]+['"]?\)/gi, "none");
-  
+
+  // 4. Strip <font-face> or @font-face blocks with external fonts
+  clean = clean.replace(/@font-face\s*\{[^}]*\}/gi, "");
+
+  // 5. Replace external web fonts with standard system fonts to prevent canvas tainting in Chrome/WebKit
+  clean = clean.replace(/font-family\s*:\s*['"]?(?:Plus Jakarta Sans|Inter|Roboto|Open Sans|Montserrat|Lato|Poppins|Nunito|Raleway)['"]?/gi, "font-family: Arial, sans-serif");
+  clean = clean.replace(/font-family\s*=\s*["']?(?:Plus Jakarta Sans|Inter|Roboto|Open Sans|Montserrat|Lato|Poppins|Nunito|Raleway)["']?/gi, 'font-family="Arial, sans-serif"');
+
+  // 6. Strip any external images or cross-origin xlink:href
+  clean = clean.replace(/href=["']https?:[^"']+["']/gi, 'href=""');
+  clean = clean.replace(/xlink:href=["']https?:[^"']+["']/gi, 'xlink:href=""');
+
   return clean;
 }
 
@@ -372,8 +391,8 @@ function cropCanvasToContent(canvas: HTMLCanvasElement): HTMLCanvasElement {
   let imgData;
   try {
     imgData = ctx.getImageData(0, 0, w, h);
-  } catch (e) {
-    console.error("getImageData failed (likely CORS or empty canvas):", e);
+  } catch (_) {
+    // Canvas is tainted by cross-origin data or CORS - return uncropped canvas safely
     return canvas;
   }
   const data = imgData.data;
@@ -385,8 +404,6 @@ function cropCanvasToContent(canvas: HTMLCanvasElement): HTMLCanvasElement {
   let hasContent = false;
 
   // Optimize: Sample pixels (checking every 4th pixel) to reduce iteration count by 16x.
-  // This is extremely safe for charts because lines/bars/text spans multiple pixels,
-  // and we apply a generous padding to the resulting cropped area.
   const stepX = 4;
   const stepY = 4;
 
@@ -431,29 +448,33 @@ function cropCanvasToContent(canvas: HTMLCanvasElement): HTMLCanvasElement {
     return canvas;
   }
 
-  const croppedCanvas = document.createElement("canvas");
-  croppedCanvas.width = croppedW;
-  croppedCanvas.height = croppedH;
-  const croppedCtx = croppedCanvas.getContext("2d");
-  if (!croppedCtx) return canvas;
+  try {
+    const croppedCanvas = document.createElement("canvas");
+    croppedCanvas.width = croppedW;
+    croppedCanvas.height = croppedH;
+    const croppedCtx = croppedCanvas.getContext("2d");
+    if (!croppedCtx) return canvas;
 
-  // Fill solid white background for high quality DOCX & PDF exports
-  croppedCtx.fillStyle = "#ffffff";
-  croppedCtx.fillRect(0, 0, croppedW, croppedH);
+    // Fill solid white background for high quality DOCX & PDF exports
+    croppedCtx.fillStyle = "#ffffff";
+    croppedCtx.fillRect(0, 0, croppedW, croppedH);
 
-  croppedCtx.drawImage(
-    canvas,
-    minX,
-    minY,
-    croppedW,
-    croppedH,
-    0,
-    0,
-    croppedW,
-    croppedH
-  );
+    croppedCtx.drawImage(
+      canvas,
+      minX,
+      minY,
+      croppedW,
+      croppedH,
+      0,
+      0,
+      croppedW,
+      croppedH
+    );
 
-  return croppedCanvas;
+    return croppedCanvas;
+  } catch (_) {
+    return canvas;
+  }
 }
 
 /**
@@ -461,64 +482,120 @@ function cropCanvasToContent(canvas: HTMLCanvasElement): HTMLCanvasElement {
  */
 function convertSvgToCroppedPng(base64Svg: string, width: number, height: number): Promise<string> {
   return new Promise((resolve) => {
-    const scale = 4.0; // Ultra high resolution crisp 600 DPI scaling for publication quality vector curves
+    const scale = 1.5;
     const targetW = Math.round(width * scale);
     const targetH = Math.round(height * scale);
 
-    let preparedSvg = base64Svg;
-    if (preparedSvg && preparedSvg.startsWith("data:image/svg+xml")) {
+    let decodedSvg = "";
+    if (base64Svg && base64Svg.startsWith("data:image/svg+xml")) {
       try {
-        const commaIndex = preparedSvg.indexOf(",");
-        const isBase64 = preparedSvg.includes(";base64,");
-        let decoded = isBase64
-          ? safeBase64ToString(preparedSvg.substring(commaIndex + 1))
-          : decodeURIComponent(preparedSvg.substring(commaIndex + 1));
+        const commaIndex = base64Svg.indexOf(",");
+        const isBase64 = base64Svg.includes(";base64,");
+        decodedSvg = isBase64
+          ? safeBase64ToString(base64Svg.substring(commaIndex + 1))
+          : decodeURIComponent(base64Svg.substring(commaIndex + 1));
 
-        if (!/<svg[^>]*\bviewBox=/i.test(decoded)) {
-          decoded = decoded.replace(/<svg/i, `<svg viewBox="0 0 ${width} ${height}"`);
+        // Sanitize SVG before generating canvas to avoid tainted canvas
+        decodedSvg = sanitizeSvgStringForCanvas(decodedSvg);
+
+        if (!/<svg[^>]*\bviewBox=/i.test(decodedSvg)) {
+          decodedSvg = decodedSvg.replace(/<svg/i, `<svg viewBox="0 0 ${width} ${height}"`);
         }
-        decoded = decoded.replace(/<svg([^>]*)\bwidth\s*=\s*["'][^"']*["']/i, '<svg$1');
-        decoded = decoded.replace(/<svg([^>]*)\bheight\s*=\s*["'][^"']*["']/i, '<svg$1');
-        decoded = decoded.replace(/<svg/i, `<svg width="${targetW}" height="${targetH}"`);
-
-        preparedSvg = isBase64
-          ? "data:image/svg+xml;base64," + safeStringToBase64(decoded)
-          : "data:image/svg+xml;utf8," + encodeURIComponent(decoded);
+        decodedSvg = decodedSvg.replace(/<svg([^>]*)\bwidth\s*=\s*["'][^"']*["']/i, '<svg$1');
+        decodedSvg = decodedSvg.replace(/<svg([^>]*)\bheight\s*=\s*["'][^"']*["']/i, '<svg$1');
+        decodedSvg = decodedSvg.replace(/<svg/i, `<svg width="${targetW}" height="${targetH}"`);
       } catch (err) {
-        console.warn("Failed to scale base64Svg in convertSvgToCroppedPng:", err);
+        console.warn("Failed to decode base64Svg in convertSvgToCroppedPng:", err);
       }
     }
 
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = targetW;
-        canvas.height = targetH;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          resolve(base64Svg);
-          return;
-        }
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, targetW, targetH);
-        
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
-        
-        ctx.drawImage(img, 0, 0, targetW, targetH);
-
-        const croppedCanvas = cropCanvasToContent(canvas);
-        resolve(croppedCanvas.toDataURL("image/png"));
-      } catch (err) {
-        console.error("Failed to crop SVG to PNG:", err);
-        resolve(base64Svg);
-      }
-    };
-    img.onerror = () => {
+    if (!decodedSvg) {
       resolve(base64Svg);
-    };
-    img.src = preparedSvg;
+      return;
+    }
+
+    try {
+      const svgBlob = new Blob([decodedSvg], { type: "image/svg+xml;charset=utf-8" });
+      const blobUrl = URL.createObjectURL(svgBlob);
+
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = targetW;
+          canvas.height = targetH;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            URL.revokeObjectURL(blobUrl);
+            resolve(base64Svg);
+            return;
+          }
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, targetW, targetH);
+          
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          
+          ctx.drawImage(img, 0, 0, targetW, targetH);
+          URL.revokeObjectURL(blobUrl);
+
+          let resultPng = "";
+          try {
+            const croppedCanvas = cropCanvasToContent(canvas);
+            resultPng = croppedCanvas.toDataURL("image/png");
+          } catch (_) {
+            try {
+              resultPng = canvas.toDataURL("image/png");
+            } catch (_) {
+              resultPng = base64Svg;
+            }
+          }
+          resolve(resultPng || base64Svg);
+        } catch (_) {
+          URL.revokeObjectURL(blobUrl);
+          resolve(base64Svg);
+        }
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(blobUrl);
+        // Fallback to data URI string if Blob URL fails
+        const fallbackImg = new Image();
+        fallbackImg.crossOrigin = "anonymous";
+        fallbackImg.onload = () => {
+          try {
+            const canvas = document.createElement("canvas");
+            canvas.width = targetW;
+            canvas.height = targetH;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) { resolve(base64Svg); return; }
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, targetW, targetH);
+            ctx.drawImage(fallbackImg, 0, 0, targetW, targetH);
+
+            let resultPng = "";
+            try {
+              const croppedCanvas = cropCanvasToContent(canvas);
+              resultPng = croppedCanvas.toDataURL("image/png");
+            } catch (_) {
+              try {
+                resultPng = canvas.toDataURL("image/png");
+              } catch (_) {
+                resultPng = base64Svg;
+              }
+            }
+            resolve(resultPng || base64Svg);
+          } catch (_) {
+            resolve(base64Svg);
+          }
+        };
+        fallbackImg.onerror = () => resolve(base64Svg);
+        fallbackImg.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(decodedSvg);
+      };
+      img.src = blobUrl;
+    } catch (_) {
+      resolve(base64Svg);
+    }
   });
 }
 
@@ -576,8 +653,9 @@ export async function generateOfflineChartBase64(
       };
 
       let svg = "";
+      const coreH = getHighchartsCore(HighchartsImport);
       try {
-        chart = Highcharts.chart(container, chartOptions);
+        chart = coreH.chart(container, chartOptions);
         svg = typeof (chart as any).getSVG === "function" ? (chart as any).getSVG() : "";
         if (chart) {
           try { chart.destroy(); } catch (_) {}
@@ -619,7 +697,7 @@ export async function generateOfflineChartBase64(
         };
 
         try {
-          chart = Highcharts.chart(container, fallbackOptions);
+          chart = coreH.chart(container, fallbackOptions);
           svg = typeof (chart as any).getSVG === "function" ? (chart as any).getSVG() : "";
           if (chart) {
             try { chart.destroy(); } catch (_) {}
@@ -651,7 +729,7 @@ export async function generateOfflineChartBase64(
       }
 
       const sanitizedSvg = sanitizeSvgStringForCanvas(svg);
-      let cleanSvg = scaleSvgStringToHighRes(sanitizedSvg, width * 3.0, height * 3.0);
+      let cleanSvg = scaleSvgStringToHighRes(sanitizedSvg, width * 1.5, height * 1.5);
       const base64Svg = "data:image/svg+xml;base64," + safeStringToBase64(cleanSvg);
       convertSvgToCroppedPng(base64Svg, width, height).then(resolve);
       return;
@@ -741,34 +819,38 @@ export function buildColumnsChartOptions(title: string, categories: string[], da
 /**
  * Builds standard 3D Pie / Donut chart options.
  */
-export function buildDonutChartOptions(title: string, dataPoints: any[], size = "76%", isDarkTheme = false): Highcharts.Options {
+export function buildDonutChartOptions(title: string, dataPoints: any[], size = "62%", isDarkTheme = false): Highcharts.Options {
   const finalSize = size;
   const textColor = isDarkTheme ? "#f8fafc" : "#0f172a";
-  const titleFontSize = "22pt";
-  const labelFontSize = "18pt";
+  const titleFontSize = "18pt";
+  const labelFontSize = "13pt";
   
+  // Filter out zero-count slices to prevent overlapping zero-degree callouts
+  const validPoints = (dataPoints || []).filter((p: any) => p && typeof p.y === "number" && p.y > 0);
+  const chartData = validPoints.length > 0 ? validPoints : dataPoints;
+
   return {
     chart: {
       type: "pie",
       options3d: {
         enabled: true,
-        alpha: 28,  // Smooth 3D tilt perspective
+        alpha: 32,  // Smooth 3D tilt perspective
         beta: 0,
-        depth: 45,  // Rich 3D glossy thickness
+        depth: 40,  // Rich 3D glossy thickness
       },
       backgroundColor: "#ffffff",
       plotBackgroundColor: "#ffffff",
-      spacingTop: 25,
-      spacingBottom: 25,
-      spacingLeft: 20,
-      spacingRight: 20,
+      spacingTop: 20,
+      spacingBottom: 20,
+      spacingLeft: 15,
+      spacingRight: 15,
       style: {
         fontFamily: "'Times New Roman', Times, serif"
       }
     },
     title: {
       text: title,
-      margin: 20,
+      margin: 15,
       style: { 
         fontSize: titleFontSize,
         fontWeight: "bold", 
@@ -779,36 +861,38 @@ export function buildDonutChartOptions(title: string, dataPoints: any[], size = 
     plotOptions: {
       pie: {
         innerSize: "48%",
-        depth: 45,
+        depth: 40,
         size: finalSize,
         borderWidth: 2,
         borderColor: "#ffffff",
         allowPointSelect: false,
         cursor: "pointer",
-        slicedOffset: 20,
+        slicedOffset: 15,
         dataLabels: {
           enabled: true,
-          useHTML: false,
+          useHTML: false, // MANDATORY: Must be false so getSVG captures dataLabels inside vector SVG
+          allowOverlap: true,
+          crop: false,
+          overflow: "allow",
+          softConnector: true,
           formatter: function (this: any) {
             const name = this.point.name || "";
             const pct = this.point.percentage ? this.point.percentage.toFixed(1) : "0.0";
             const count = this.point.y !== undefined ? this.point.y : 0;
             return `<b>${name}</b><br/><b>${pct}%</b> (${count} samples)`;
           },
-          distance: 30,
-          crop: false,
-          overflow: "allow",
-          connectorWidth: 2.5,
+          distance: 20,
+          connectorWidth: 2.2,
           connectorColor: "#334155",
-          connectorPadding: 6,
+          connectorPadding: 4,
           style: { 
             fontFamily: "'Times New Roman', Times, serif",
             fontSize: labelFontSize,
             fontWeight: "bold",
             color: isDarkTheme ? "#f8fafc" : "#0f172a",
-            textOutline: "3px #ffffff", // White halo stroke around text for HD publication readability
+            textOutline: "2.5px #ffffff", // White halo stroke around text for publication readability
           },
-        },
+        } as any,
         showInLegend: false,
       },
     },
@@ -819,7 +903,7 @@ export function buildDonutChartOptions(title: string, dataPoints: any[], size = 
       {
         type: "pie",
         name: "Samples",
-        data: dataPoints,
+        data: chartData,
       },
     ],
     credits: { enabled: false },
@@ -830,6 +914,6 @@ export function buildDonutChartOptions(title: string, dataPoints: any[], size = 
  * High quality wrapper for quick generating parameter donut chart as base64 string
  */
 export async function generateParamDonutChart(title: string, dataPoints: any[], isDarkTheme = false): Promise<string> {
-  const options = buildDonutChartOptions(title, dataPoints, "76%", isDarkTheme);
-  return generateOfflineChartBase64(options, 1600, 900); // Render at 1600x900 HD resolution for crystal-clear exports
+  const options = buildDonutChartOptions(title, dataPoints, "62%", isDarkTheme);
+  return generateOfflineChartBase64(options, 1000, 560); // Fast, responsive high-DPI donut chart
 }

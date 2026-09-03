@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { PARAM_CONFIG, DEFAULT_PARAM_CONFIG, updateParamLimits, resetParamLimits, addCustomParam } from "../data/config";
+import { PARAM_CONFIG, DEFAULT_PARAM_CONFIG, updateParamLimits, resetParamLimits, addCustomParam, hasBisLimit } from "../data/config";
 import { Settings, RotateCcw, Save, Search, Check, AlertCircle, Info, Sliders, Plus, Sparkles } from "lucide-react";
 import { DataHeaders } from "../types";
 
@@ -20,7 +20,7 @@ export default function LimitsManagerView({
 }: LimitsManagerViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const isExcluded = (key: string) => {
-    return ["CO3", "HCO3", "Na", "K"].includes(key.toUpperCase());
+    return !hasBisLimit(key);
   };
 
   const [editingLimits, setEditingLimits] = useState<Record<string, { b1: string; b2: string }>>(() => {

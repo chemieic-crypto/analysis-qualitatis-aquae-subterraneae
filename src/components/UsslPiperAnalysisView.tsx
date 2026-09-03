@@ -164,8 +164,9 @@ export default function UsslPiperAnalysisView({
   const [seasonColors, setSeasonColors] = useState<Record<string, string>>({});
   const [seasonSizes, setSeasonSizes] = useState<Record<string, number>>({});
 
-  const [is3d, setIs3d] = useState(true);
+  const [is3d, setIs3d] = useState(false);
   const [bubbleSizeMultiplier, setBubbleSizeMultiplier] = useState(2.2);
+  const [showLocationLabels, setShowLocationLabels] = useState(false);
 
   // --- GIS Mapping States ---
   const [localShapefileGeoJson, setLocalShapefileGeoJson] = useState<any | null>(null);
@@ -496,9 +497,26 @@ export default function UsslPiperAnalysisView({
     });
   };
 
+  const [selectedMultiStates, setSelectedMultiStates] = useState<string[]>([]);
+  const [multiStateDiagramLayout, setMultiStateDiagramLayout] = useState<"combined" | "grid">("combined");
+
+  const uniqueStatesList = useMemo(() => {
+    if (!stateHeader || rawData.length === 0) return [];
+    const stateCounts: Record<string, number> = {};
+    rawData.forEach((d) => {
+      const s = String(d[stateHeader] || "").trim();
+      if (s) stateCounts[s] = (stateCounts[s] || 0) + 1;
+    });
+    return Object.keys(stateCounts).sort((a, b) => stateCounts[b] - stateCounts[a]);
+  }, [rawData, stateHeader]);
+
   // Run water chemistry math calculations
   const processedData = useMemo(() => {
     const filtered = rawData.filter((row) => {
+      if (selectedMultiStates.length > 0 && stateHeader) {
+        const rowState = String(row[stateHeader] || "").trim();
+        if (!selectedMultiStates.includes(rowState)) return false;
+      }
       return Object.entries(activeFilters).every(([filterKey, filterValue]) => {
         if (filterValue === "All") return true;
         const header = columnMapping[filterKey];
@@ -508,7 +526,7 @@ export default function UsslPiperAnalysisView({
     });
 
     return processAquiferData(filtered, columnMapping);
-  }, [rawData, activeFilters, columnMapping]);
+  }, [rawData, activeFilters, selectedMultiStates, stateHeader, columnMapping]);
 
   const allProcessedData = useMemo(() => {
     return processAquiferData(rawData, columnMapping);
@@ -698,7 +716,7 @@ export default function UsslPiperAnalysisView({
     if (colorBy === "state" && stateHeader) return String(d[stateHeader] || "Unknown");
     if (colorBy === "district" && columnMapping.District) return String(d[columnMapping.District] || "Unknown");
     if (colorBy === "block" && columnMapping.Block) return String(d[columnMapping.Block] || "Unknown");
-    if (colorBy === "location" && columnMapping.Location) return String(d[columnMapping.Location] || "Unknown");
+    if (colorBy === "location") return String((columnMapping.Location ? d[columnMapping.Location] : null) || d._calc?.locName || "Unknown");
     if (colorBy === "source" && columnMapping.Source) return String(d[columnMapping.Source] || "Unknown");
     if (colorBy === "aquifer" && columnMapping.Aquifer) return String(d[columnMapping.Aquifer] || "Unknown");
     if (colorBy === "year" && columnMapping.Year) return String(d[columnMapping.Year] || "Unknown");
@@ -1528,10 +1546,10 @@ export default function UsslPiperAnalysisView({
         const hasAnyExceed = checkComplianceExceedsMapAny(d);
         const hasSelectedExceed = checkSelectedExceedance(d);
 
-        // 3. For other parameters, we ONLY show point map of locations where selected parameter is above permissible limit.
-        const isIdwParam = ["EC", "TH", "CL", "CHLORIDE", "CL-", "CHLORID", "CL"].includes(mapExceedanceParam.toUpperCase().trim());
-        if (!isIdwParam) {
-          if (!hasSelectedExceed) {
+        // Filter exceedance points if non-all mask filter is active
+        if (mapExceedanceFilter !== "all") {
+          const isIdwParam = ["EC", "TH", "CL", "CHLORIDE", "CL-", "CHLORID", "CL"].includes(mapExceedanceParam.toUpperCase().trim());
+          if (!isIdwParam && !hasSelectedExceed) {
             return;
           }
         }
@@ -2291,11 +2309,13 @@ export default function UsslPiperAnalysisView({
 
   // Establish location palettes automatically
   useEffect(() => {
+    if (validData.length === 0) return;
     const locHeader = columnMapping.Location;
-    if (!locHeader || validData.length === 0) return;
-    const headerKey = locHeader as string;
     const uniqueLocs = Array.from(
-      new Set(validData.map((d) => String(d[headerKey] || "Unknown")))
+      new Set(validData.map((d) => {
+        if (locHeader && d[locHeader]) return String(d[locHeader]);
+        return String(d._calc?.locName || "Unknown");
+      }))
     ) as string[];
     const defaultPalette = ["#3b82f6", "#14b8a6", "#ef4444", "#f59e0b", "#8b5cf6", "#06b6d4", "#ec4899", "#10b981", "#f97316", "#64748b"];
 
@@ -2968,8 +2988,8 @@ export default function UsslPiperAnalysisView({
       </div>
 
       {rawData.length > 0 && (
-        <div className="bg-white p-5 rounded-[2rem] border border-slate-200 shadow-md">
-          <div className="flex items-center gap-2 mb-3">
+        <div className="bg-white p-5 rounded-[2rem] border border-slate-200 shadow-md space-y-4">
+          <div className="flex items-center gap-2">
             <Filter className="w-4 h-4 text-slate-400" />
             <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest pl-0.5">Cascading Spatial Selection Filters</span>
           </div>
@@ -2998,6 +3018,147 @@ export default function UsslPiperAnalysisView({
               );
             })}
           </div>
+
+          {/* Multi-State Diagram Creation & Multi-State Selection Facility */}
+          {uniqueStatesList.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-slate-200/80 bg-slate-900 text-white p-4.5 rounded-[1.5rem] shadow-inner space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-indigo-500/20 text-indigo-300 rounded-lg border border-indigo-500/30">
+                    <i className="ph ph-bounding-box text-base"></i>
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black uppercase tracking-wider text-indigo-100 flex items-center gap-2">
+                      Multi-State Diagram Creation Facility
+                      <span className="bg-indigo-500 text-white text-[9px] px-2 py-0.5 rounded-full font-bold">
+                        {selectedMultiStates.length === 0
+                          ? `All ${uniqueStatesList.length} States Active`
+                          : `${selectedMultiStates.length} / ${uniqueStatesList.length} Selected`}
+                      </span>
+                    </h4>
+                    <p className="text-[10px] text-indigo-300 font-medium">
+                      Select multiple states for unified color-coded Piper/USSL/Gibbs diagrams or side-by-side individual state diagrams.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedMultiStates([...uniqueStatesList])}
+                    className="px-3 py-1 rounded-lg text-[10px] font-extrabold bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-400/50 shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-300" />
+                    Select All ({uniqueStatesList.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedMultiStates([])}
+                    className="px-3 py-1 rounded-lg text-[10px] font-extrabold bg-slate-800 hover:bg-rose-950/80 text-rose-200 hover:text-rose-100 border border-slate-700 hover:border-rose-500/50 transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <XCircle className="w-3.5 h-3.5 text-rose-400" />
+                    Deselect All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedMultiStates(uniqueStatesList.slice(0, Math.min(3, uniqueStatesList.length)))}
+                    className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-indigo-950 hover:bg-indigo-900 text-indigo-200 border border-indigo-700/50 transition-all cursor-pointer"
+                  >
+                    Top 3 States
+                  </button>
+                </div>
+              </div>
+
+              {/* State Selection Badges with explicit checkboxes */}
+              <div className="flex flex-wrap items-center gap-2 max-h-[140px] overflow-y-auto pr-1 custom-scrollbar">
+                {uniqueStatesList.map((st) => {
+                  const isChecked = selectedMultiStates.length === 0 || selectedMultiStates.includes(st);
+                  const stColor = stateColors[st] || "#3b82f6";
+                  const sampleCount = rawData.filter((d) => stateHeader && String(d[stateHeader] || "").trim() === st).length;
+
+                  return (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => {
+                        if (selectedMultiStates.length === 0) {
+                          // If all were active by default, start selecting only this state or filter others
+                          setSelectedMultiStates([st]);
+                        } else if (selectedMultiStates.includes(st)) {
+                          const next = selectedMultiStates.filter((s) => s !== st);
+                          setSelectedMultiStates(next);
+                        } else {
+                          setSelectedMultiStates([...selectedMultiStates, st]);
+                        }
+                      }}
+                      className={`flex items-center gap-2 px-3 py-1.2 rounded-xl text-[11px] font-bold transition-all border cursor-pointer ${
+                        isChecked
+                          ? "bg-indigo-600/40 border-indigo-400 text-white shadow-xs"
+                          : "bg-slate-950/70 border-slate-800 text-slate-400 hover:border-slate-700 opacity-60 hover:opacity-100"
+                      }`}
+                    >
+                      <span className="text-xs font-mono font-black">
+                        {isChecked ? "☑" : "☐"}
+                      </span>
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs" style={{ backgroundColor: stColor }} />
+                      <span>{st}</span>
+                      <span className="text-[9px] px-1.5 py-0.2 rounded-md bg-black/40 text-indigo-200 font-mono">
+                        {sampleCount}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Layout Switcher & Actions */}
+              <div className="flex flex-wrap items-center justify-between pt-2.5 border-t border-indigo-900/50 text-xs gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-indigo-200 flex items-center gap-1.5">
+                    <i className="ph ph-layout text-indigo-400"></i>
+                    Multi-State Mode:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentColorBy("state")}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold transition-all border cursor-pointer ${
+                      currentColorBy === "state"
+                        ? "bg-emerald-500 text-slate-950 border-emerald-400 shadow-xs"
+                        : "bg-indigo-950 text-indigo-200 border-indigo-700/60 hover:bg-indigo-900"
+                    }`}
+                  >
+                    {currentColorBy === "state" ? "✓ Colored by State" : "🎨 Color Points by State"}
+                  </button>
+                </div>
+
+                {selectedMultiStates.length > 1 && (
+                    <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-indigo-800/60">
+                      <button
+                        type="button"
+                        onClick={() => setMultiStateDiagramLayout("combined")}
+                        className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase transition-all cursor-pointer ${
+                          multiStateDiagramLayout === "combined"
+                            ? "bg-indigo-600 text-white shadow-xs"
+                            : "text-indigo-300 hover:text-white"
+                        }`}
+                      >
+                        Unified Diagram
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMultiStateDiagramLayout("grid")}
+                        className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase transition-all cursor-pointer ${
+                          multiStateDiagramLayout === "grid"
+                            ? "bg-indigo-600 text-white shadow-xs"
+                            : "text-indigo-300 hover:text-white"
+                        }`}
+                      >
+                        Individual State Grid ({selectedMultiStates.length})
+                      </button>
+                    </div>
+                  )}
+                </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -3017,7 +3178,6 @@ export default function UsslPiperAnalysisView({
                         if (mode === "state" && !stateHeader) return null;
                         if (mode === "district" && !columnMapping.District) return null;
                         if (mode === "block" && !columnMapping.Block) return null;
-                        if (mode === "location" && !columnMapping.Location) return null;
                         if (mode === "source" && !columnMapping.Source) return null;
                         if (mode === "aquifer" && !columnMapping.Aquifer) return null;
                         if (mode === "year" && !columnMapping.Year) return null;
@@ -3041,30 +3201,59 @@ export default function UsslPiperAnalysisView({
                   </span>
                 </div>
 
-                {/* 3D Bubble Facility Controls */}
-                <div className="flex flex-wrap items-center gap-6 bg-slate-50 p-3 rounded-2xl border border-slate-200">
-                  <div className="flex items-center gap-2.5">
-                    <CircleDot className="text-indigo-500 w-4 h-4" />
-                    <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">3D Bubble Rendering:</span>
-                    <button
-                      onClick={() => setIs3d(!is3d)}
-                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-1 focus:ring-indigo-500 ${
-                        is3d ? "bg-indigo-600" : "bg-slate-200"
-                      }`}
-                    >
-                      <span
-                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                          is3d ? "translate-x-5" : "translate-x-0"
+                {/* Point Symbol & Rendering Facility Controls */}
+                <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
+                  <div className="flex flex-wrap items-center gap-6">
+                    <div className="flex items-center gap-2.5">
+                      <CircleDot className="text-indigo-500 w-4 h-4" />
+                      <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Point Symbol Denotion:</span>
+                      <div className="flex items-center gap-1 bg-slate-200/80 p-0.5 rounded-xl">
+                        <button
+                          onClick={() => setIs3d(false)}
+                          className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase transition-all ${
+                            !is3d ? "bg-indigo-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          Flat Circle
+                        </button>
+                        <button
+                          onClick={() => setIs3d(true)}
+                          className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase transition-all ${
+                            is3d ? "bg-indigo-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          3D Glossy Sphere
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 border-l border-slate-200 pl-4">
+                      <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Location Labels:</span>
+                      <button
+                        onClick={() => setShowLocationLabels(!showLocationLabels)}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-1 focus:ring-indigo-500 ${
+                          showLocationLabels ? "bg-indigo-600" : "bg-slate-200"
                         }`}
-                      />
-                    </button>
-                    <span className="text-[10px] font-black uppercase text-slate-600">
-                      {is3d ? "Glossy Sphere" : "Flat Circle"}
-                    </span>
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                            showLocationLabels ? "translate-x-5" : "translate-x-0"
+                          }`}
+                        />
+                      </button>
+                      <span className="text-[10px] font-black uppercase text-slate-600">
+                        {showLocationLabels ? "Visible" : "Hidden"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 bg-emerald-50 text-emerald-700 px-3 py-1 rounded-xl border border-emerald-200 text-[10px] font-bold">
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    <span>Plotting All {validData.length} Locations as Points</span>
                   </div>
 
                   {is3d && (
-                    <div className="flex items-center gap-3 flex-1 min-w-[240px]">
+                    <div className="flex items-center gap-3 w-full sm:w-auto">
                       <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest whitespace-nowrap">Bubble Size Multiplier:</span>
                       <input
                         type="range"
@@ -3073,7 +3262,7 @@ export default function UsslPiperAnalysisView({
                         step="0.2"
                         value={bubbleSizeMultiplier}
                         onChange={(e) => setBubbleSizeMultiplier(parseFloat(e.target.value))}
-                        className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                        className="w-32 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
                       />
                       <span className="text-xs font-mono font-black text-slate-700 px-2 py-0.5 bg-slate-200 rounded-lg whitespace-nowrap">
                         {bubbleSizeMultiplier.toFixed(1)}x
@@ -3153,7 +3342,39 @@ export default function UsslPiperAnalysisView({
               {/* Dynamic Tab Panel Content */}
               {viewMode === "ussl" && (
                 <div className="space-y-6">
-                  {usslCompareBy === "none" ? (
+                  {selectedMultiStates.length > 1 && multiStateDiagramLayout === "grid" ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+                      {selectedMultiStates.map((stName) => {
+                        const stateData = validData.filter((d) => stateHeader && String(d[stateHeader] || "").trim() === stName);
+                        const stColor = stateColors[stName] || "#3b82f6";
+                        return (
+                          <div key={stName} className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md flex flex-col items-center w-full relative">
+                            <div className="flex items-center justify-between w-full pb-3 mb-2 border-b border-slate-100">
+                              <div className="flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full shadow-xs" style={{ backgroundColor: stColor }} />
+                                <span className="text-xs font-black text-slate-800 uppercase tracking-wider">USSL Matrix &bull; {stName}</span>
+                              </div>
+                              <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                                {stateData.length} Samples
+                              </span>
+                            </div>
+                            <UsslDiagram
+                              data={stateData}
+                              pointColors={getActiveColorsForMode("ussl")}
+                              pointSizes={getActiveSizesForMode("ussl")}
+                              getPointKey={(d) => getPointKeyForMode(d, "ussl")}
+                              stateHeader={stateHeader}
+                              is3d={is3d}
+                              bubbleSizeMultiplier={bubbleSizeMultiplier}
+                              showLocationLabels={showLocationLabels}
+                              showAllPoints={true}
+                              customTitle={`USSL Matrix - ${stName}`}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : usslCompareBy === "none" ? (
                     <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md flex justify-center w-full">
                       <UsslDiagram
                         data={validData}
@@ -3163,6 +3384,13 @@ export default function UsslPiperAnalysisView({
                         stateHeader={stateHeader}
                         is3d={is3d}
                         bubbleSizeMultiplier={bubbleSizeMultiplier}
+                        showLocationLabels={showLocationLabels}
+                        showAllPoints={true}
+                        customTitle={
+                          selectedMultiStates.length > 0 && selectedMultiStates.length < uniqueStatesList.length
+                            ? `Combined USSL Diagram (${selectedMultiStates.join(", ")})`
+                            : undefined
+                        }
                       />
                     </div>
                   ) : (
@@ -3179,6 +3407,8 @@ export default function UsslPiperAnalysisView({
                           stateHeader={stateHeader}
                           is3d={is3d}
                           bubbleSizeMultiplier={bubbleSizeMultiplier}
+                          showLocationLabels={showLocationLabels}
+                          showAllPoints={true}
                           customTitle={`USSL Matrix (${usslLeftVal})`}
                         />
                       </div>
@@ -3194,6 +3424,8 @@ export default function UsslPiperAnalysisView({
                           stateHeader={stateHeader}
                           is3d={is3d}
                           bubbleSizeMultiplier={bubbleSizeMultiplier}
+                          showLocationLabels={showLocationLabels}
+                          showAllPoints={true}
                           customTitle={`USSL Matrix (${usslRightVal})`}
                         />
                       </div>
@@ -3204,7 +3436,39 @@ export default function UsslPiperAnalysisView({
 
               {viewMode === "piper" && (
                 <div className="space-y-6">
-                  {piperCompareBy === "none" ? (
+                  {selectedMultiStates.length > 1 && multiStateDiagramLayout === "grid" ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+                      {selectedMultiStates.map((stName) => {
+                        const stateData = validData.filter((d) => stateHeader && String(d[stateHeader] || "").trim() === stName);
+                        const stColor = stateColors[stName] || "#3b82f6";
+                        return (
+                          <div key={stName} className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md flex flex-col items-center w-full relative">
+                            <div className="flex items-center justify-between w-full pb-3 mb-2 border-b border-slate-100">
+                              <div className="flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full shadow-xs" style={{ backgroundColor: stColor }} />
+                                <span className="text-xs font-black text-slate-800 uppercase tracking-wider">Piper Diagram &bull; {stName}</span>
+                              </div>
+                              <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                                {stateData.length} Samples
+                              </span>
+                            </div>
+                            <PiperDiagram
+                              data={stateData}
+                              pointColors={getActiveColorsForMode("piper")}
+                              pointSizes={getActiveSizesForMode("piper")}
+                              getPointKey={(d) => getPointKeyForMode(d, "piper")}
+                              stateHeader={stateHeader}
+                              is3d={is3d}
+                              bubbleSizeMultiplier={bubbleSizeMultiplier}
+                              showLocationLabels={showLocationLabels}
+                              showAllPoints={true}
+                              customTitle={`Piper Diagram - ${stName}`}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : piperCompareBy === "none" ? (
                     <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md flex justify-center w-full">
                       <PiperDiagram
                         data={validData}
@@ -3214,6 +3478,13 @@ export default function UsslPiperAnalysisView({
                         stateHeader={stateHeader}
                         is3d={is3d}
                         bubbleSizeMultiplier={bubbleSizeMultiplier}
+                        showLocationLabels={showLocationLabels}
+                        showAllPoints={true}
+                        customTitle={
+                          selectedMultiStates.length > 0 && selectedMultiStates.length < uniqueStatesList.length
+                            ? `Combined Piper Diagram (${selectedMultiStates.join(", ")})`
+                            : undefined
+                        }
                       />
                     </div>
                   ) : (
@@ -3230,6 +3501,8 @@ export default function UsslPiperAnalysisView({
                           stateHeader={stateHeader}
                           is3d={is3d}
                           bubbleSizeMultiplier={bubbleSizeMultiplier}
+                          showLocationLabels={showLocationLabels}
+                          showAllPoints={true}
                           customTitle={`Piper Diagram (${piperLeftVal})`}
                         />
                       </div>
@@ -3245,6 +3518,8 @@ export default function UsslPiperAnalysisView({
                           stateHeader={stateHeader}
                           is3d={is3d}
                           bubbleSizeMultiplier={bubbleSizeMultiplier}
+                          showLocationLabels={showLocationLabels}
+                          showAllPoints={true}
                           customTitle={`Piper Diagram (${piperRightVal})`}
                         />
                       </div>
@@ -3255,13 +3530,61 @@ export default function UsslPiperAnalysisView({
 
               {viewMode === "gibbs" && (
                 <div className="space-y-6">
-                  {gibbsCompareBy === "none" ? (
+                  {selectedMultiStates.length > 1 && multiStateDiagramLayout === "grid" ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+                      {selectedMultiStates.map((stName) => {
+                        const stateData = validData.filter((d) => stateHeader && String(d[stateHeader] || "").trim() === stName);
+                        const stColor = stateColors[stName] || "#3b82f6";
+                        return (
+                          <div key={stName} className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md flex flex-col items-center w-full relative">
+                            <div className="flex items-center justify-between w-full pb-3 mb-2 border-b border-slate-100">
+                              <div className="flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full shadow-xs" style={{ backgroundColor: stColor }} />
+                                <span className="text-xs font-black text-slate-800 uppercase tracking-wider">Gibbs Diagrams &bull; {stName}</span>
+                              </div>
+                              <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                                {stateData.length} Samples
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
+                              <GibbsPlot
+                                data={stateData}
+                                type="cation"
+                                defaultTitle={`Gibbs Cation (${stName})`}
+                                pointColors={getActiveColorsForMode("gibbs")}
+                                pointSizes={getActiveSizesForMode("gibbs")}
+                                getPointKey={(d) => getPointKeyForMode(d, "gibbs")}
+                                stateHeader={stateHeader}
+                                is3d={is3d}
+                                bubbleSizeMultiplier={bubbleSizeMultiplier}
+                              />
+                              <GibbsPlot
+                                data={stateData}
+                                type="anion"
+                                defaultTitle={`Gibbs Anion (${stName})`}
+                                pointColors={getActiveColorsForMode("gibbs")}
+                                pointSizes={getActiveSizesForMode("gibbs")}
+                                getPointKey={(d) => getPointKeyForMode(d, "gibbs")}
+                                stateHeader={stateHeader}
+                                is3d={is3d}
+                                bubbleSizeMultiplier={bubbleSizeMultiplier}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : gibbsCompareBy === "none" ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="bg-transparent p-5 rounded-3xl">
                         <GibbsPlot
                           data={validData}
                           type="cation"
-                          defaultTitle="Gibbs: Cation Dominance"
+                          defaultTitle={
+                            selectedMultiStates.length > 0 && selectedMultiStates.length < uniqueStatesList.length
+                              ? `Combined Gibbs Cation (${selectedMultiStates.join(", ")})`
+                              : "Gibbs: Cation Dominance"
+                          }
                           pointColors={getActiveColorsForMode("gibbs")}
                           pointSizes={getActiveSizesForMode("gibbs")}
                           getPointKey={(d) => getPointKeyForMode(d, "gibbs")}
@@ -3274,7 +3597,11 @@ export default function UsslPiperAnalysisView({
                         <GibbsPlot
                           data={validData}
                           type="anion"
-                          defaultTitle="Gibbs: Anion Dominance"
+                          defaultTitle={
+                            selectedMultiStates.length > 0 && selectedMultiStates.length < uniqueStatesList.length
+                              ? `Combined Gibbs Anion (${selectedMultiStates.join(", ")})`
+                              : "Gibbs: Anion Dominance"
+                          }
                           pointColors={getActiveColorsForMode("gibbs")}
                           pointSizes={getActiveSizesForMode("gibbs")}
                           getPointKey={(d) => getPointKeyForMode(d, "gibbs")}
@@ -3546,6 +3873,8 @@ export default function UsslPiperAnalysisView({
                                       stateHeader={stateHeader}
                                       is3d={is3d}
                                       bubbleSizeMultiplier={bubbleSizeMultiplier}
+                                      showLocationLabels={showLocationLabels}
+                                      showAllPoints={true}
                                       customTitle={`USSL Matrix (${aq})`}
                                     />
                                   </div>
@@ -3563,6 +3892,8 @@ export default function UsslPiperAnalysisView({
                                       stateHeader={stateHeader}
                                       is3d={is3d}
                                       bubbleSizeMultiplier={bubbleSizeMultiplier}
+                                      showLocationLabels={showLocationLabels}
+                                      showAllPoints={true}
                                       customTitle={`Piper Diagram (${aq})`}
                                     />
                                   </div>
@@ -3869,461 +4200,6 @@ export default function UsslPiperAnalysisView({
                 })()}
               </div>
             )}
-          </div>
-        ) : false ? (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 w-full items-stretch min-h-[720px]">
-            {/* GIS Configuration Control Sidebar Panel */}
-            <div className="lg:col-span-4 bg-white/90 backdrop-blur-xs p-5 rounded-[2rem] border border-slate-200/80 shadow-md flex flex-col gap-5 max-h-[820px] overflow-y-auto custom-scrollbar">
-              <div>
-                <span className="text-[10px] font-black uppercase text-indigo-650 tracking-wider flex items-center gap-1.5 mb-1.5">
-                  🌍 GIS Control Workstation
-                </span>
-                <p className="text-[9.5px] font-bold text-slate-400">
-                  Manage spatial mappings, compliance filter masks, and digital interpolation models.
-                </p>
-              </div>
-
-              {/* Feature 1 & 4 & 5: Compliance Filter & Locate Location Points */}
-              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/65 space-y-3">
-                <span className="text-[9px] font-black uppercase tracking-wider text-slate-600 block border-b pb-1">
-                  1. Compliance Location Point Locator
-                </span>
-                <div className="space-y-1.5">
-                  <span className="text-[8.5px] font-black uppercase text-slate-400 block tracking-widest">
-                    Masking Exceedance Filter:
-                  </span>
-                  <div className="flex flex-col gap-1 bg-white p-2 rounded-xl border border-slate-200 text-[10px] font-bold">
-                    <label className="flex items-center gap-2 cursor-pointer py-0.5 hover:text-indigo-600 transition-colors">
-                      <input
-                        type="radio"
-                        checked={mapExceedanceFilter === "all"}
-                        onChange={() => setMapExceedanceFilter("all")}
-                        className="text-indigo-600 focus:ring-indigo-500 rounded-sm"
-                      />
-                      <span>Show All Sample Points</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer py-0.5 hover:text-indigo-600 transition-colors">
-                      <input
-                        type="radio"
-                        checked={mapExceedanceFilter === "any_exceedance"}
-                        onChange={() => setMapExceedanceFilter("any_exceedance")}
-                        className="text-indigo-600 focus:ring-indigo-500 rounded-sm"
-                      />
-                      <span>One or More Parameter Exceeds Limit (Feature 4)</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer py-0.5 hover:text-indigo-600 transition-colors">
-                      <input
-                        type="radio"
-                        checked={mapExceedanceFilter === "selected_exceedance"}
-                        onChange={() => setMapExceedanceFilter("selected_exceedance")}
-                        className="text-indigo-600 focus:ring-indigo-500 rounded-sm"
-                      />
-                      <span>Selected Param Exceeds Limit (Feature 5)</span>
-                    </label>
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <span className="text-[8.5px] font-black uppercase text-slate-400 block tracking-widest">
-                    Exceedance Check Chemistry Param:
-                  </span>
-                  <select
-                    value={mapExceedanceParam}
-                    onChange={(e) => setMapExceedanceParam(e.target.value)}
-                    className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-2 font-bold text-[10px] text-slate-700 focus:ring-indigo-500"
-                  >
-                    {Object.keys(PARAM_CONFIG).map((k) => (
-                      <option key={k} value={k}>
-                        {k} - {PARAM_CONFIG[k].name} ({PARAM_CONFIG[k].unit})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Feature 2: Terrains and Layer Control */}
-              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/65 space-y-3">
-                <span className="text-[9px] font-black uppercase tracking-wider text-slate-600 block border-b pb-1">
-                  2. GIS Map Tile Layer Control
-                </span>
-                <div className="grid grid-cols-2 gap-2 text-[9.5px]">
-                  {(["osm", "streets", "satellite", "hybrid"] as const).map((thm) => (
-                    <button
-                      key={thm}
-                      onClick={() => setActiveMapTheme(thm)}
-                      className={`p-2 rounded-xl border font-black uppercase tracking-wider transition-all ${
-                        activeMapTheme === thm
-                          ? "bg-slate-800 text-white border-slate-800 shadow-xs"
-                          : "bg-white text-slate-500 border-slate-200 hover:text-slate-800 hover:border-slate-300"
-                      }`}
-                    >
-                      {thm === "osm" ? "OpenStreetMap" : thm}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Feature 3: Upload zipped boundary file & control color and thickness */}
-              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/65 space-y-3">
-                <span className="text-[9px] font-black uppercase tracking-wider text-slate-600 block border-b pb-1">
-                  3. Boundary Shapefile ZIP Overlay
-                </span>
-                <div className="space-y-2">
-                  <label className="block border-2 border-dashed border-slate-200 bg-white/50 hover:bg-white p-3.5 rounded-xl cursor-pointer text-center group transition-colors">
-                    <UploadCloud className="w-6 h-6 text-indigo-400 mx-auto mb-1 group-hover:scale-105 transition-transform" />
-                    <span className="text-[9px] font-black uppercase tracking-wide text-indigo-650 block">
-                      {shapefileName || "Import Shapefile Zip"}
-                    </span>
-                    <span className="text-[7.5px] font-bold text-slate-400 block mt-0.5">
-                      Accepts zipped .shp, .shx, .dbf bundle
-                    </span>
-                    <input
-                      type="file"
-                      accept=".zip"
-                      onChange={handleShapefileUpload}
-                      className="hidden"
-                    />
-                  </label>
-
-                  {shapefileGeoJson && (
-                    <div className="space-y-2.5 bg-white p-2.5 rounded-xl border border-slate-200/80 text-[9.5px]">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-slate-400">Boundary Outline Color:</span>
-                        <input
-                          type="color"
-                          value={shapefileColor}
-                          onChange={(e) => setShapefileColor(e.target.value)}
-                          className="w-8 h-5 rounded cursor-pointer border border-slate-200"
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <div className="flex justify-between">
-                          <span className="font-bold text-slate-400">Boundary Thickness:</span>
-                          <span className="font-black text-slate-700">{shapefileWeight}px</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="1"
-                          max="5"
-                          value={shapefileWeight}
-                          onChange={(e) => setShapefileWeight(parseInt(e.target.value))}
-                          className="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600"
-                        />
-                      </div>
-                      <button
-                        onClick={() => {
-                          setShapefileGeoJson(null);
-                          setShapefileName("");
-                        }}
-                        className="w-full text-center py-1 mt-1 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-lg font-black uppercase text-[8px] tracking-widest"
-                      >
-                        Unmount Shapefile Boundary
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Feature 6: Interpolation map with IDW / Nearest Neighbour / Natural Neighbour Method */}
-              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/65 space-y-3">
-                <span className="text-[9px] font-black uppercase tracking-wider text-slate-600 block border-b pb-1">
-                  6. Dynamic Spatial Interpolations
-                </span>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-black text-slate-500">Enable Spatial Overlay:</span>
-                    <button
-                      onClick={() => setShowIdw(!showIdw)}
-                      className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-1 focus:ring-indigo-500 ${
-                        showIdw ? "bg-emerald-600" : "bg-slate-200"
-                      }`}
-                    >
-                      <span
-                        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                          showIdw ? "translate-x-5" : "translate-x-0"
-                        }`}
-                      />
-                    </button>
-                  </div>
-
-                  {showIdw && (
-                    <div className="space-y-2.5 bg-white p-2.5 rounded-xl border border-slate-200 text-[9.5px]">
-                      <div className="space-y-1">
-                        <span className="text-[8.5px] font-black uppercase text-slate-400 block tracking-widest">
-                          Interpolate Chemical Element:
-                        </span>
-                        <select
-                          value={idwParam}
-                          onChange={(e) => setIdwParam(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-1.5 font-bold text-[9.5px] text-slate-700"
-                        >
-                          {Object.keys(PARAM_CONFIG).map((k) => (
-                            <option key={k} value={k}>
-                              {k} - {PARAM_CONFIG[k].name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="space-y-1">
-                        <span className="text-[8.5px] font-black uppercase text-slate-400 block tracking-widest">
-                          Interpolation Algorithm:
-                        </span>
-                        <select
-                          value={interpolationMethod}
-                          onChange={(e) => setInterpolationMethod(e.target.value as any)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-1.5 font-bold text-[9.5px] text-slate-700"
-                        >
-                          <option value="idw">Inverse Distance Weighting (IDW)</option>
-                          <option value="kriging">Ordinary Kriging Method</option>
-                          <option value="nearest">Nearest Neighbour Method</option>
-                          <option value="natural">Natural Neighbour Approximation</option>
-                        </select>
-                      </div>
-
-                      {interpolationMethod === "idw" && (
-                        <div className="flex flex-col gap-1">
-                          <div className="flex justify-between font-bold text-slate-400">
-                            <span>IDW Distance Exponent:</span>
-                            <span className="font-black text-indigo-650">{idwPower.toFixed(1)}</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="1.0"
-                            max="4.0"
-                            step="0.5"
-                            value={idwPower}
-                            onChange={(e) => setIdwPower(parseFloat(e.target.value))}
-                            className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                          />
-                        </div>
-                      )}
-
-                      <div className="flex flex-col gap-1">
-                        <div className="flex justify-between font-bold text-slate-400">
-                          <span>Overlay Transparency Opacity:</span>
-                          <span className="font-black text-slate-750">{Math.round(idwOpacity * 100)}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0.1"
-                          max="1.0"
-                          step="0.05"
-                          value={idwOpacity}
-                          onChange={(e) => setIdwOpacity(parseFloat(e.target.value))}
-                          className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                        />
-                      </div>
-
-                      <div className="flex items-center gap-2 mt-1 bg-slate-100/50 p-2 rounded-xl">
-                        <input
-                          type="checkbox"
-                          id="smooth-gradients-checkbox"
-                          checked={smoothGradients}
-                          onChange={(e) => setSmoothGradients(e.target.checked)}
-                          className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
-                        />
-                        <label htmlFor="smooth-gradients-checkbox" className="text-[9.5px] font-bold text-slate-700 cursor-pointer">
-                          Smooth Blending Gradients
-                        </label>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Feature 7 & 8: North Arrow & Legend Positioning Controls */}
-              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/65 space-y-3">
-                <span className="text-[9px] font-black uppercase tracking-wider text-slate-600 block border-b pb-1">
-                  7. North Compass Relocator
-                </span>
-                <div className="space-y-1">
-                  <span className="text-[8.5px] font-black uppercase text-slate-400 block tracking-widest">
-                    North Compass Position on Map:
-                  </span>
-                  <select
-                    value={northArrowPos}
-                    onChange={(e) => setNorthArrowPos(e.target.value as any)}
-                    className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 font-bold text-[10px] text-slate-700"
-                  >
-                    <option value="top-left">Top-Left Corner</option>
-                    <option value="top-right">Top-Right Corner</option>
-                    <option value="bottom-left">Bottom-Left Corner</option>
-                    <option value="bottom-right">Bottom-Right Corner</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Feature 9: Customizable Legend Limits and Colors Configuration */}
-              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/65 space-y-3">
-                <span className="text-[9px] font-black uppercase tracking-wider text-slate-600 block border-b pb-1">
-                  8 & 9. Customizable Compliance Legend
-                </span>
-                <div className="space-y-3">
-                  <div className="grid grid-cols-2 gap-x-2 gap-y-1.5 text-[9.5px]">
-                    <div className="flex flex-col gap-0.5">
-                      <span className="font-black text-slate-400">Below Acceptable:</span>
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="color"
-                          value={colorBelow}
-                          onChange={(e) => setColorBelow(e.target.value)}
-                          className="w-6 h-5 cursor-pointer border border-slate-200 rounded"
-                        />
-                        <input
-                          type="text"
-                          value={legendLabelBelow}
-                          onChange={(e) => setLegendLabelBelow(e.target.value)}
-                          className="flex-1 min-w-0 bg-white border border-slate-200 rounded px-1 py-0.5 font-bold text-[8.5px]"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col gap-0.5">
-                      <span className="font-black text-slate-400">Acceptable-Permissible:</span>
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="color"
-                          value={colorBetween}
-                          onChange={(e) => setColorBetween(e.target.value)}
-                          className="w-6 h-5 cursor-pointer border border-slate-200 rounded"
-                        />
-                        <input
-                          type="text"
-                          value={legendLabelBetween}
-                          onChange={(e) => setLegendLabelBetween(e.target.value)}
-                          className="flex-1 min-w-0 bg-white border border-slate-200 rounded px-1 py-0.5 font-bold text-[8.5px]"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col gap-0.5 col-span-2">
-                      <span className="font-black text-slate-400">Above Permissible:</span>
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="color"
-                          value={colorAbove}
-                          onChange={(e) => setColorAbove(e.target.value)}
-                          className="w-6 h-5 cursor-pointer border border-slate-200 rounded"
-                        />
-                        <input
-                          type="text"
-                          value={legendLabelAbove}
-                          onChange={(e) => setLegendLabelAbove(e.target.value)}
-                          className="flex-1 min-w-0 bg-white border border-slate-200 rounded px-1.5 py-0.5 font-bold text-[8.5px]"
-                        />
-                      </div>
-                    </div>
-
-                    {shapefileGeoJson && (
-                      <div className="flex flex-col gap-0.5 col-span-2">
-                        <span className="font-black text-slate-400">Boundary Overlay Label:</span>
-                        <input
-                          type="text"
-                          value={legendLabelBoundary}
-                          onChange={(e) => setLegendLabelBoundary(e.target.value)}
-                          className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 font-bold text-[8.5px]"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  <button
-                    onClick={() => {
-                      setColorBelow("#3b82f6");
-                      setColorBetween("#fef08a");
-                      setColorAbove("#ef4444");
-                      setLegendLabelBelow("Below Acceptable Limit");
-                      setLegendLabelBetween("Between Acceptable & Permissible Limit");
-                      setLegendLabelAbove("Above Permissible Limit");
-                      setLegendLabelBoundary("Boundary Shapefile Region");
-                    }}
-                    className="w-full py-1 text-center bg-slate-200/80 hover:bg-slate-350 text-slate-700 border border-slate-300 rounded-lg font-black uppercase text-[8px] tracking-widest transition-colors"
-                  >
-                    Reset Colors & Titles to Standards (Feature 9)
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Live Interactive Map Workspace Panel */}
-            <div className="lg:col-span-8 bg-white rounded-[2rem] border border-slate-200 overflow-hidden shadow-lg flex flex-col items-stretch relative min-h-[620px] lg:h-auto">
-              <div className="flex justify-between items-center p-4 bg-slate-50 border-b border-slate-200 shrink-0 z-10">
-                <span className="text-[10px] font-black uppercase text-indigo-650 flex items-center gap-1.5">
-                  <MapPin className="w-4 h-4 text-indigo-500" /> Interactive Spatial GIS Workspace
-                </span>
-                <div className="flex items-center gap-2">
-                  <span className="text-[8.5px] font-black uppercase text-slate-400 tracking-wider">
-                    Plotted Points:
-                  </span>
-                  <span className="text-[10px] font-black text-indigo-650 bg-indigo-50 px-2.5 py-1 border border-indigo-200 rounded-lg">
-                    {processedData.filter(d => d._calc.lat !== null && d._calc.lng !== null).length} Coordinates Mapped
-                  </span>
-                </div>
-              </div>
-
-              {/* The Map Rendering Target container with custom floating overlays */}
-              <div className="flex-1 w-full h-full relative bg-slate-100 min-h-[550px] pointer-events-auto">
-                <div ref={mapRef} id="leaflet-map-element" className="w-full h-full absolute inset-0 z-10" />
-
-                {/* Draggable/Relocatable North Arrow Needle (Feature 7) */}
-                <div className={`absolute z-35 bg-white/95 backdrop-blur-md px-3.5 py-2 rounded-2xl border border-slate-200/80 shadow-md flex flex-col items-center gap-1 transition-all pointer-events-auto ${
-                  northArrowPos === "top-left" ? "top-4 left-4" :
-                  northArrowPos === "top-right" ? "top-4 right-4" :
-                  northArrowPos === "bottom-left" ? "bottom-4 left-4" :
-                  "bottom-4 right-4"
-                }`}>
-                  <svg width="42" height="42" viewBox="0 0 100 100" className="drop-shadow-xs text-slate-800 animate-pulse">
-                    <polygon points="50,10 65,50 50,42" fill="#ef4444" />
-                    <polygon points="50,10 35,50 50,42" fill="#3b82f6" />
-                    <polygon points="50,90 65,50 50,58" fill="#eab308" />
-                    <polygon points="50,90 35,50 50,58" fill="#94a3b8" />
-                    <text x="50" y="31" fontSize="12" fontWeight="900" fill="#1e293b" textAnchor="middle">N</text>
-                  </svg>
-                  <span className="text-[8px] font-black tracking-widest text-slate-400">NORTH</span>
-                </div>
-
-                {/* Replaceable Legend Section (Feature 8, 9) */}
-                <div className={`absolute z-35 bg-white/95 backdrop-blur-md px-4 py-3 rounded-2xl border border-slate-200 shadow-md min-w-[210px] pointer-events-auto space-y-2 select-none ${
-                  northArrowPos === "bottom-left" ? "top-4 right-4" : "bottom-4 left-4"
-                }`}>
-                  <div className="border-b pb-1">
-                    <h5 className="font-extrabold text-[9px] uppercase tracking-wider text-slate-700 flex items-center gap-1">
-                      📊 Legend: <span className="text-indigo-650 font-black">{mapExceedanceParam}</span> Class
-                    </h5>
-                    <span className="text-[7.5px] font-black uppercase text-slate-400">Custom labels allowed</span>
-                  </div>
-                  <div className="space-y-1.5 text-[9px]">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-sm border border-slate-300 shrink-0" style={{ backgroundColor: colorBelow }}></div>
-                      <span className="font-bold text-slate-600 truncate max-w-[170px]" title={legendLabelBelow}>
-                        {legendLabelBelow}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-sm border border-slate-300 shrink-0" style={{ backgroundColor: colorBetween }}></div>
-                      <span className="font-bold text-slate-600 truncate max-w-[170px]" title={legendLabelBetween}>
-                        {legendLabelBetween}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-sm border border-slate-300 shrink-0" style={{ backgroundColor: colorAbove }}></div>
-                      <span className="font-bold text-slate-600 truncate max-w-[170px]" title={legendLabelAbove}>
-                        {legendLabelAbove}
-                      </span>
-                    </div>
-                    {shapefileGeoJson && (
-                      <div className="flex items-center gap-2 pt-1 border-t border-dashed border-slate-100">
-                        <div className="w-3 h-1.5 rounded-xs shrink-0" style={{ backgroundColor: shapefileColor, height: `${shapefileWeight}px` }}></div>
-                        <span className="font-bold text-slate-500 truncate max-w-[170px]" title={legendLabelBoundary}>
-                          {legendLabelBoundary}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
         ) : viewMode === "completeness" ? (
           <div className="bg-white rounded-[2rem] border border-slate-200 overflow-hidden shadow-lg flex flex-col h-[650px] w-full">
