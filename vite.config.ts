@@ -6,7 +6,7 @@ import {defineConfig, Plugin} from 'vite';
 
 const getBasePath = () => {
   if (process.env.BASE_PATH) return process.env.BASE_PATH;
-  if (process.env.GITHUB_REPOSITORY) {
+  if (process.env.GITHUB_REPOSITORY && (process.env.GITHUB_PAGES === 'true' || process.env.CI === 'true')) {
     const [owner, repoName] = process.env.GITHUB_REPOSITORY.split('/');
     if (repoName) {
       if (repoName.toLowerCase() === `${owner.toLowerCase()}.github.io`) {
@@ -41,13 +41,40 @@ function githubPagesPlugin(): Plugin {
   };
 }
 
-export default defineConfig(() => {
+export default defineConfig(({ command }) => {
   return {
-    base: getBasePath(),
+    base: command === 'build' ? getBasePath() : '/',
     plugins: [react(), tailwindcss(), githubPagesPlugin()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
+      },
+    },
+    build: {
+      outDir: 'dist',
+      chunkSizeWarningLimit: 3000,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules/highcharts') || id.includes('node_modules/chart.js')) {
+              return 'vendor-charts';
+            }
+            if (
+              id.includes('node_modules/exceljs') ||
+              id.includes('node_modules/xlsx') ||
+              id.includes('node_modules/xlsx-js-style') ||
+              id.includes('node_modules/jszip')
+            ) {
+              return 'vendor-sheets';
+            }
+            if (id.includes('node_modules/leaflet') || id.includes('node_modules/@turf') || id.includes('node_modules/shpjs')) {
+              return 'vendor-geo';
+            }
+            if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/lucide-react')) {
+              return 'vendor-core';
+            }
+          },
+        },
       },
     },
     server: {

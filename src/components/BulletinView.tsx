@@ -6160,9 +6160,10 @@ Although natural geological sources account for the majority of arsenic contamin
 
           if (ca + mg + nak === 0 || cl + so4 + hco3 === 0) return;
 
-          // Cation triangle: Ca²⁺ at lower-left (0,0), Mg²⁺ at lower-right (100,0), Na⁺+K⁺ at top (50, 50√3)
-          const xc = mg + 0.5 * nak;
-          const yc = (nak * SQRT3) / 2;
+          // Standard Arthur M. Piper (1944) Coordinate Transformation:
+          // Cation triangle: Ca²⁺ at lower-left (0,0), Mg²⁺ at top apex (50, 50√3), Na⁺+K⁺ at lower-right (100,0)
+          const xc = 0.5 * mg + nak;
+          const yc = (mg * SQRT3) / 2;
           const xa = 120 + cl + 0.5 * so4;
           const ya = (so4 * SQRT3) / 2;
 

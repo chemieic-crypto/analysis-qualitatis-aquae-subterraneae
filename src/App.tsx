@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
+import { ensureSheetJSNumbers } from "./utils/excelFormatter";
 import shp from "shpjs";
 import { DataHeaders, ShapefileLayer } from "./types";
 import { PARAM_CONFIG } from "./data/config";
@@ -14,6 +15,8 @@ import UsslPiperAnalysisView from "./components/UsslPiperAnalysisView";
 import RankingStatsView from "./components/RankingStatsView";
 import MonsoonImpactView from "./components/MonsoonImpactView";
 import GisMapView from "./components/GisMapView";
+import SectorAnalysisView from "./components/SectorAnalysisView";
+import ErrorBoundary from "./components/ErrorBoundary";
 import HydrochemistryView from "./components/HydrochemistryView";
 import { CombinationAnalysisView } from "./components/CombinationAnalysisView";
 import PcaAnalysisView from "./components/PcaAnalysisView";
@@ -22,6 +25,7 @@ import LimitsManagerView from "./components/LimitsManagerView";
 import AdvancedAnalysisView from "./components/AdvancedAnalysisView";
 import CalculatoriusView from "./components/CalculatoriusView";
 import KpiView from "./components/KpiView";
+import ShapefileFilterView from "./components/ShapefileFilterView";
 import { generateOfflineChartBase64 } from "./utils/chartHelpers";
 import { isStateAll, isDistrictAll, norm } from "./utils/shapefileFilter";
 import { downloadWaterQualityTemplate } from "./utils/templateGenerator";
@@ -51,6 +55,7 @@ import {
   Clock,
   Calendar,
   Map,
+  MapPin,
   Calculator,
   Award
 } from "lucide-react";
@@ -79,7 +84,7 @@ if (typeof Highcharts === "object") {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<
-    "single" | "master" | "multi" | "bar" | "aisummary" | "bulletin" | "about" | "guidelines" | "ussl" | "ranking" | "monsoon" | "gis" | "hydrochemistry" | "combination" | "pca" | "fortnightly" | "limits" | "advancedAnalysis" | "calculatorius" | "kpi"
+    "single" | "master" | "multi" | "bar" | "aisummary" | "bulletin" | "about" | "guidelines" | "ussl" | "ranking" | "monsoon" | "gis" | "shapefileFilter" | "sector" | "hydrochemistry" | "combination" | "pca" | "fortnightly" | "limits" | "advancedAnalysis" | "calculatorius" | "kpi"
   >("kpi");
 
   // State to trigger dynamic recalculation and re-rendering of all components on parameter limit changes
@@ -213,31 +218,18 @@ export default function App() {
 
   // Filtered by State, District, and selected Year (without Season, for comparisons / monsoon impact)
   const yearFilteredData = useMemo(() => {
-    let filtered = rawData;
-    if (selectedState && !isStateAll(selectedState)) {
-      const selStateNorm = norm(selectedState);
-      filtered = filtered.filter((d) => {
-        const val = String(d[headers.state || ""] || d["State"] || d["state"] || "").trim();
-        const vNorm = norm(val);
-        return vNorm && (vNorm === selStateNorm || vNorm.includes(selStateNorm) || selStateNorm.includes(vNorm));
-      });
-    }
-    if (selectedDistrict && !isDistrictAll(selectedDistrict)) {
-      const selDistNorm = norm(selectedDistrict);
-      filtered = filtered.filter((d) => {
-        const val = String(d[headers.district || ""] || d["District"] || d["district"] || "").trim();
-        const vNorm = norm(val);
-        return vNorm && (vNorm === selDistNorm || vNorm.includes(selDistNorm) || selDistNorm.includes(vNorm));
-      });
-    }
+    let filtered = filteredData;
     if (selectedYear && selectedYear.toLowerCase() !== "all" && selectedYear.toLowerCase() !== "select year") {
-      filtered = filtered.filter((d) => {
+      const yearFiltered = filtered.filter((d) => {
         const yr = String(d[headers.year || ""] || d["Year"] || d["year"] || "").trim();
         return yr && yr.includes(selectedYear);
       });
+      if (yearFiltered.length > 0) {
+        filtered = yearFiltered;
+      }
     }
-    return filtered.length > 0 ? [...filtered] : [...rawData];
-  }, [rawData, selectedState, selectedDistrict, selectedYear, headers.state, headers.district, headers.year, limitsVersion]);
+    return [...filtered];
+  }, [filteredData, selectedYear, headers.year, limitsVersion]);
 
   // Filtered by State, District, selected Year, AND selected Season
   const yearSeasonFilteredData = useMemo(() => {
@@ -629,6 +621,7 @@ export default function App() {
   // Spreadsheet styles applicator helper
   const applyExcelStyles = (ws: any, headerRowCount = 1) => {
     if (!ws["!ref"]) return;
+    ensureSheetJSNumbers(ws, headerRowCount);
     const range = XLSX.utils.decode_range(ws["!ref"]);
     const colWidths: any[] = [];
     const rowHeights: any[] = [];
@@ -686,7 +679,7 @@ export default function App() {
           alignment: {
             wrapText: true,
             vertical: "center",
-            horizontal: isHeader ? "center" : "left",
+            horizontal: isHeader ? "center" : cell.t === "n" ? "right" : "left",
           },
         };
       }
@@ -1310,6 +1303,8 @@ export default function App() {
               <option value="hydrochemistry">📋 Hydrochemistry Sheet</option>
               <option value="calculatorius">🧮 Calculatorius</option>
               <option value="gis">🌍 Geospatial Map Module</option>
+              <option value="shapefileFilter">🗺️ Shapefile Spatial Filter</option>
+              <option value="sector">🎯 Sector Analysis (Concentric & Radial)</option>
               <option value="master">📋 Master Summary Matrix</option>
               <option value="monsoon">🌧️ Dynamic Impact of Monsoon</option>
               <option value="bar">📊 Comparative Exceedance (Bar)</option>
@@ -1367,6 +1362,8 @@ export default function App() {
             { id: "hydrochemistry", label: "Hydrochemistry Sheet", icon: TableProperties, baseColor: "emerald" },
             { id: "calculatorius", label: "Calculatorius", icon: Calculator, baseColor: "blue" },
             { id: "gis", label: "Geospatial Map Module", icon: Globe, baseColor: "teal" },
+            { id: "shapefileFilter", label: "Shapefile Spatial Filter", icon: MapPin, baseColor: "emerald" },
+            { id: "sector", label: "Sector Analysis", icon: Compass, baseColor: "indigo" },
             { id: "master", label: "Master Summary", icon: Table2, baseColor: "amber" },
             { id: "monsoon", label: "Dynamic Monsoon Impact", icon: Database, baseColor: "emerald" },
             { id: "bar", label: "Comparative Exceedance (Bar)", icon: BarChart3, baseColor: "orange" },
@@ -1719,6 +1716,47 @@ export default function App() {
               setChoroplethClasses={setChoroplethClasses}
             />
           </div>
+
+          <div className={activeTab === "shapefileFilter" ? "block" : "hidden"}>
+            <ErrorBoundary>
+              <ShapefileFilterView
+                rawData={yearSeasonFilteredData}
+                headers={headers}
+                headerMap={headerMap}
+                selectedState={selectedState}
+                selectedDistrict={selectedDistrict}
+                showToast={showToast}
+                isVisible={activeTab === "shapefileFilter"}
+                sharedLayers={sharedLayers}
+                setSharedLayers={setSharedLayers}
+                setGlobalRawData={setRawData}
+              />
+            </ErrorBoundary>
+          </div>
+
+          <div className={activeTab === "sector" ? "block" : "hidden"}>
+            <ErrorBoundary>
+              <SectorAnalysisView
+                rawData={yearSeasonFilteredData}
+                allRawData={rawData}
+                filteredRawData={yearSeasonFilteredData}
+                setRawData={setRawData}
+                headers={headers}
+                setHeaders={setHeaders}
+                headerMap={headerMap}
+                setHeaderMap={setHeaderMap}
+                selectedState={selectedState}
+                selectedDistrict={selectedDistrict}
+                selectedYear={selectedYear}
+                selectedSeason={selectedSeason}
+                sharedLayers={sharedLayers}
+                setSharedLayers={setSharedLayers}
+                isVisible={activeTab === "sector"}
+                showToast={showToast}
+              />
+            </ErrorBoundary>
+          </div>
+
 
           {activeTab === "limits" && (
             <LimitsManagerView

@@ -6,7 +6,7 @@ import { DataHeaders, GroupedStatRow, ShapefileLayer } from "../types";
 import { PARAM_CONFIG, hasBisLimit } from "../data/config";
 import { getStats, safeMin, safeMax } from "../utils/math";
 import { buildDonutChartOptions, generateOfflineChartBase64, initHighchartsModule } from "../utils/chartHelpers";
-import { Settings2, Image, ChevronDown, Check, Circle, Maximize2, Send, X, BarChart3, SlidersHorizontal, Activity, Table, PieChart, TrendingUp } from "lucide-react";
+import { Settings2, Image, ChevronDown, Check, Circle, Maximize2, Send, X, BarChart3, SlidersHorizontal, Activity, Table, PieChart, TrendingUp, Type, AlignLeft, AlignCenter, AlignRight, Bold, Italic, RotateCcw } from "lucide-react";
 
 
 const getCategoryColor = (name: string, index: number) => {
@@ -238,6 +238,32 @@ export default function DetailedView({
   const [seasonalChartTitle, setSeasonalChartTitle] = useState("");
   const [seasonalXAxisTitle, setSeasonalXAxisTitle] = useState("");
   const [seasonalYAxisTitle, setSeasonalYAxisTitle] = useState("");
+
+  // Donut Chart Dedicated Title Customization State (Two-line title, color, font, size, styling)
+  const [donutTitleLine1, setDonutTitleLine1] = useState("");
+  const [donutTitleLine2, setDonutTitleLine2] = useState("");
+  const [donutTitleColor, setDonutTitleColor] = useState("#0f172a");
+  const [donutTitleFontFamily, setDonutTitleFontFamily] = useState("'Times New Roman', Times, serif");
+  const [donutTitleFontSize, setDonutTitleFontSize] = useState(24);
+  const [donutSubtitleFontSize, setDonutSubtitleFontSize] = useState(16);
+  const [donutTitleBold, setDonutTitleBold] = useState(true);
+  const [donutTitleItalic, setDonutTitleItalic] = useState(false);
+  const [donutTitleAlign, setDonutTitleAlign] = useState<"center" | "left" | "right">("center");
+
+  // Helper to construct formatted multi-line title for Highcharts Donut charts
+  const getDonutTitleInfo = (param: string) => {
+    const defaultLine1 = (param === "SAR" || param === "RSC")
+      ? `Distribution of ${param} in different Limits`
+      : `Distribution of ${param} in different BIS 10500:2012 Limits`;
+    
+    const line1 = donutTitleLine1.trim() || chartTitle.trim() || defaultLine1;
+    const line2 = donutTitleLine2.trim();
+    const fullText = line2
+      ? `${line1}<br/><span style="font-size: ${donutSubtitleFontSize}px; font-weight: normal; opacity: 0.85;">${line2}</span>`
+      : line1;
+
+    return { line1, line2, fullText, defaultLine1 };
+  };
 
   const [chartTheme, setChartTheme] = useState("theme-white");
   const [fontFamily, setFontFamily] = useState("'Plus Jakarta Sans'");
@@ -1028,17 +1054,15 @@ export default function DetailedView({
       ].filter((point) => point.y > 0);
     }
 
-    const titleText = seasonalChartTitle ? `${seasonalChartTitle} - ${season}` : `${activeParam} Compliance Donut - ${season}`;
+    const seasonBase = seasonalChartTitle
+      ? `${seasonalChartTitle} - ${season}`
+      : (donutTitleLine1.trim() ? `${donutTitleLine1.trim()} - ${season}` : `${activeParam} Compliance Donut - ${season}`);
+    const titleText = donutTitleLine2.trim()
+      ? `${seasonBase}<br/><span style="font-size: ${donutSubtitleFontSize}px; font-weight: normal; opacity: 0.85;">${donutTitleLine2.trim()}</span>`
+      : seasonBase;
 
     const isRscOrSar = activeParam === "SAR" || activeParam === "RSC";
-    const chartFontFamily = isRscOrSar ? "'Times New Roman', Times, serif" : fontFamily;
-    
-    const fontStyle = {
-      fontFamily: chartFontFamily,
-      fontSize: "12px",
-      fontWeight: fontBold ? "bold" : "normal",
-      color: chartTheme === "theme-dark" ? "#f8fafc" : "#1e293b",
-    };
+    const chartFontFamily = isRscOrSar ? "'Times New Roman', Times, serif" : donutTitleFontFamily;
 
     const options: Highcharts.Options = {
       chart: {
@@ -1052,10 +1076,14 @@ export default function DetailedView({
       },
       title: {
         text: titleText,
+        align: donutTitleAlign,
+        margin: 18,
         style: {
-          ...fontStyle,
-          fontSize: "26px", // Increased by 100% (doubled from 13px)
-          fontWeight: "800",
+          fontFamily: chartFontFamily,
+          fontSize: `${donutTitleFontSize}px`,
+          fontWeight: donutTitleBold ? "800" : "normal",
+          fontStyle: donutTitleItalic ? "italic" : "normal",
+          color: donutTitleColor,
         },
       },
       tooltip: {
@@ -1373,8 +1401,8 @@ export default function DetailedView({
         const valFormatted = rawVal < 1 ? rawVal.toFixed(3) : rawVal < 100 ? rawVal.toFixed(2) : rawVal.toFixed(1);
         const unitStr = activeConfig.unit ? ` ${activeConfig.unit}` : "";
 
-        xAxis.removePlotLine("interactive-drag-line");
-        xAxis.addPlotLine({
+        (xAxis as any).removePlotLine("interactive-drag-line");
+        (xAxis as any).addPlotLine({
           id: "interactive-drag-line",
           value: rawVal,
           color: "#e11d48",
@@ -1452,8 +1480,7 @@ export default function DetailedView({
       });
     }, 100);
 
-    return () => clearTimeout(timer);
-  }, [statTab, seasonalGroupedData, activeParam, fontFamily, reportingLevel, colorAcc, colorPerm, colorFail, seasonalChartTitle, seasonalXAxisTitle, seasonalYAxisTitle]);
+  }, [statTab, seasonalGroupedData, activeParam, fontFamily, reportingLevel, colorAcc, colorPerm, colorFail, seasonalChartTitle, seasonalXAxisTitle, seasonalYAxisTitle, donutTitleLine1, donutTitleLine2, donutTitleColor, donutTitleFontFamily, donutTitleFontSize, donutSubtitleFontSize, donutTitleBold, donutTitleItalic, donutTitleAlign]);
 
   const exceedanceBarChartData = React.useMemo(() => {
     const dataToUse = groupScope === "national" ? (allRawData || rawData) : rawData;
@@ -2138,21 +2165,10 @@ export default function DetailedView({
       ].filter((point) => point.y > 0);
     }
 
-    const defaultTitle = (activeParam === "SAR" || activeParam === "RSC")
-      ? `Distribution of ${activeParam} in different Limits`
-      : `Distribution of ${activeParam} in different BIS 10500:2012 Limits`;
-    const titleText = chartTitle || defaultTitle;
+    const { fullText: titleText } = getDonutTitleInfo(activeParam);
     
     const isRscOrSar = activeParam === "SAR" || activeParam === "RSC";
-    const chartFontFamily = isRscOrSar ? "'Times New Roman', Times, serif" : fontFamily;
-    const chartTitleFontSize = isRscOrSar ? "24pt" : `${(fontSize + 6) * 2}px`; // Increased by 100% (doubled)
-
-    const fontStyle = {
-      fontFamily: chartFontFamily,
-      fontSize: isRscOrSar ? "24pt" : `${fontSize * 2}px`,
-      fontWeight: fontBold ? "bold" : "normal",
-      color: chartTheme === "theme-dark" ? "#f8fafc" : "#1e293b",
-    };
+    const chartFontFamily = isRscOrSar ? "'Times New Roman', Times, serif" : donutTitleFontFamily;
 
     const newOptions: Highcharts.Options = {
       chart: {
@@ -2173,10 +2189,14 @@ export default function DetailedView({
       },
       title: {
         text: titleText,
+        align: donutTitleAlign,
+        margin: 22,
         style: {
-          ...fontStyle,
-          fontSize: chartTitleFontSize,
-          fontWeight: "800",
+          fontFamily: chartFontFamily,
+          fontSize: `${donutTitleFontSize}px`,
+          fontWeight: donutTitleBold ? "800" : "normal",
+          fontStyle: donutTitleItalic ? "italic" : "normal",
+          color: donutTitleColor,
         },
       },
       tooltip: {
@@ -2279,6 +2299,15 @@ export default function DetailedView({
     isFullscreen,
     setSharedBulletinMaps,
     uniquePeriods,
+    donutTitleLine1,
+    donutTitleLine2,
+    donutTitleColor,
+    donutTitleFontFamily,
+    donutTitleFontSize,
+    donutSubtitleFontSize,
+    donutTitleBold,
+    donutTitleItalic,
+    donutTitleAlign,
   ]);
 
   const handleDownloadJPEG = () => {
@@ -2320,10 +2349,9 @@ export default function DetailedView({
     if (!setSharedBulletinMaps || !activeConfig) return;
 
     // Create the exact standard 3D options but force transparent background for bulletin
-    const defaultTitle = (activeParam === "SAR" || activeParam === "RSC")
-      ? `Distribution of ${activeParam} in different Limits`
-      : `Distribution of ${activeParam} in different BIS 10500:2012 Limits`;
-    const titleText = chartTitle || defaultTitle;
+    const { fullText: titleText } = getDonutTitleInfo(activeParam);
+    const isRscOrSar = activeParam === "SAR" || activeParam === "RSC";
+    const chartFontFamily = isRscOrSar ? "'Times New Roman', Times, serif" : donutTitleFontFamily;
     
     let chartDataPoints: any[] = [];
     if (activeParam === "SAR") {
@@ -2382,11 +2410,14 @@ export default function DetailedView({
       },
       title: {
         text: titleText,
+        align: donutTitleAlign,
+        margin: 22,
         style: {
-          fontFamily,
-          fontSize: `${(fontSize + 6) * 2}px`, // Increased by 100% (doubled)
-          fontWeight: "800",
-          color: chartTheme === "theme-dark" ? "#f8fafc" : "#1e293b",
+          fontFamily: chartFontFamily,
+          fontSize: `${donutTitleFontSize}px`,
+          fontWeight: donutTitleBold ? "800" : "normal",
+          fontStyle: donutTitleItalic ? "italic" : "normal",
+          color: donutTitleColor,
         },
       },
       tooltip: {
@@ -2896,18 +2927,289 @@ export default function DetailedView({
                 Advanced Titles & Axis Labels
               </span>
 
-              {/* Compliance Donut Title */}
-              <div>
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
-                  Main Compliance Donut Title
-                </label>
-                <input
-                  type="text"
-                  placeholder="Compliance Donut title..."
-                  value={chartTitle}
-                  onChange={(e) => setChartTitle(e.target.value)}
-                  className="w-full glossy-input rounded-xl p-2.5 text-xs font-bold text-slate-700 bg-white placeholder:text-slate-400"
-                />
+              {/* Comprehensive Donut Chart Title Customization */}
+              <div className="p-4 bg-white/95 rounded-2xl border-2 border-indigo-100 shadow-sm space-y-3.5">
+                <div className="flex items-center justify-between border-b border-indigo-50 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600">
+                      <PieChart className="w-3.5 h-3.5" />
+                    </span>
+                    <div>
+                      <span className="text-[11px] font-black text-slate-800 uppercase tracking-wider block">
+                        Donut Chart Title
+                      </span>
+                      <span className="text-[9px] text-slate-400 font-medium block">
+                        Two-line title, color, font & typography controls
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDonutTitleLine1("");
+                      setDonutTitleLine2("");
+                      setChartTitle("");
+                      setDonutTitleColor("#0f172a");
+                      setDonutTitleFontFamily("'Times New Roman', Times, serif");
+                      setDonutTitleFontSize(24);
+                      setDonutSubtitleFontSize(16);
+                      setDonutTitleBold(true);
+                      setDonutTitleItalic(false);
+                      setDonutTitleAlign("center");
+                    }}
+                    className="flex items-center gap-1 text-[9px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50/80 hover:bg-indigo-100 px-2 py-1 rounded-md transition-colors"
+                    title="Reset to default title and formatting"
+                  >
+                    <RotateCcw className="w-2.5 h-2.5" />
+                    Reset
+                  </button>
+                </div>
+
+                {/* Line 1 (Primary Title) */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] font-bold text-slate-600">
+                      Title Line 1 (Main Title)
+                    </label>
+                    <span className="text-[9px] text-slate-400">Primary header</span>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder={`e.g. Distribution of ${activeParam} in different Limits`}
+                    value={donutTitleLine1 || chartTitle}
+                    onChange={(e) => {
+                      setDonutTitleLine1(e.target.value);
+                      setChartTitle(e.target.value);
+                    }}
+                    className="w-full glossy-input rounded-xl p-2.5 text-xs font-bold text-slate-700 bg-slate-50/50 border border-slate-200 placeholder:text-slate-400 focus:bg-white focus:border-indigo-400 transition-all"
+                  />
+                </div>
+
+                {/* Line 2 (Subtitle / Standard / Notes) */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] font-bold text-slate-600">
+                      Title Line 2 (Subtitle / Second Line)
+                    </label>
+                    <span className="text-[9px] text-indigo-500 font-medium">Optional second line</span>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="e.g. (BIS 10500:2012 Drinking Water Specification)"
+                    value={donutTitleLine2}
+                    onChange={(e) => setDonutTitleLine2(e.target.value)}
+                    className="w-full glossy-input rounded-xl p-2.5 text-xs font-bold text-slate-700 bg-slate-50/50 border border-slate-200 placeholder:text-slate-400 focus:bg-white focus:border-indigo-400 transition-all"
+                  />
+                </div>
+
+                {/* Font Family Selector */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-600 block mb-1">
+                    Title Font Family
+                  </label>
+                  <select
+                    value={donutTitleFontFamily}
+                    onChange={(e) => setDonutTitleFontFamily(e.target.value)}
+                    className="w-full text-xs p-2 rounded-xl bg-slate-50/80 border border-slate-200 font-bold text-slate-700 focus:bg-white focus:border-indigo-400 transition-all cursor-pointer"
+                  >
+                    <option value="'Times New Roman', Times, serif">Times New Roman (Classic Academic)</option>
+                    <option value="'Plus Jakarta Sans', sans-serif">Plus Jakarta Sans (Modern Editorial)</option>
+                    <option value="'Inter', sans-serif">Inter UI (Clean Sans)</option>
+                    <option value="'Playfair Display', Georgia, serif">Playfair Display (Serif Elegance)</option>
+                    <option value="'Georgia', serif">Georgia (Traditional Book)</option>
+                    <option value="'Arial', Helvetica, sans-serif">Arial / Helvetica (Standard)</option>
+                    <option value="'Roboto', sans-serif">Roboto (Technical Sans)</option>
+                    <option value="'Courier New', monospace">Courier New (Monospace Technical)</option>
+                  </select>
+                </div>
+
+                {/* Color Customization & Presets */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-600 block mb-1">
+                    Title Text Color
+                  </label>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="relative flex items-center">
+                      <input
+                        type="color"
+                        value={donutTitleColor}
+                        onChange={(e) => setDonutTitleColor(e.target.value)}
+                        className="w-8 h-8 rounded-lg cursor-pointer border border-slate-300 p-0.5 bg-white"
+                        title="Pick custom color"
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      value={donutTitleColor}
+                      onChange={(e) => setDonutTitleColor(e.target.value)}
+                      placeholder="#0f172a"
+                      className="w-24 text-xs font-mono font-bold p-1.5 rounded-lg border border-slate-200 bg-slate-50 text-slate-700 uppercase"
+                    />
+                    <div className="flex-1 flex items-center gap-1.5 overflow-x-auto py-0.5 custom-scrollbar">
+                      {[
+                        { color: "#0f172a", name: "Slate" },
+                        { color: "#1e3a8a", name: "Navy" },
+                        { color: "#0000cc", name: "Blue" },
+                        { color: "#065f46", name: "Emerald" },
+                        { color: "#991b1b", name: "Wine" },
+                        { color: "#4338ca", name: "Indigo" },
+                        { color: "#581c87", name: "Purple" },
+                        { color: "#9a3412", name: "Amber" },
+                      ].map((item) => (
+                        <button
+                          key={item.color}
+                          type="button"
+                          onClick={() => setDonutTitleColor(item.color)}
+                          title={item.name}
+                          className={`w-5 h-5 rounded-md border flex-shrink-0 transition-transform ${
+                            donutTitleColor.toLowerCase() === item.color.toLowerCase()
+                              ? "scale-110 ring-2 ring-indigo-400 border-white"
+                              : "border-slate-300 hover:scale-105"
+                          }`}
+                          style={{ backgroundColor: item.color }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Font Size & Weight Controls */}
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="bg-slate-50/70 p-2 rounded-xl border border-slate-100">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[9px] font-bold text-slate-500">Line 1 Size</label>
+                      <span className="text-[9px] font-mono font-bold text-indigo-600">{donutTitleFontSize}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="16"
+                      max="36"
+                      step="1"
+                      value={donutTitleFontSize}
+                      onChange={(e) => setDonutTitleFontSize(parseInt(e.target.value) || 24)}
+                      className="w-full accent-indigo-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                    />
+                  </div>
+
+                  <div className="bg-slate-50/70 p-2 rounded-xl border border-slate-100">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[9px] font-bold text-slate-500">Line 2 Size</label>
+                      <span className="text-[9px] font-mono font-bold text-indigo-600">{donutSubtitleFontSize}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="11"
+                      max="24"
+                      step="1"
+                      value={donutSubtitleFontSize}
+                      onChange={(e) => setDonutSubtitleFontSize(parseInt(e.target.value) || 16)}
+                      className="w-full accent-indigo-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                {/* Formatting Toggles & Alignment */}
+                <div className="flex items-center justify-between pt-1">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setDonutTitleBold((prev) => !prev)}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                        donutTitleBold
+                          ? "bg-indigo-600 text-white shadow-sm"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                      title="Bold"
+                    >
+                      <Bold className="w-3.5 h-3.5" />
+                      Bold
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDonutTitleItalic((prev) => !prev)}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                        donutTitleItalic
+                          ? "bg-indigo-600 text-white shadow-sm"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                      title="Italic"
+                    >
+                      <Italic className="w-3.5 h-3.5" />
+                      Italic
+                    </button>
+                  </div>
+
+                  <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setDonutTitleAlign("left")}
+                      className={`p-1.5 rounded-md transition-all ${
+                        donutTitleAlign === "left"
+                          ? "bg-white text-indigo-600 shadow-sm font-bold"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                      title="Align Left"
+                    >
+                      <AlignLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDonutTitleAlign("center")}
+                      className={`p-1.5 rounded-md transition-all ${
+                        donutTitleAlign === "center"
+                          ? "bg-white text-indigo-600 shadow-sm font-bold"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                      title="Align Center"
+                    >
+                      <AlignCenter className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDonutTitleAlign("right")}
+                      className={`p-1.5 rounded-md transition-all ${
+                        donutTitleAlign === "right"
+                          ? "bg-white text-indigo-600 shadow-sm font-bold"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                      title="Align Right"
+                    >
+                      <AlignRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Live Title Preview Badge */}
+                <div className="p-2.5 rounded-xl bg-slate-50 border border-dashed border-slate-300">
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">
+                    Live Title Preview
+                  </span>
+                  <div
+                    style={{
+                      fontFamily: donutTitleFontFamily,
+                      color: donutTitleColor,
+                      textAlign: donutTitleAlign,
+                      fontWeight: donutTitleBold ? "bold" : "normal",
+                      fontStyle: donutTitleItalic ? "italic" : "normal",
+                    }}
+                    className="leading-snug"
+                  >
+                    <div style={{ fontSize: `${Math.max(13, Math.round(donutTitleFontSize * 0.65))}px` }}>
+                      {donutTitleLine1 || chartTitle || `Distribution of ${activeParam} in different Limits`}
+                    </div>
+                    {donutTitleLine2 && (
+                      <div
+                        style={{
+                          fontSize: `${Math.max(10, Math.round(donutSubtitleFontSize * 0.65))}px`,
+                          opacity: 0.85,
+                          fontWeight: "normal",
+                        }}
+                      >
+                        {donutTitleLine2}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* Exceedance Chart Titles */}

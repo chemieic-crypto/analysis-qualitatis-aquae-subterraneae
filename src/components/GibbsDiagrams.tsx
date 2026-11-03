@@ -1,7 +1,20 @@
-import React, { useState, useMemo, useRef } from "react";
+import React, { useState, useMemo, useRef, useCallback } from "react";
 import { ProcessedSample } from "../utils/usslMath";
 import UsslLabelsEditor, { LabelConfig } from "./UsslLabelsEditor";
-import { sanitizeColorsForHtml2canvas, safeHtml2canvas } from "../utils/colorSanitizer";
+import { PointSymbol, PointSymbolShape, PointSymbolIcon } from "./PointSymbol";
+import {
+  DIAGRAM_LINE_TEMPLATES,
+  DiagramLineTheme,
+  DEFAULT_DIAGRAM_TEMPLATE,
+  TitleFormattingConfig,
+  DEFAULT_TITLE_CONFIG,
+  DiagramPageOrientation,
+  PAGE_ORIENTATION_CONFIGS,
+} from "../types/diagramTemplates";
+import { exportDiagram } from "../utils/diagramExport";
+import { DiagramToolbarStudio, SimpleTitleEditorModal } from "./DiagramToolbarStudio";
+import DiagramBorderEditor, { DiagramBorderConfig, DEFAULT_PIPER_BORDER_CONFIG, DiagramBorderFrame } from "./DiagramBorderEditor";
+import { Move } from "lucide-react";
 
 function darkenColor(hex: string, percent = 30): string {
   if (!hex || hex.length < 6) return "#1e293b";
@@ -55,6 +68,13 @@ interface GibbsPlotProps {
   stateHeader: string;
   is3d?: boolean;
   bubbleSizeMultiplier?: number;
+  onBubbleSizeMultiplierChange?: (size: number) => void;
+  pointSymbols?: Record<string, PointSymbol>;
+  onPointSymbolsChange?: (symbols: Record<string, PointSymbol>) => void;
+  defaultSymbol?: PointSymbol;
+  onDefaultSymbolChange?: (symbol: PointSymbol) => void;
+  activeSpatialText?: string;
+  customTitle?: string;
 }
 
 export const GibbsPlot = React.memo(({
@@ -66,12 +86,46 @@ export const GibbsPlot = React.memo(({
   getPointKey,
   stateHeader,
   is3d = true,
-  bubbleSizeMultiplier = 1,
+  bubbleSizeMultiplier = 1.3,
+  onBubbleSizeMultiplierChange,
+  pointSymbols,
+  defaultSymbol,
+  activeSpatialText,
+  customTitle,
 }: GibbsPlotProps) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [diagramPadding, setDiagramPadding] = useState<number>(15);
+  const [outerLineWidth, setOuterLineWidth] = useState<number>(1.8);
+  const [borderConfig, setBorderConfig] = useState<DiagramBorderConfig>(DEFAULT_PIPER_BORDER_CONFIG);
+  const [editingBorder, setEditingBorder] = useState<boolean>(false);
+  const [isAdjustingBorder, setIsAdjustingBorder] = useState<boolean>(false);
   const margin = { top: 50, right: 30, bottom: 50, left: 60 };
   const width = 350;
   const height = 400;
+
+  // 7 Base Line Color Templates (Monochrome, Cobalt, Indigo, Emerald, Crimson, Bronze, Slate)
+  const [currentTheme, setCurrentTheme] = useState<DiagramLineTheme>(DEFAULT_DIAGRAM_TEMPLATE);
+
+  // Formattable Simple Title (Crisp, flat typography without emboss/deboss)
+  const [isTitleModalOpen, setIsTitleModalOpen] = useState(false);
+  const [simpleTitleConfig, setSimpleTitleConfig] = useState<TitleFormattingConfig>({
+    text: customTitle || defaultTitle,
+    size: 12,
+    color: "#0f172a",
+    isBold: true,
+    isItalic: false,
+    fontFamily: "'Inter', system-ui, sans-serif",
+    alignment: "center",
+  });
+
+  React.useEffect(() => {
+    if (customTitle || defaultTitle) {
+      setSimpleTitleConfig((prev) => ({
+        ...prev,
+        text: customTitle || defaultTitle,
+      }));
+    }
+  }, [customTitle, defaultTitle]);
 
   // Systematic Downsampling to prevent UI hanging under large datasets
   const maxSafePoints = 1200;
@@ -81,6 +135,33 @@ export const GibbsPlot = React.memo(({
     const step = Math.ceil(data.length / maxSafePoints);
     return data.filter((_, idx) => idx % step === 0);
   }, [data, isDownsampled]);
+
+  // A4 Page Orientation (fit | a4_portrait | a4_landscape)
+  const [pageOrientation, setPageOrientation] = useState<DiagramPageOrientation>("fit");
+  const [showLegendTile, setShowLegendTile] = useState<boolean>(true);
+
+  // Active Visible Variables strictly filtered from displayData (Requirement #6: Cascading Spatial Filter sync)
+  const activeLegendItems = useMemo(() => {
+    const visibleKeys = new Set<string>();
+    displayData.forEach((d) => {
+      const hasValidPoint = type === "cation"
+        ? (d._calc.hasGibbsCation ?? d._calc.hasGibbs)
+        : (d._calc.hasGibbsAnion ?? d._calc.hasGibbs);
+      if (!hasValidPoint) return;
+      const k = getPointKey(d);
+      if (k && k !== "Unknown" && k.trim() !== "") {
+        visibleKeys.add(k);
+      }
+    });
+
+    const keys = Array.from(visibleKeys).sort();
+    return keys.map((key) => ({
+      key,
+      label: key,
+      color: pointColors[key] || "#3b82f6",
+      symbol: (pointSymbols && pointSymbols[key]) || defaultSymbol || "circle",
+    }));
+  }, [displayData, type, getPointKey, pointColors, pointSymbols, defaultSymbol]);
 
   const [labelsConfig, setLabelsConfig] = useState({
     title: { text: defaultTitle, size: 14, color: "#64748b", isBold: true, isItalic: false, fontFamily: "sans-serif" },
@@ -95,17 +176,71 @@ export const GibbsPlot = React.memo(({
     yAxis: { text: "TDS (mg/L)", size: 12, color: "#64748b", isBold: true, isItalic: false, fontFamily: "sans-serif" },
   });
 
-  React.useEffect(() => {
-    if (defaultTitle) {
-      setLabelsConfig(prev => ({
-        ...prev,
-        title: { ...prev.title, text: defaultTitle }
-      }));
-    }
-  }, [defaultTitle]);
-
   const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [title3dEffect, setTitle3dEffect] = useState<"none" | "emboss" | "deboss">("emboss");
+
+  const [localPointSize, setLocalPointSize] = useState<number>(bubbleSizeMultiplier ?? 1.3);
+  React.useEffect(() => {
+    if (bubbleSizeMultiplier !== undefined) {
+      setLocalPointSize(bubbleSizeMultiplier);
+    }
+  }, [bubbleSizeMultiplier]);
+
+  const handlePointSizeChange = (val: number) => {
+    const clamped = Math.max(0.1, Math.min(3, Number(val.toFixed(1))));
+    setLocalPointSize(clamped);
+    onBubbleSizeMultiplierChange?.(clamped);
+  };
+
+  const DEFAULT_TITLE_POS = { x: width / 2, y: 25 };
+  const [titlePos, setTitlePos] = useState<{ x: number; y: number }>(DEFAULT_TITLE_POS);
+  const [isDraggingTitle, setIsDraggingTitle] = useState(false);
+  const [titleDragOffset, setTitleDragOffset] = useState({ x: 0, y: 0 });
+  const titleDragStartPos = useRef<{ x: number; y: number } | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const fullscreenSvgRef = useRef<SVGSVGElement>(null);
+
+  const handleTitlePointerDown = (e: React.PointerEvent<any>, targetSvg: SVGSVGElement | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!targetSvg) return;
+
+    const startClientX = e.clientX;
+    const startClientY = e.clientY;
+    const startTitleX = titlePos.x;
+    const startTitleY = titlePos.y;
+    let hasMoved = false;
+
+    const onPointerMove = (moveEv: PointerEvent) => {
+      moveEv.preventDefault();
+      const dx = moveEv.clientX - startClientX;
+      const dy = moveEv.clientY - startClientY;
+      if (Math.hypot(dx, dy) > 3) {
+        hasMoved = true;
+      }
+      const ctm = targetSvg.getScreenCTM();
+      if (!ctm) return;
+      const svgDx = dx / ctm.a;
+      const svgDy = dy / ctm.d;
+
+      setTitlePos({
+        x: Math.round(startTitleX + svgDx),
+        y: Math.round(startTitleY + svgDy),
+      });
+    };
+
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      setIsDraggingTitle(false);
+      if (!hasMoved) {
+        setEditingKey("title");
+      }
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    setIsDraggingTitle(true);
+  };
 
   const getX = (val: number) => margin.left + val * (width - margin.left - margin.right);
   const getY = (val: number) => {
@@ -116,9 +251,9 @@ export const GibbsPlot = React.memo(({
     return height - margin.bottom - normalized * (height - margin.bottom - margin.top);
   };
 
-  const polygonFill = "black";
-  const polygonStroke = "#00000015";
-  const axisColor = "#94a3b8";
+  const polygonFill = currentTheme.primaryLine;
+  const polygonStroke = currentTheme.primaryLine;
+  const axisColor = currentTheme.axisColor;
 
   // Crop states
   const [isCropActive, setIsCropActive] = useState<boolean>(false);
@@ -233,138 +368,116 @@ export const GibbsPlot = React.memo(({
 
   const exportId = `gibbs-${type}`;
 
-  const downloadChartHD = async (elementId: string, filename: string) => {
-    const el = document.getElementById(elementId);
-    if (!el) return;
-    try {
-      const canvas = await safeHtml2canvas(el, {
-        scale: 3,
-        backgroundColor: "#ffffff",
-        logging: false,
-        useCORS: true,
-        onclone: (clonedDoc) => {
-          sanitizeColorsForHtml2canvas(clonedDoc);
-          const cropOverlay = clonedDoc.getElementById("draggable-crop-box");
-          if (cropOverlay) {
-            cropOverlay.remove();
-          }
-        },
-      });
-
-      let finalCanvas = canvas;
-      if (isCropActive) {
-        const rect = el.getBoundingClientRect();
-        const scaleX = canvas.width / (rect.width || el.offsetWidth || 1);
-        const scaleY = canvas.height / (rect.height || el.offsetHeight || 1);
-
-        const cropCanvas = document.createElement("canvas");
-        cropCanvas.width = cropBox.width * scaleX;
-        cropCanvas.height = cropBox.height * scaleY;
-        const cropCtx = cropCanvas.getContext("2d");
-        if (cropCtx) {
-          cropCtx.drawImage(
-            canvas,
-            cropBox.x * scaleX,
-            cropBox.y * scaleY,
-            cropBox.width * scaleX,
-            cropBox.height * scaleY,
-            0,
-            0,
-            cropBox.width * scaleX,
-            cropBox.height * scaleY
-          );
-          finalCanvas = cropCanvas;
-        }
-      }
-
-      const link = document.createElement("a");
-      link.download = `${filename}_${Date.now()}.jpeg`;
-      link.href = finalCanvas.toDataURL("image/jpeg", 1.0);
-      link.click();
-    } catch (err) {
-      console.error("HD Download failed", err);
-    }
+  const handleExport = (format: "jpeg" | "png" | "svg", transparent: boolean, elementId = exportId) => {
+    exportDiagram({
+      elementId,
+      filename: `Gibbs_${type === "cation" ? "Cation" : "Anion"}_Diagram`,
+      format,
+      transparent,
+      scale: 3,
+      isCropActive,
+      cropBox,
+      orientation: pageOrientation,
+      svgElement: elementId.includes("fs") ? fullscreenSvgRef.current : svgRef.current,
+    });
   };
 
-  const renderedPoints = useMemo(() => {
+  const renderPointList = useCallback((isFs: boolean) => {
     return displayData.map((d, i) => {
       const hasValidPoint = type === "cation" ? (d._calc.hasGibbsCation ?? d._calc.hasGibbs) : (d._calc.hasGibbsAnion ?? d._calc.hasGibbs);
       if (!hasValidPoint) return null;
 
       const key = getPointKey(d);
       const color = pointColors[key] || "#3b82f6";
-      let radius = pointSizes ? pointSizes[key] || 1.3 : 1.3;
-      if (is3d) {
-        radius *= bubbleSizeMultiplier;
-      }
+      const baseMult = pointSizes && pointSizes[key] ? (pointSizes[key] / 1.3) : 1;
+      const radius = Math.max(0.1, Math.min(6, Number((localPointSize * baseMult).toFixed(2))));
       const stateStr = stateHeader ? d[stateHeader] : d.State || d.STATE;
       const xVal = type === "cation" ? d._calc.gibbsCation : d._calc.gibbsAnion;
       const yVal = d._calc.tds;
 
       if (isNaN(xVal) || isNaN(yVal) || yVal <= 0) return null;
 
-      const bubbleId = `bubble-${String(color).replace(/#/g, "")}`;
+      const sym = (pointSymbols && pointSymbols[key]) || defaultSymbol || "circle";
+      const bubbleId = isFs ? `bubble-fs-${String(color).replace(/#/g, "")}` : `bubble-${String(color).replace(/#/g, "")}`;
       const fillValue = is3d ? `url(#${bubbleId})` : color;
 
       return (
-        <circle
-          key={i}
-          cx={getX(xVal)}
-          cy={getY(yVal)}
-          r={radius}
-          fill={fillValue}
-          fillOpacity="0.95"
-          stroke={is3d ? "rgba(255,255,255,0.4)" : "none"}
-          strokeWidth={is3d ? 0.2 : 0}
-          className="cursor-pointer hover:opacity-80 transition-all duration-300"
-        >
+        <g key={i} className="cursor-pointer hover:opacity-80 transition-all duration-300">
           <title>{`${d._calc.locName}\nTDS: ${yVal.toFixed(1)}\nRatio: ${xVal.toFixed(2)}` + (stateStr ? `\nState: ${stateStr}` : "")}</title>
-        </circle>
+          <PointSymbolShape
+            symbol={sym}
+            cx={getX(xVal)}
+            cy={getY(yVal)}
+            r={radius}
+            fill={fillValue}
+            stroke={is3d ? "rgba(255,255,255,0.4)" : "#ffffff"}
+            strokeWidth={is3d ? 0.3 : 0.5}
+            opacity={0.95}
+            is3d={is3d}
+          />
+        </g>
       );
     });
-  }, [displayData, pointColors, pointSizes, getPointKey, stateHeader, type, is3d, bubbleSizeMultiplier]);
+  }, [displayData, pointColors, pointSizes, getPointKey, stateHeader, type, is3d, localPointSize, pointSymbols, defaultSymbol]);
 
   return (
-    <div className="bg-transparent p-6 flex flex-col items-center shadow-none transition-colors duration-300 relative group">
-      <div className="absolute top-4 right-4 opacity-80 group-hover:opacity-100 transition-opacity z-10 flex gap-2">
-        <div className="flex items-center gap-1 bg-slate-100 rounded-lg px-1.5 py-0.5 border border-slate-200 shadow-sm">
-          <span className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">Title 3D:</span>
-          <select
-            value={title3dEffect}
-            onChange={(e) => setTitle3dEffect(e.target.value as any)}
-            className="text-[9px] font-bold bg-white text-slate-700 border border-slate-200 rounded px-1 py-0 focus:outline-none cursor-pointer"
-          >
-            <option value="none">None</option>
-            <option value="emboss">Bevel & Emboss</option>
-            <option value="deboss">Deboss</option>
-          </select>
-        </div>
-        <button
-          onClick={() => setIsCropActive(!isCropActive)}
-          className={`p-1 bg-white/80 rounded-lg shadow-sm border-b-4 active:border-b-0 active:translate-y-1 transition-all ${
-            isCropActive
-              ? "bg-amber-500 text-white border-amber-600 hover:bg-amber-600"
-              : "text-slate-400 hover:text-amber-800 border-slate-200 hover:border-amber-300 hover:bg-amber-50"
-          }`}
-          title="Select Crop Area for JPEG export"
+    <div className="bg-transparent p-4 sm:p-6 flex flex-col items-center w-full transition-colors duration-300 relative group">
+      {/* Tile 1: Small Formatting Studio Toolbar */}
+      <div className="w-full max-w-[650px] mb-3 relative z-30">
+        <DiagramToolbarStudio
+          currentTheme={currentTheme}
+          onThemeChange={setCurrentTheme}
+          onExport={handleExport}
+          isCropActive={isCropActive}
+          onToggleCrop={() => setIsCropActive(!isCropActive)}
+          titleConfig={simpleTitleConfig}
+          onOpenTitleEditor={() => setIsTitleModalOpen(true)}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={() => setIsFullscreen(!isFullscreen)}
+          activeSpatialText={activeSpatialText}
+          pointSize={localPointSize}
+          onPointSizeChange={handlePointSizeChange}
+          orientation={pageOrientation}
+          onOrientationChange={setPageOrientation}
+          showLegendTile={showLegendTile}
+          onToggleLegendTile={() => setShowLegendTile(!showLegendTile)}
+          outerLineWidth={outerLineWidth}
+          onOuterLineWidthChange={setOuterLineWidth}
+          borderConfig={borderConfig}
+          onBorderConfigChange={setBorderConfig}
+          onOpenBorderEditor={() => setEditingBorder(true)}
+          isAdjustingBorder={isAdjustingBorder}
+          onToggleAdjustBorder={() => setIsAdjustingBorder((p) => !p)}
         >
-          <i className="ph ph-crop text-lg"></i>
-        </button>
-        <button
-          onClick={() => downloadChartHD(exportId, `Gibbs_${type}`)}
-          className="text-slate-400 hover:text-slate-600 p-1 bg-white/80 rounded-lg shadow-sm border-b-4 border-slate-200 hover:border-slate-500 active:border-b-0 active:translate-y-1 transition-all"
-          title="Download HD JPEG"
-        >
-          <i className="ph ph-camera text-lg"></i>
-        </button>
-        <button
-          onClick={() => setIsFullscreen(true)}
-          className="text-slate-400 hover:text-slate-600 p-1 bg-white/80 rounded-lg shadow-sm border-b-4 border-slate-200 hover:border-indigo-500 active:border-b-0 active:translate-y-1 transition-all"
-          title="Full Screen View"
-        >
-          <i className="ph ph-corners-out text-lg"></i>
-        </button>
+          <div className="flex items-center gap-1 bg-white rounded-xl px-2 py-1 border border-slate-200 shadow-2xs" title="Adjust Chart Margin Space">
+            <span className="text-[9px] font-black uppercase text-slate-400">Pad:</span>
+            {[
+              { label: "Normal", pad: 15 },
+              { label: "Spacious", pad: 30 },
+              { label: "Wide", pad: 50 },
+            ].map((opt) => (
+              <button
+                key={opt.pad}
+                onClick={() => setDiagramPadding(opt.pad)}
+                className={`px-1.5 py-0.5 rounded-lg text-[9.5px] font-bold transition-all ${
+                  diagramPadding === opt.pad
+                    ? "bg-indigo-600 text-white shadow-2xs"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </DiagramToolbarStudio>
       </div>
+
+      <SimpleTitleEditorModal
+        isOpen={isTitleModalOpen}
+        config={simpleTitleConfig}
+        onChange={setSimpleTitleConfig}
+        onClose={() => setIsTitleModalOpen(false)}
+      />
 
       {editingKey && labelsConfig[editingKey as keyof typeof labelsConfig] && (
         <UsslLabelsEditor
@@ -374,7 +487,41 @@ export const GibbsPlot = React.memo(({
         />
       )}
 
-      <div id={exportId} className="flex flex-col items-center justify-center bg-transparent p-0 w-full rounded-2xl relative">
+      {/* Border Frame Studio Modal */}
+      {editingBorder && (
+        <DiagramBorderEditor
+          config={borderConfig}
+          onChange={setBorderConfig}
+          onClose={() => setEditingBorder(false)}
+          title="Gibbs Diagram Border Frame Studio"
+          onStartInteractiveAdjust={() => setIsAdjustingBorder(true)}
+        />
+      )}
+
+      {/* Move & Fit Border Mode Floating Banner */}
+      {isAdjustingBorder && (
+        <div className="w-full max-w-[1240px] mb-2 bg-amber-500 text-slate-950 px-4 py-2.5 rounded-2xl flex items-center justify-between text-xs font-bold shadow-md animate-in slide-in-from-top-2 border border-amber-600 z-30">
+          <div className="flex items-center gap-2">
+            <Move className="w-4 h-4 animate-bounce" />
+            <span>
+              <strong>Move &amp; Fit Border Active:</strong> Drag handles or the frame directly on the diagram to fit content.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsAdjustingBorder(false)}
+            className="bg-slate-900 text-white px-3 py-1 rounded-xl text-xs font-black shadow-xs hover:bg-black transition"
+          >
+            ✓ Done
+          </button>
+        </div>
+      )}
+
+      {/* Tile 2: Main Chart Tile (Pure white background, publication frame) */}
+      <div
+        id={exportId}
+        className={`flex flex-col items-center justify-center bg-white p-3 sm:p-5 w-full rounded-3xl relative z-10 border border-slate-200/80 shadow-xs transition-all ${PAGE_ORIENTATION_CONFIGS[pageOrientation].className}`}
+      >
         {/* Draggable/Resizable Crop Box overlay */}
         {isCropActive && (
           <div
@@ -419,29 +566,37 @@ export const GibbsPlot = React.memo(({
         )}
         <div className="flex flex-col items-center justify-center p-4 w-full">
         <svg
-          viewBox={`0 0 ${width} ${height}`}
+          ref={svgRef}
+          viewBox={`${-diagramPadding} ${-diagramPadding} ${width + diagramPadding * 2} ${height + diagramPadding * 2}`}
           className="w-full h-auto max-w-[550px] overflow-visible"
-          style={{ fontFamily: "'Inter', sans-serif" }}
-          onClick={() => setEditingKey(null)}
+          style={{ fontFamily: "'Inter', sans-serif", touchAction: "none" }}
+          onClick={() => {
+            if (!isDraggingTitle) setEditingKey(null);
+          }}
         >
-          <defs>
-            <filter id="3d-emboss" x="-20%" y="-20%" width="140%" height="140%">
-              <feGaussianBlur in="SourceAlpha" stdDeviation="0.6" result="blur" />
-              <feSpecularLighting in="blur" surfaceScale="2" specularConstant="1.2" specularExponent="16" lightingColor="#ffffff" result="spec">
-                <feDistantLight azimuth="225" elevation="45" />
-              </feSpecularLighting>
-              <feComposite in="spec" in2="SourceAlpha" operator="in" result="specOut" />
-              <feComposite in="SourceGraphic" in2="specOut" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="lit" />
-            </filter>
-            <filter id="3d-deboss" x="-20%" y="-20%" width="140%" height="140%">
-              <feOffset dx="0.5" dy="0.5" />
-              <feGaussianBlur stdDeviation="0.5" result="offset-blur" />
-              <feComposite operator="out" in="SourceGraphic" in2="offset-blur" result="inverse" />
-              <feFlood floodColor="#000000" floodOpacity="0.7" result="color" />
-              <feComposite operator="in" in="color" in2="inverse" result="shadow" />
-              <feComposite operator="over" in="shadow" in2="SourceGraphic" />
-            </filter>
+          {/* Pure White Diagram Canvas Background */}
+          <rect
+            id="diagram-base-canvas-bg"
+            x={-diagramPadding}
+            y={-diagramPadding}
+            width={width + diagramPadding * 2}
+            height={height + diagramPadding * 2}
+            fill="#ffffff"
+          />
 
+          {/* Moveable & Customisable Outer Frame Border */}
+          <DiagramBorderFrame
+            baseX={-diagramPadding}
+            baseY={-diagramPadding}
+            baseWidth={width + diagramPadding * 2}
+            baseHeight={height + diagramPadding * 2}
+            config={borderConfig}
+            isInteractive={isAdjustingBorder}
+            onConfigChange={setBorderConfig}
+            svgRef={svgRef}
+            idPrefix="gibbs"
+          />
+          <defs>
             {is3d && (
               <>
                 {Array.from(new Set(Object.values(pointColors || {})))
@@ -462,23 +617,29 @@ export const GibbsPlot = React.memo(({
             )}
           </defs>
 
+          {/* Simple Formattable Flat Title (No Emboss / Deboss) */}
           <text
-            x={width / 2}
-            y={25}
-            textAnchor="middle"
-            fontSize={labelsConfig.title.size}
-            fill={labelsConfig.title.color}
-            fontWeight={labelsConfig.title.isBold ? "900" : "400"}
-            fontStyle={labelsConfig.title.isItalic ? "italic" : "normal"}
-            fontFamily={labelsConfig.title.fontFamily || "sans-serif"}
-            style={{ cursor: "pointer", letterSpacing: "0.1em" }}
-            filter={title3dEffect === "emboss" ? "url(#3d-emboss)" : title3dEffect === "deboss" ? "url(#3d-deboss)" : undefined}
-            onClick={(e) => {
-              e.stopPropagation();
-              setEditingKey("title");
+            x={titlePos.x}
+            y={titlePos.y}
+            textAnchor={simpleTitleConfig.alignment === "left" ? "start" : simpleTitleConfig.alignment === "right" ? "end" : "middle"}
+            fontSize={simpleTitleConfig.size}
+            fill={simpleTitleConfig.color}
+            fontWeight={simpleTitleConfig.isBold ? "700" : "400"}
+            fontStyle={simpleTitleConfig.isItalic ? "italic" : "normal"}
+            fontFamily={simpleTitleConfig.fontFamily || "'Inter', system-ui, sans-serif"}
+            style={{
+              cursor: isDraggingTitle ? "grabbing" : "grab",
+              letterSpacing: "0.05em",
+              userSelect: "none",
+              touchAction: "none"
             }}
+            onPointerDown={(e) => handleTitlePointerDown(e, svgRef.current)}
           >
-            {labelsConfig.title.text}
+            {(simpleTitleConfig.text || "").split("\n").map((line, idx) => (
+              <tspan key={idx} x={titlePos.x} dy={idx === 0 ? 0 : simpleTitleConfig.size * 1.3}>
+                {line}
+              </tspan>
+            ))}
           </text>
 
           <text
@@ -490,6 +651,11 @@ export const GibbsPlot = React.memo(({
             fontStyle={labelsConfig.yAxis.isItalic ? "italic" : "normal"}
             fontFamily={labelsConfig.yAxis.fontFamily || "sans-serif"}
             style={{ cursor: "pointer", letterSpacing: "0.1em" }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setEditingKey("yAxis");
+            }}
             onClick={(e) => {
               e.stopPropagation();
               setEditingKey("yAxis");
@@ -508,6 +674,11 @@ export const GibbsPlot = React.memo(({
             fontStyle={labelsConfig.xAxis.isItalic ? "italic" : "normal"}
             fontFamily={labelsConfig.xAxis.fontFamily || "sans-serif"}
             style={{ cursor: "pointer", letterSpacing: "0.1em" }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setEditingKey("xAxis");
+            }}
             onClick={(e) => {
               e.stopPropagation();
               setEditingKey("xAxis");
@@ -522,7 +693,7 @@ export const GibbsPlot = React.memo(({
             fillOpacity="0.02"
             stroke={polygonStroke}
             strokeDasharray="4"
-            strokeWidth="1.5"
+            strokeWidth={outerLineWidth}
           />
 
           <text x={getX(0.85)} y={getY(8000)} textAnchor="end" fontSize="9" fill="#64748b" fontWeight="bold" opacity="0.6">
@@ -535,8 +706,8 @@ export const GibbsPlot = React.memo(({
             Precipitation
           </text>
 
-          <line x1={margin.left} y1={height - margin.bottom} x2={width - margin.right} y2={height - margin.bottom} stroke={axisColor} strokeWidth="1.5" />
-          <line x1={margin.left} y1={margin.top} x2={margin.left} y2={height - margin.bottom} stroke={axisColor} strokeWidth="1.5" />
+          <line x1={margin.left} y1={height - margin.bottom} x2={width - margin.right} y2={height - margin.bottom} stroke={axisColor} strokeWidth={outerLineWidth} />
+          <line x1={margin.left} y1={margin.top} x2={margin.left} y2={height - margin.bottom} stroke={axisColor} strokeWidth={outerLineWidth} />
 
           {[10, 100, 1000, 10000].map((val) => (
             <g key={val}>
@@ -556,22 +727,39 @@ export const GibbsPlot = React.memo(({
             </g>
           ))}
 
-          {renderedPoints}
+          {renderPointList(false)}
         </svg>
         </div>
+      </div>
 
-        {/* Dynamic Point Color Legend */}
-        {pointColors && Object.keys(pointColors).length > 0 && (
-          <div className="flex flex-wrap items-center justify-center gap-2 mt-2 pt-3 border-t border-slate-200/80 max-w-[650px] w-full px-4">
-            {Object.entries(pointColors).map(([key, color]) => (
-              <div key={key} className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 text-[10px] font-bold shadow-xs">
-                <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs" style={{ backgroundColor: color }} />
-                <span className="truncate max-w-[150px]">{key}</span>
+      {/* Tile 3: Dedicated Publication Legend Tile (strictly displaying active variables from cascading filter) */}
+      {showLegendTile && activeLegendItems.length > 0 && (
+        <div className="w-full max-w-[650px] mt-3.5 bg-white border border-slate-200/80 shadow-xs rounded-2xl p-3.5 transition-all">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2.5">
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span className="text-[11px] font-black uppercase tracking-wider text-slate-800">
+                Active Filter Variables Legend
+              </span>
+            </div>
+            <span className="text-[9.5px] font-mono font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+              {activeLegendItems.length} {activeLegendItems.length === 1 ? "item" : "items"}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+            {activeLegendItems.map((item) => (
+              <div
+                key={item.key}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-50 border border-slate-200/80 text-slate-700 text-[10.5px] font-bold shadow-2xs hover:bg-slate-100 transition-all min-w-0"
+                title={item.label}
+              >
+                <PointSymbolIcon symbol={item.symbol} color={item.color} size={12} is3d={is3d} />
+                <span className="truncate">{item.label}</span>
               </div>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Full Screen Modal View */}
       {isFullscreen && (
@@ -580,21 +768,48 @@ export const GibbsPlot = React.memo(({
             <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4">
               <div>
                 <h3 className="text-base font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                  <i className="ph ph-corners-out text-lg text-indigo-600 animate-pulse"></i>
-                  {labelsConfig.title.text} (Full Screen)
+                  <i className="ph ph-corners-out text-lg text-indigo-600"></i>
+                  {simpleTitleConfig.text} (Full Screen)
                 </h3>
-                <p className="text-[10px] text-slate-400 font-extrabold uppercase mt-0.5">
-                  Full interactive explorer mode with high-resolution scaling
-                </p>
+                {activeSpatialText && (
+                  <p className="text-[10px] text-indigo-600 font-extrabold uppercase mt-0.5 flex items-center gap-1">
+                    <i className="ph ph-map-pin text-xs"></i>
+                    {activeSpatialText}
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 bg-slate-100 rounded-xl px-2.5 py-1.5 border border-slate-200 shadow-sm" title="Point Size (0.1 to 3.0)">
+                  <span className="text-[10px] font-extrabold text-slate-600 uppercase tracking-wider pl-1">Point Size:</span>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="3"
+                    step="0.1"
+                    value={localPointSize}
+                    onChange={(e) => handlePointSizeChange(parseFloat(e.target.value))}
+                    className="w-20 h-1.5 bg-slate-300 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                  />
+                  <span className="text-xs font-mono font-bold text-slate-800 w-7 text-center">
+                    {localPointSize.toFixed(1)}
+                  </span>
+                </div>
+                {/* Dedicated White Background vs Transparent PNG buttons */}
                 <button
-                  onClick={() => downloadChartHD(`${exportId}-fs`, `Gibbs_${type}_HD`)}
-                  className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all border-b-4 border-indigo-200 hover:border-indigo-800 active:border-b-0 active:translate-y-1"
-                  title="Download HD JPEG"
+                  onClick={() => handleExport("jpeg", false, `${exportId}-fs`)}
+                  className="bg-slate-900 text-white hover:bg-black px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm"
+                  title="Download JPEG with Pure White Background"
                 >
-                  <i className="ph ph-camera text-lg"></i>
-                  <span>Export HD</span>
+                  <i className="ph ph-file-jpg text-base text-amber-300"></i>
+                  <span>White JPEG</span>
+                </button>
+                <button
+                  onClick={() => handleExport("png", true, `${exportId}-fs`)}
+                  className="bg-indigo-600 text-white hover:bg-indigo-700 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm"
+                  title="Download High-Res Transparent PNG"
+                >
+                  <i className="ph ph-image text-base text-cyan-300"></i>
+                  <span>Transparent PNG</span>
                 </button>
                 <button
                   onClick={() => setIsFullscreen(false)}
@@ -609,28 +824,24 @@ export const GibbsPlot = React.memo(({
             <div className="flex-1 overflow-auto flex items-center justify-center p-4 min-h-[400px]">
               <div id={`${exportId}-fs`} className="flex flex-col items-center justify-center p-6 w-full max-w-[450px] bg-white rounded-2xl relative">
                 <svg
-                  viewBox={`0 0 ${width} ${height}`}
+                  ref={fullscreenSvgRef}
+                  viewBox={`${-diagramPadding} ${-diagramPadding} ${width + diagramPadding * 2} ${height + diagramPadding * 2}`}
                   className="w-full h-auto max-h-[60vh] overflow-visible"
-                  style={{ fontFamily: "'Inter', sans-serif" }}
+                  style={{ fontFamily: "'Inter', sans-serif", touchAction: "none" }}
+                  onClick={() => {
+                    if (!isDraggingTitle) setEditingKey(null);
+                  }}
                 >
+                  {/* Pure White Background for Fullscreen Canvas */}
+                  <rect
+                    id="diagram-base-canvas-bg"
+                    x={-diagramPadding}
+                    y={-diagramPadding}
+                    width={width + diagramPadding * 2}
+                    height={height + diagramPadding * 2}
+                    fill="#ffffff"
+                  />
                   <defs>
-                    <filter id="3d-emboss-fs" x="-20%" y="-20%" width="140%" height="140%">
-                      <feGaussianBlur in="SourceAlpha" stdDeviation="0.6" result="blur" />
-                      <feSpecularLighting in="blur" surfaceScale="2" specularConstant="1.2" specularExponent="16" lightingColor="#ffffff" result="spec">
-                        <feDistantLight azimuth="225" elevation="45" />
-                      </feSpecularLighting>
-                      <feComposite in="spec" in2="SourceAlpha" operator="in" result="specOut" />
-                      <feComposite in="SourceGraphic" in2="specOut" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="lit" />
-                    </filter>
-                    <filter id="3d-deboss-fs" x="-20%" y="-20%" width="140%" height="140%">
-                      <feOffset dx="0.5" dy="0.5" />
-                      <feGaussianBlur stdDeviation="0.5" result="offset-blur" />
-                      <feComposite operator="out" in="SourceGraphic" in2="offset-blur" result="inverse" />
-                      <feFlood floodColor="#000000" floodOpacity="0.7" result="color" />
-                      <feComposite operator="in" in="color" in2="inverse" result="shadow" />
-                      <feComposite operator="over" in="shadow" in2="SourceGraphic" />
-                    </filter>
-
                     {is3d && (
                       <>
                         {Array.from(new Set(Object.values(pointColors || {})))
@@ -652,17 +863,27 @@ export const GibbsPlot = React.memo(({
                   </defs>
 
                   <text
-                    x={width / 2}
-                    y={margin.top - 20}
-                    textAnchor="middle"
-                    fontSize={labelsConfig.title.size}
-                    fill={labelsConfig.title.color}
-                    fontWeight={labelsConfig.title.isBold ? "900" : "400"}
-                    fontStyle={labelsConfig.title.isItalic ? "italic" : "normal"}
-                    fontFamily={labelsConfig.title.fontFamily || "sans-serif"}
-                    filter={title3dEffect === "emboss" ? "url(#3d-emboss-fs)" : title3dEffect === "deboss" ? "url(#3d-deboss-fs)" : undefined}
+                    x={titlePos.x}
+                    y={titlePos.y}
+                    textAnchor={simpleTitleConfig.alignment === "left" ? "start" : simpleTitleConfig.alignment === "right" ? "end" : "middle"}
+                    fontSize={simpleTitleConfig.size}
+                    fill={simpleTitleConfig.color}
+                    fontWeight={simpleTitleConfig.isBold ? "700" : "400"}
+                    fontStyle={simpleTitleConfig.isItalic ? "italic" : "normal"}
+                    fontFamily={simpleTitleConfig.fontFamily || "'Inter', system-ui, sans-serif"}
+                    style={{
+                      cursor: isDraggingTitle ? "grabbing" : "grab",
+                      letterSpacing: "0.05em",
+                      userSelect: "none",
+                      touchAction: "none"
+                    }}
+                    onPointerDown={(e) => handleTitlePointerDown(e, fullscreenSvgRef.current)}
                   >
-                    {labelsConfig.title.text}
+                    {(simpleTitleConfig.text || "").split("\n").map((line, idx) => (
+                      <tspan key={idx} x={titlePos.x} dy={idx === 0 ? 0 : simpleTitleConfig.size * 1.3}>
+                        {line}
+                      </tspan>
+                    ))}
                   </text>
 
                   <text
@@ -715,8 +936,8 @@ export const GibbsPlot = React.memo(({
                     Precipitation
                   </text>
 
-                  <line x1={margin.left} y1={height - margin.bottom} x2={width - margin.right} y2={height - margin.bottom} stroke={axisColor} strokeWidth="1.5" />
-                  <line x1={margin.left} y1={margin.top} x2={margin.left} y2={height - margin.bottom} stroke={axisColor} strokeWidth="1.5" />
+                  <line x1={margin.left} y1={height - margin.bottom} x2={width - margin.right} y2={height - margin.bottom} stroke={axisColor} strokeWidth={outerLineWidth} />
+                  <line x1={margin.left} y1={margin.top} x2={margin.left} y2={height - margin.bottom} stroke={axisColor} strokeWidth={outerLineWidth} />
 
                   {[10, 100, 1000, 10000].map((val) => (
                     <g key={val}>
@@ -736,13 +957,7 @@ export const GibbsPlot = React.memo(({
                     </g>
                   ))}
 
-                  {renderedPoints.map((p: any) => {
-                    if (is3d && p?.props?.fill && p.props.fill.startsWith("url(#bubble-")) {
-                      const cleanCol = p.props.fill.replace("url(#bubble-", "").replace(")", "");
-                      return React.cloneElement(p, { fill: `url(#bubble-fs-${cleanCol})` });
-                    }
-                    return p;
-                  })}
+                  {renderPointList(true)}
                 </svg>
               </div>
             </div>

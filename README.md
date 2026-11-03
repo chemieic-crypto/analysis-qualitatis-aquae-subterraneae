@@ -1,44 +1,67 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Groundwater Compliance Reporting Engine
 
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally or deploy it to GitHub Pages.
-
-View your app in AI Studio: https://ai.studio/apps/c2879105-5b31-43b4-b28d-049cad6553a3
+A comprehensive web application for evaluating groundwater quality against Bureau of Indian Standards (**IS 10500:2012**), generating water quality alerts for heavy metals, spatial compliance mapping, Piper & USSL hydrochemical diagrams, monsoon impact analysis, PCA, and multi-format Excel bulletins.
 
 ---
 
-## 🚀 How to Enable GitHub Pages
+## 🚀 One-Click GitHub Pages Deployment
 
-The project contains a pre-configured GitHub Actions workflow (`.github/workflows/deploy.yml`) to build and deploy your app. However, **GitHub Pages is not enabled by default** when you push or import code to GitHub.
+This repository includes a pre-configured GitHub Actions workflow (`.github/workflows/deploy.yml`) that automatically builds and deploys the application to **GitHub Pages** whenever you push code to `main` or `master`.
 
-To make it run on GitHub:
-
-1. **Go to your GitHub Repository** on the web.
-2. Click on the **Settings** tab at the top.
-3. In the left sidebar, scroll down to the **"Code and automation"** section and click on **Pages**.
-4. Under **Build and deployment** > **Source**, change the selection from **"Deploy from a branch"** to **"GitHub Actions"**.
-5. Go to the **Actions** tab of your repository to watch the deployment run. Once complete, it will provide you with the live website URL!
+### How to Enable GitHub Pages on your GitHub Repo:
+1. Push this repository to GitHub.
+2. In your GitHub repository, click **Settings** (gear icon in the top navigation).
+3. On the left sidebar under *Code and automation*, click **Pages**.
+4. Under **Build and deployment** → **Source**, select **GitHub Actions** (instead of *Deploy from a branch*).
+5. Next time you push (or run the workflow manually from the **Actions** tab), GitHub will automatically build and publish your app at:
+   `https://<your-username>.github.io/<your-repo-name>/`
 
 ---
 
 ## 💻 Run Locally
 
-**Prerequisites:** Node.js (version 18 or higher)
+### Prerequisites
+- **Node.js** (v18 or higher recommended)
+- **npm** (comes with Node.js)
 
-1. **Install dependencies:**
+### Steps
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/<your-username>/<your-repo-name>.git
+   cd <your-repo-name>
+   ```
+
+2. **Install dependencies:**
    ```bash
    npm install
    ```
-2. **Set your Gemini API key:**
-   Create a `.env.local` file in the root directory and add:
-   ```env
-   GEMINI_API_KEY=your_api_key_here
-   ```
-3. **Run the app locally:**
+
+3. **Start the development server:**
    ```bash
    npm run dev
    ```
-   Open http://localhost:3000 in your browser to view it.
+   Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+4. **Build and preview production bundle:**
+   ```bash
+   npm run build
+   npm run preview
+   ```
+
+---
+
+## 🌐 Deploy to Vercel / Netlify / Cloudflare Pages
+
+This project is built with Vite and standard static SPA output in `dist/`. You can deploy it instantly on any modern web host:
+
+- **Build Command:** `npm run build`
+- **Output Directory:** `dist`
+- **Install Command:** `npm install`
+
+---
+
+## ⚙️ Key Technical Configurations
+
+- **Universal Base Path**: Automatically adapts to GitHub Pages repository sub-paths (`/<repo>/`) during GitHub Actions CI, and to `./` for local runs, custom domains, Vercel, and Netlify.
+- **GitHub Pages Routing & Jekyll bypass**: Automatically generates `.nojekyll` and `404.html` fallback in `dist/` during every build to prevent 404s.
+- **Optimized Bundling**: Highcharts, SheetJS, ExcelJS, Leaflet, and Turf.js are cleanly split into modular vendor chunks for ultra-fast browser loading.

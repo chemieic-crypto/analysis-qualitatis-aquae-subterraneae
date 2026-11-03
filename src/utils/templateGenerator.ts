@@ -1,4 +1,5 @@
 import XLSX from "xlsx-js-style";
+import { ensureSheetJSNumbers } from "./excelFormatter";
 
 /**
  * Download standard Excel Template pre-populated with all static metadata headers
@@ -248,6 +249,7 @@ export function downloadWaterQualityTemplate() {
   // Construct Data Sheet Matrix
   const sheetData = [headers, ...sampleRows];
   const wsData = XLSX.utils.aoa_to_sheet(sheetData);
+  ensureSheetJSNumbers(wsData, 1);
 
   // Apply Styling & Widths to Data Sheet
   const colWidths = headers.map((header, idx) => {

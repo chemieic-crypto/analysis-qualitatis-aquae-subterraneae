@@ -13,10 +13,18 @@ import {
 import { PARAM_CONFIG } from "../data/config";
 import { downloadExcelJSWorkbook } from "../utils/excelFormatter";
 import { PiperDiagram } from "./PiperDiagram";
+import { ChadhaDiagram } from "./ChadhaDiagram";
 import { UsslDiagram } from "./UsslDiagram";
 import { GibbsPlot } from "./GibbsDiagrams";
 import { DonutChart } from "./UsslFaciesDonuts";
 import { krigingInterpolate } from "../utils/kriging";
+import {
+  PointSymbol,
+  PointSymbolIcon,
+  AVAILABLE_POINT_SYMBOLS,
+  getDistinctSymbol,
+} from "./PointSymbol";
+import PointSymbolsEditor, { SymbolItem } from "./PointSymbolsEditor";
 
 // Custom Phosphor style or fallback Lucide icons integration
 import {
@@ -112,7 +120,7 @@ export default function UsslPiperAnalysisView({
 }: UsslPiperAnalysisViewProps) {
   const [rawData, setRawData] = useState<any[]>([]);
   const [originalHeaders, setOriginalHeaders] = useState<string[]>([]);
-  const [viewMode, setViewMode] = useState<"ussl" | "piper" | "gibbs" | "aquifer_compare" | "analytics_ussl" | "analytics_facies" | "completeness" | "table">("ussl");
+  const [viewMode, setViewMode] = useState<"ussl" | "piper" | "chadha" | "gibbs" | "aquifer_compare" | "analytics_ussl" | "analytics_facies" | "completeness" | "table">("ussl");
   const [selectedCompareAquifers, setSelectedCompareAquifers] = useState<string[]>([]);
   const [activeThemeId, setActiveThemeId] = useState("light");
 
@@ -165,8 +173,14 @@ export default function UsslPiperAnalysisView({
   const [seasonSizes, setSeasonSizes] = useState<Record<string, number>>({});
 
   const [is3d, setIs3d] = useState(false);
-  const [bubbleSizeMultiplier, setBubbleSizeMultiplier] = useState(2.2);
+  const [bubbleSizeMultiplier, setBubbleSizeMultiplier] = useState(1.3);
   const [showLocationLabels, setShowLocationLabels] = useState(false);
+
+  // Point Symbols & Markers Facility (Circle, Triangle, Square, Diamond, Star, InvTriangle, Hexagon, Cross)
+  const [pointSymbols, setPointSymbols] = useState<Record<string, PointSymbol>>({});
+  const [defaultPointSymbol, setDefaultPointSymbol] = useState<PointSymbol>("circle");
+  const [useDistinctSymbols, setUseDistinctSymbols] = useState<boolean>(true);
+  const [editingViewSymbols, setEditingViewSymbols] = useState<boolean>(false);
 
   // --- GIS Mapping States ---
   const [localShapefileGeoJson, setLocalShapefileGeoJson] = useState<any | null>(null);
@@ -510,29 +524,58 @@ export default function UsslPiperAnalysisView({
     return Object.keys(stateCounts).sort((a, b) => stateCounts[b] - stateCounts[a]);
   }, [rawData, stateHeader]);
 
-  // Run water chemistry math calculations
-  const processedData = useMemo(() => {
-    const filtered = rawData.filter((row) => {
-      if (selectedMultiStates.length > 0 && stateHeader) {
-        const rowState = String(row[stateHeader] || "").trim();
-        if (!selectedMultiStates.includes(rowState)) return false;
-      }
-      return Object.entries(activeFilters).every(([filterKey, filterValue]) => {
-        if (filterValue === "All") return true;
-        const header = columnMapping[filterKey];
-        if (!header) return true;
-        return String(row[header] || "") === String(filterValue);
-      });
-    });
-
-    return processAquiferData(filtered, columnMapping);
-  }, [rawData, activeFilters, selectedMultiStates, stateHeader, columnMapping]);
-
+  // Run water chemistry math calculations once per dataset / mapping change for maximum speed
   const allProcessedData = useMemo(() => {
     return processAquiferData(rawData, columnMapping);
   }, [rawData, columnMapping]);
 
+  // Lightning-fast array filter without re-calculating chemistry math on every filter click
+  const processedData = useMemo(() => {
+    if (allProcessedData.length === 0) return [];
+    const hasMultiStates = selectedMultiStates.length > 0 && !!stateHeader;
+    const activeEntries = Object.entries(activeFilters).filter(([, val]) => val !== "All");
+
+    if (!hasMultiStates && activeEntries.length === 0) {
+      return allProcessedData;
+    }
+
+    return allProcessedData.filter((row) => {
+      if (hasMultiStates) {
+        const rowState = String(row[stateHeader!] || "").trim();
+        if (!selectedMultiStates.includes(rowState)) return false;
+      }
+      for (let i = 0; i < activeEntries.length; i++) {
+        const [filterKey, filterValue] = activeEntries[i]!;
+        const header = columnMapping[filterKey];
+        if (header && String(row[header] || "") !== String(filterValue)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [allProcessedData, activeFilters, selectedMultiStates, stateHeader, columnMapping]);
+
   const validData = useMemo(() => processedData.filter((d) => d._calc.isComplete), [processedData]);
+
+  // Cascading spatial selection filter text for dynamic legends and diagram headers
+  const activeSpatialText = useMemo(() => {
+    const parts: string[] = [];
+    if (activeFilters.State && activeFilters.State !== "All") parts.push(`State: ${activeFilters.State}`);
+    if (activeFilters.District && activeFilters.District !== "All") parts.push(`District: ${activeFilters.District}`);
+    if (activeFilters.Block && activeFilters.Block !== "All") parts.push(`Block: ${activeFilters.Block}`);
+    if (activeFilters.Location && activeFilters.Location !== "All") parts.push(`Location: ${activeFilters.Location}`);
+    if (activeFilters.Source && activeFilters.Source !== "All") parts.push(`Source: ${activeFilters.Source}`);
+    if (activeFilters.Aquifer && activeFilters.Aquifer !== "All") parts.push(`Aquifer: ${activeFilters.Aquifer}`);
+    if (activeFilters.Year && activeFilters.Year !== "All") parts.push(`Year: ${activeFilters.Year}`);
+    if (activeFilters.Season && activeFilters.Season !== "All") parts.push(`Season: ${activeFilters.Season}`);
+    if (parts.length === 0) {
+      if (selectedMultiStates.length > 0) {
+        return `States: ${selectedMultiStates.join(", ")}`;
+      }
+      return "All Spatial Zones (National / Regional Dataset)";
+    }
+    return parts.join(" > ");
+  }, [activeFilters, selectedMultiStates]);
 
   // Unique Years and Seasons inside validData
   const uniqueYears = useMemo(() => {
@@ -559,9 +602,15 @@ export default function UsslPiperAnalysisView({
   const [piperLeftVal, setPiperLeftVal] = useState<string>("");
   const [piperRightVal, setPiperRightVal] = useState<string>("");
 
+  // Comparison States for Chadha Tab
+  const [chadhaCompareBy, setChadhaCompareBy] = useState<CompareByType>("none");
+  const [chadhaLeftVal, setChadhaLeftVal] = useState<string>("");
+  const [chadhaRightVal, setChadhaRightVal] = useState<string>("");
+
   const isUsslComparisonActive = usslCompareBy !== "none" && usslLeftVal && usslRightVal;
   const isPiperComparisonActive = piperCompareBy !== "none" && piperLeftVal && piperRightVal;
-  const isComparisonActive = viewMode === "ussl" ? !!isUsslComparisonActive : (viewMode === "piper" ? !!isPiperComparisonActive : false);
+  const isChadhaComparisonActive = chadhaCompareBy !== "none" && chadhaLeftVal && chadhaRightVal;
+  const isComparisonActive = viewMode === "ussl" ? !!isUsslComparisonActive : (viewMode === "piper" ? !!isPiperComparisonActive : (viewMode === "chadha" ? !!isChadhaComparisonActive : false));
 
   // Comparison States for Gibbs Tab
   const [gibbsCompareBy, setGibbsCompareBy] = useState<CompareByType>("none");
@@ -710,9 +759,32 @@ export default function UsslPiperAnalysisView({
     if (!header) return validData;
     return validData.filter(d => String(d[header] || "") === gibbsRightVal);
   }, [validData, gibbsCompareBy, gibbsRightVal, getHeaderForCompareBy]);
+  useEffect(() => {
+    if (chadhaCompareBy !== "none") {
+      const opts = getCompareOptions(chadhaCompareBy);
+      if (opts.length > 0) {
+        setChadhaLeftVal(opts[0] || "");
+        setChadhaRightVal(opts[1] || opts[0] || "");
+      }
+    }
+  }, [chadhaCompareBy, getCompareOptions]);
 
-  const getPointKeyForMode = useCallback((d: ProcessedSample, mode: "piper" | "ussl" | "gibbs"): string => {
-    const colorBy = mode === "piper" ? piperColorBy : mode === "ussl" ? usslColorBy : gibbsColorBy;
+  const chadhaLeftData = useMemo(() => {
+    if (chadhaCompareBy === "none" || !chadhaLeftVal) return validData;
+    const header = getHeaderForCompareBy(chadhaCompareBy);
+    if (!header) return validData;
+    return validData.filter(d => String(d[header] || "") === chadhaLeftVal);
+  }, [validData, chadhaCompareBy, chadhaLeftVal, getHeaderForCompareBy]);
+
+  const chadhaRightData = useMemo(() => {
+    if (chadhaCompareBy === "none" || !chadhaRightVal) return validData;
+    const header = getHeaderForCompareBy(chadhaCompareBy);
+    if (!header) return validData;
+    return validData.filter(d => String(d[header] || "") === chadhaRightVal);
+  }, [validData, chadhaCompareBy, chadhaRightVal, getHeaderForCompareBy]);
+
+  const getPointKeyForMode = useCallback((d: ProcessedSample, mode: "piper" | "ussl" | "gibbs" | "chadha"): string => {
+    const colorBy = (mode === "piper" || mode === "chadha") ? piperColorBy : mode === "ussl" ? usslColorBy : gibbsColorBy;
     if (colorBy === "state" && stateHeader) return String(d[stateHeader] || "Unknown");
     if (colorBy === "district" && columnMapping.District) return String(d[columnMapping.District] || "Unknown");
     if (colorBy === "block" && columnMapping.Block) return String(d[columnMapping.Block] || "Unknown");
@@ -725,8 +797,8 @@ export default function UsslPiperAnalysisView({
     return d._calc.facies;
   }, [piperColorBy, usslColorBy, gibbsColorBy, stateHeader, columnMapping]);
 
-  const getActiveColorsForMode = useCallback((mode: "piper" | "ussl" | "gibbs") => {
-    const colorBy = mode === "piper" ? piperColorBy : mode === "ussl" ? usslColorBy : gibbsColorBy;
+  const getActiveColorsForMode = useCallback((mode: "piper" | "ussl" | "gibbs" | "chadha") => {
+    const colorBy = (mode === "piper" || mode === "chadha") ? piperColorBy : mode === "ussl" ? usslColorBy : gibbsColorBy;
     if (colorBy === "state") return stateColors;
     if (colorBy === "district") return districtColors;
     if (colorBy === "block") return blockColors;
@@ -739,8 +811,8 @@ export default function UsslPiperAnalysisView({
     return faciesColors;
   }, [piperColorBy, usslColorBy, gibbsColorBy, stateColors, districtColors, blockColors, locationColors, sourceColors, aquiferColors, yearColors, seasonColors, usslColors, faciesColors]);
 
-  const getActiveSizesForMode = useCallback((mode: "piper" | "ussl" | "gibbs") => {
-    const colorBy = mode === "piper" ? piperColorBy : mode === "ussl" ? usslColorBy : gibbsColorBy;
+  const getActiveSizesForMode = useCallback((mode: "piper" | "ussl" | "gibbs" | "chadha") => {
+    const colorBy = (mode === "piper" || mode === "chadha") ? piperColorBy : mode === "ussl" ? usslColorBy : gibbsColorBy;
     if (colorBy === "state") return stateSizes;
     if (colorBy === "district") return districtSizes;
     if (colorBy === "block") return blockSizes;
@@ -752,6 +824,27 @@ export default function UsslPiperAnalysisView({
     if (colorBy === "ussl") return usslSizes;
     return faciesSizes;
   }, [piperColorBy, usslColorBy, gibbsColorBy, stateSizes, districtSizes, blockSizes, locationSizes, sourceSizes, aquiferSizes, yearSizes, seasonSizes, usslSizes, faciesSizes]);
+
+  const activeViewSymbolItems: SymbolItem[] = useMemo(() => {
+    const mode = (viewMode === "ussl" || viewMode === "gibbs" || viewMode === "chadha" || viewMode === "piper") ? viewMode : "piper";
+    const currentColors = getActiveColorsForMode(mode);
+    const presentKeys = new Set<string>();
+    const counts: Record<string, number> = {};
+    validData.forEach((d) => {
+      const k = getPointKeyForMode(d, mode);
+      if (k && k !== "Unknown") {
+        presentKeys.add(k);
+        counts[k] = (counts[k] || 0) + 1;
+      }
+    });
+
+    return Array.from(presentKeys).sort().map((key) => ({
+      key,
+      label: key,
+      color: currentColors[key] || "#2563eb",
+      count: counts[key],
+    }));
+  }, [validData, viewMode, getActiveColorsForMode, getPointKeyForMode]);
 
   /*
   // Render and sync Leaflet Map
@@ -2344,6 +2437,23 @@ export default function UsslPiperAnalysisView({
     });
   }, [validData, columnMapping.Location]);
 
+  // Establish symbol mappings automatically for active grouping categories (State, District, Facies, USSL Class, Block, Aquifer, Location, etc.)
+  useEffect(() => {
+    if (activeViewSymbolItems.length === 0) return;
+
+    setPointSymbols((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      activeViewSymbolItems.forEach((item, idx) => {
+        if (!next[item.key]) {
+          next[item.key] = useDistinctSymbols ? getDistinctSymbol(idx) : defaultPointSymbol;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [activeViewSymbolItems, useDistinctSymbols, defaultPointSymbol]);
+
   // Establish season palettes automatically
   useEffect(() => {
     const seasonHeader = columnMapping.Season;
@@ -2508,7 +2618,7 @@ export default function UsslPiperAnalysisView({
 
   // Comparison mode stats
   const leftStats = useMemo(() => {
-    const dataToUse = viewMode === "ussl" ? usslLeftData : piperLeftData;
+    const dataToUse = viewMode === "ussl" ? usslLeftData : viewMode === "chadha" ? chadhaLeftData : piperLeftData;
     const uCounts: Record<string, number> = {};
     const fCounts: Record<string, number> = {};
 
@@ -2521,10 +2631,10 @@ export default function UsslPiperAnalysisView({
       ussl: Object.entries(uCounts).map(([key, count]) => ({ key, name: key, count })).sort((a, b) => b.count - a.count),
       facies: Object.entries(fCounts).map(([key, count]) => ({ key, name: faciesNames[key] || key, count })).sort((a, b) => b.count - a.count)
     };
-  }, [usslLeftData, piperLeftData, viewMode, faciesNames]);
+  }, [usslLeftData, piperLeftData, chadhaLeftData, viewMode, faciesNames]);
 
   const rightStats = useMemo(() => {
-    const dataToUse = viewMode === "ussl" ? usslRightData : piperRightData;
+    const dataToUse = viewMode === "ussl" ? usslRightData : viewMode === "chadha" ? chadhaRightData : piperRightData;
     const uCounts: Record<string, number> = {};
     const fCounts: Record<string, number> = {};
 
@@ -2537,7 +2647,7 @@ export default function UsslPiperAnalysisView({
       ussl: Object.entries(uCounts).map(([key, count]) => ({ key, name: key, count })).sort((a, b) => b.count - a.count),
       facies: Object.entries(fCounts).map(([key, count]) => ({ key, name: faciesNames[key] || key, count })).sort((a, b) => b.count - a.count)
     };
-  }, [usslRightData, piperRightData, viewMode, faciesNames]);
+  }, [usslRightData, piperRightData, chadhaRightData, viewMode, faciesNames]);
 
   const comparisonTableData = useMemo(() => {
     const leftList = viewMode === "ussl" ? leftStats.ussl : leftStats.facies;
@@ -2950,12 +3060,14 @@ export default function UsslPiperAnalysisView({
 
           {/* Sub Navigation controls within this specific tab */}
           <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 gap-1 select-none flex-wrap">
-            {(["ussl", "piper", "gibbs", "aquifer_compare", "analytics_ussl", "analytics_facies", "completeness", "table"] as const).map((view) => {
+            {(["ussl", "piper", "chadha", "gibbs", "aquifer_compare", "analytics_ussl", "analytics_facies", "completeness", "table"] as const).map((view) => {
               const label =
                 view === "ussl"
                   ? "USSL Diagram"
                   : view === "piper"
                   ? "Piper Diagram"
+                  : view === "chadha"
+                  ? "Chadha Diagram (3D)"
                   : view === "gibbs"
                   ? "Gibbs Diagram"
                   : view === "aquifer_compare"
@@ -3162,11 +3274,11 @@ export default function UsslPiperAnalysisView({
         </div>
       )}
 
-      {processedData.length > 0 || !["ussl", "piper", "gibbs", "aquifer_compare"].includes(viewMode) ? (
-        ["ussl", "piper", "gibbs", "aquifer_compare"].includes(viewMode) ? (
-          <div className="flex flex-col gap-6 w-full items-stretch animate-fadeIn">
-            <div className="w-full space-y-6">
-              {/* Aqueous Styling, Color-by & 3D Settings Panel */}
+      {processedData.length > 0 || !["ussl", "piper", "chadha", "gibbs", "aquifer_compare"].includes(viewMode) ? (
+        ["ussl", "piper", "chadha", "gibbs", "aquifer_compare"].includes(viewMode) ? (
+          <div className="flex flex-col gap-6 w-full animate-fadeIn">
+            {/* Top Full-Width Formatting & Styling Studio Ribbon */}
+            <div className="w-full space-y-4">
               <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-200 flex flex-col gap-4">
                 <div className="flex flex-wrap items-center gap-4 justify-between">
                   <div className="flex flex-wrap items-center gap-2">
@@ -3202,90 +3314,157 @@ export default function UsslPiperAnalysisView({
                 </div>
 
                 {/* Point Symbol & Rendering Facility Controls */}
-                <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
-                  <div className="flex flex-wrap items-center gap-6">
-                    <div className="flex items-center gap-2.5">
-                      <CircleDot className="text-indigo-500 w-4 h-4" />
-                      <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Point Symbol Denotion:</span>
+                <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-50 p-4 rounded-3xl border border-slate-200">
+                  <div className="flex flex-wrap items-center gap-4 sm:gap-6">
+                    {/* Point Symbol Shape Selector */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider flex items-center gap-1">
+                        <PointSymbolIcon symbol={defaultPointSymbol} color="#4f46e5" size={12} stroke="#ffffff" />
+                        Symbol Shape:
+                      </span>
+                      <select
+                        value={useDistinctSymbols ? "distinct" : defaultPointSymbol}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === "distinct") {
+                            setUseDistinctSymbols(true);
+                            // Assign distinct symbols to all active items
+                            const next: Record<string, PointSymbol> = {};
+                            activeViewSymbolItems.forEach((it, idx) => {
+                              next[it.key] = getDistinctSymbol(idx);
+                            });
+                            setPointSymbols(next);
+                          } else {
+                            setUseDistinctSymbols(false);
+                            const sym = val as PointSymbol;
+                            setDefaultPointSymbol(sym);
+                            const next: Record<string, PointSymbol> = {};
+                            activeViewSymbolItems.forEach((it) => {
+                              next[it.key] = sym;
+                            });
+                            setPointSymbols(next);
+                          }
+                        }}
+                        className="bg-white border border-slate-200 text-slate-800 text-[11px] font-black rounded-xl px-2.5 py-1 outline-hidden focus:ring-2 focus:ring-indigo-500 transition-all shadow-2xs"
+                      >
+                        <option value="distinct">★ Distinct Symbols for Locations (Auto)</option>
+                        {AVAILABLE_POINT_SYMBOLS.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.label} ({s.description})
+                          </option>
+                        ))}
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={() => setEditingViewSymbols(true)}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-xl text-[10px] font-bold flex items-center gap-1 transition-all shadow-2xs"
+                        title="Customize symbols for each location or category"
+                      >
+                        <Sliders className="w-3 h-3" />
+                        <span>Customize Symbols</span>
+                      </button>
+                    </div>
+
+                    {/* 3D vs Flat Style */}
+                    <div className="flex items-center gap-2 border-l border-slate-200 pl-4">
+                      <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Rendering:</span>
                       <div className="flex items-center gap-1 bg-slate-200/80 p-0.5 rounded-xl">
                         <button
                           onClick={() => setIs3d(false)}
-                          className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase transition-all ${
+                          className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase transition-all ${
                             !is3d ? "bg-indigo-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
                           }`}
                         >
-                          Flat Circle
+                          Flat
                         </button>
                         <button
                           onClick={() => setIs3d(true)}
-                          className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase transition-all ${
+                          className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase transition-all ${
                             is3d ? "bg-indigo-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
                           }`}
                         >
-                          3D Glossy Sphere
+                          3D Glossy
                         </button>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2.5 border-l border-slate-200 pl-4">
-                      <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Location Labels:</span>
+                    {/* Location Labels */}
+                    <div className="flex items-center gap-2 border-l border-slate-200 pl-4">
+                      <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Labels:</span>
                       <button
                         onClick={() => setShowLocationLabels(!showLocationLabels)}
-                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-1 focus:ring-indigo-500 ${
+                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
                           showLocationLabels ? "bg-indigo-600" : "bg-slate-200"
                         }`}
+                        title="Toggle Location text labels on points"
                       >
                         <span
-                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                            showLocationLabels ? "translate-x-5" : "translate-x-0"
+                          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition duration-200 ease-in-out ${
+                            showLocationLabels ? "translate-x-4" : "translate-x-0"
                           }`}
                         />
                       </button>
                       <span className="text-[10px] font-black uppercase text-slate-600">
-                        {showLocationLabels ? "Visible" : "Hidden"}
+                        {showLocationLabels ? "ON" : "OFF"}
                       </span>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 bg-emerald-50 text-emerald-700 px-3 py-1 rounded-xl border border-emerald-200 text-[10px] font-bold">
-                    <CheckCircle className="w-3.5 h-3.5" />
-                    <span>Plotting All {validData.length} Locations as Points</span>
-                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-xl border border-emerald-200 text-[10px] font-bold">
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      <span>{validData.length} Filtered Points</span>
+                    </div>
 
-                  {is3d && (
-                    <div className="flex items-center gap-3 w-full sm:w-auto">
-                      <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest whitespace-nowrap">Bubble Size Multiplier:</span>
+                    <div className="flex items-center gap-2 bg-slate-100/90 px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
+                      <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider whitespace-nowrap">Point Size:</span>
                       <input
                         type="range"
-                        min="1"
-                        max="4"
-                        step="0.2"
+                        min="0.1"
+                        max="3"
+                        step="0.1"
                         value={bubbleSizeMultiplier}
-                        onChange={(e) => setBubbleSizeMultiplier(parseFloat(e.target.value))}
-                        className="w-32 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                        onChange={(e) => setBubbleSizeMultiplier(Math.max(0.1, Math.min(3, parseFloat(e.target.value))))}
+                        className="w-24 sm:w-28 h-1.5 bg-slate-300 rounded-lg appearance-none cursor-pointer accent-indigo-600"
                       />
-                      <span className="text-xs font-mono font-black text-slate-700 px-2 py-0.5 bg-slate-200 rounded-lg whitespace-nowrap">
-                        {bubbleSizeMultiplier.toFixed(1)}x
+                      <span className="text-xs font-mono font-black text-indigo-700 px-1.5 py-0.5 bg-white border border-slate-200 rounded-lg whitespace-nowrap shadow-2xs min-w-[28px] text-center">
+                        {bubbleSizeMultiplier.toFixed(1)}
                       </span>
                     </div>
-                  )}
+                  </div>
                 </div>
+
+                {/* Point Symbols Studio Modal */}
+                {editingViewSymbols && (
+                  <PointSymbolsEditor
+                    items={activeViewSymbolItems}
+                    pointSymbols={pointSymbols}
+                    onChangeSymbols={setPointSymbols}
+                    defaultSymbol={defaultPointSymbol}
+                    onChangeDefaultSymbol={setDefaultPointSymbol}
+                    onClose={() => setEditingViewSymbols(false)}
+                    title="Water Sample Point Symbol & Marker Studio"
+                    subtitle="Customize marker symbols for locations, districts, and categories for selected filter"
+                  />
+                )}
               </div>
 
               {/* Comparison Control Panel */}
               {validData.length > 0 && viewMode !== "aquifer_compare" && (
-                <div className="bg-slate-50 border border-slate-200 rounded-3xl p-5 flex flex-wrap gap-4 items-center justify-between shadow-sm">
-                  <div className="flex flex-wrap items-center gap-3">
+                <div className="bg-slate-50 border border-slate-200 rounded-3xl p-5 flex flex-col gap-3 shadow-sm">
+                  <div className="flex flex-col gap-1.5">
                     <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Compare Dual Panels By:</span>
                     <select
-                      value={viewMode === "ussl" ? usslCompareBy : viewMode === "piper" ? piperCompareBy : gibbsCompareBy}
+                      value={viewMode === "ussl" ? usslCompareBy : viewMode === "piper" ? piperCompareBy : viewMode === "chadha" ? chadhaCompareBy : gibbsCompareBy}
                       onChange={(e) => {
                         const val = e.target.value as CompareByType;
                         if (viewMode === "ussl") setUsslCompareBy(val);
                         if (viewMode === "piper") setPiperCompareBy(val);
+                        if (viewMode === "chadha") setChadhaCompareBy(val);
                         if (viewMode === "gibbs") setGibbsCompareBy(val);
                       }}
-                      className="border border-slate-200 rounded-xl px-3 py-1.5 text-[11px] font-black text-indigo-700 bg-white shadow-xs focus:ring-1 focus:ring-indigo-500 outline-none"
+                      className="w-full border border-slate-200 rounded-xl px-3 py-1.5 text-[11px] font-black text-indigo-700 bg-white shadow-xs focus:ring-1 focus:ring-indigo-500 outline-none"
                     >
                       <option value="none">Single View (No Comparison)</option>
                       {uniqueYears.length > 1 && <option value="year">Compare Years</option>}
@@ -3299,37 +3478,39 @@ export default function UsslPiperAnalysisView({
                     </select>
                   </div>
 
-                  {(viewMode === "ussl" ? usslCompareBy : viewMode === "piper" ? piperCompareBy : gibbsCompareBy) !== "none" && (
-                    <div className="flex flex-wrap items-center gap-3">
-                      <div className="flex items-center gap-1.5">
+                  {(viewMode === "ussl" ? usslCompareBy : viewMode === "piper" ? piperCompareBy : viewMode === "chadha" ? chadhaCompareBy : gibbsCompareBy) !== "none" && (
+                    <div className="flex flex-col gap-2 pt-2 border-t border-slate-200">
+                      <div className="flex items-center justify-between gap-1.5">
                         <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Left Panel:</span>
                         <select
-                          value={viewMode === "ussl" ? usslLeftVal : viewMode === "piper" ? piperLeftVal : gibbsLeftVal}
+                          value={viewMode === "ussl" ? usslLeftVal : viewMode === "piper" ? piperLeftVal : viewMode === "chadha" ? chadhaLeftVal : gibbsLeftVal}
                           onChange={(e) => {
                             if (viewMode === "ussl") setUsslLeftVal(e.target.value);
                             if (viewMode === "piper") setPiperLeftVal(e.target.value);
+                            if (viewMode === "chadha") setChadhaLeftVal(e.target.value);
                             if (viewMode === "gibbs") setGibbsLeftVal(e.target.value);
                           }}
-                          className="border border-slate-200 rounded-xl px-2.5 py-1 text-[11px] font-black text-indigo-750 bg-white focus:ring-1 focus:ring-indigo-500 outline-none"
+                          className="border border-slate-200 rounded-xl px-2.5 py-1 text-[11px] font-black text-indigo-750 bg-white focus:ring-1 focus:ring-indigo-500 outline-none max-w-[150px]"
                         >
-                          {getCompareOptions(viewMode === "ussl" ? usslCompareBy : viewMode === "piper" ? piperCompareBy : gibbsCompareBy).map(val => (
+                          {getCompareOptions(viewMode === "ussl" ? usslCompareBy : viewMode === "piper" ? piperCompareBy : viewMode === "chadha" ? chadhaCompareBy : gibbsCompareBy).map(val => (
                             <option key={val} value={val}>{val}</option>
                           ))}
                         </select>
                       </div>
 
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center justify-between gap-1.5">
                         <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Right Panel:</span>
                         <select
-                          value={viewMode === "ussl" ? usslRightVal : viewMode === "piper" ? piperRightVal : gibbsRightVal}
+                          value={viewMode === "ussl" ? usslRightVal : viewMode === "piper" ? piperRightVal : viewMode === "chadha" ? chadhaRightVal : gibbsRightVal}
                           onChange={(e) => {
                             if (viewMode === "ussl") setUsslRightVal(e.target.value);
                             if (viewMode === "piper") setPiperRightVal(e.target.value);
+                            if (viewMode === "chadha") setChadhaRightVal(e.target.value);
                             if (viewMode === "gibbs") setGibbsRightVal(e.target.value);
                           }}
-                          className="border border-slate-200 rounded-xl px-2.5 py-1 text-[11px] font-black text-indigo-750 bg-white focus:ring-1 focus:ring-indigo-500 outline-none"
+                          className="border border-slate-200 rounded-xl px-2.5 py-1 text-[11px] font-black text-indigo-750 bg-white focus:ring-1 focus:ring-indigo-500 outline-none max-w-[150px]"
                         >
-                          {getCompareOptions(viewMode === "ussl" ? usslCompareBy : viewMode === "piper" ? piperCompareBy : gibbsCompareBy).map(val => (
+                          {getCompareOptions(viewMode === "ussl" ? usslCompareBy : viewMode === "piper" ? piperCompareBy : viewMode === "chadha" ? chadhaCompareBy : gibbsCompareBy).map(val => (
                             <option key={val} value={val}>{val}</option>
                           ))}
                         </select>
@@ -3338,7 +3519,10 @@ export default function UsslPiperAnalysisView({
                   )}
                 </div>
               )}
+            </div>
 
+            {/* Main Diagrams & Analysis Area */}
+            <div className="w-full space-y-6">
               {/* Dynamic Tab Panel Content */}
               {viewMode === "ussl" && (
                 <div className="space-y-6">
@@ -3366,9 +3550,15 @@ export default function UsslPiperAnalysisView({
                               stateHeader={stateHeader}
                               is3d={is3d}
                               bubbleSizeMultiplier={bubbleSizeMultiplier}
+                              onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
                               showLocationLabels={showLocationLabels}
                               showAllPoints={true}
+                              pointSymbols={pointSymbols}
+                              onPointSymbolsChange={setPointSymbols}
+                              defaultSymbol={defaultPointSymbol}
+                              onDefaultSymbolChange={setDefaultPointSymbol}
                               customTitle={`USSL Matrix - ${stName}`}
+                              activeSpatialText={`State: ${stName}`}
                             />
                           </div>
                         );
@@ -3384,13 +3574,19 @@ export default function UsslPiperAnalysisView({
                         stateHeader={stateHeader}
                         is3d={is3d}
                         bubbleSizeMultiplier={bubbleSizeMultiplier}
+                        onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
                         showLocationLabels={showLocationLabels}
                         showAllPoints={true}
+                        pointSymbols={pointSymbols}
+                        onPointSymbolsChange={setPointSymbols}
+                        defaultSymbol={defaultPointSymbol}
+                        onDefaultSymbolChange={setDefaultPointSymbol}
                         customTitle={
                           selectedMultiStates.length > 0 && selectedMultiStates.length < uniqueStatesList.length
                             ? `Combined USSL Diagram (${selectedMultiStates.join(", ")})`
                             : undefined
                         }
+                        activeSpatialText={activeSpatialText}
                       />
                     </div>
                   ) : (
@@ -3407,9 +3603,15 @@ export default function UsslPiperAnalysisView({
                           stateHeader={stateHeader}
                           is3d={is3d}
                           bubbleSizeMultiplier={bubbleSizeMultiplier}
+                          onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
                           showLocationLabels={showLocationLabels}
                           showAllPoints={true}
+                          pointSymbols={pointSymbols}
+                          onPointSymbolsChange={setPointSymbols}
+                          defaultSymbol={defaultPointSymbol}
+                          onDefaultSymbolChange={setDefaultPointSymbol}
                           customTitle={`USSL Matrix (${usslLeftVal})`}
+                          activeSpatialText={`${activeSpatialText} (${usslCompareBy}: ${usslLeftVal})`}
                         />
                       </div>
                       <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md relative w-full">
@@ -3424,9 +3626,15 @@ export default function UsslPiperAnalysisView({
                           stateHeader={stateHeader}
                           is3d={is3d}
                           bubbleSizeMultiplier={bubbleSizeMultiplier}
+                          onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
                           showLocationLabels={showLocationLabels}
                           showAllPoints={true}
+                          pointSymbols={pointSymbols}
+                          onPointSymbolsChange={setPointSymbols}
+                          defaultSymbol={defaultPointSymbol}
+                          onDefaultSymbolChange={setDefaultPointSymbol}
                           customTitle={`USSL Matrix (${usslRightVal})`}
+                          activeSpatialText={`${activeSpatialText} (${usslCompareBy}: ${usslRightVal})`}
                         />
                       </div>
                     </div>
@@ -3460,16 +3668,22 @@ export default function UsslPiperAnalysisView({
                               stateHeader={stateHeader}
                               is3d={is3d}
                               bubbleSizeMultiplier={bubbleSizeMultiplier}
+                              onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
                               showLocationLabels={showLocationLabels}
                               showAllPoints={true}
+                              pointSymbols={pointSymbols}
+                              onPointSymbolsChange={setPointSymbols}
+                              defaultSymbol={defaultPointSymbol}
+                              onDefaultSymbolChange={setDefaultPointSymbol}
                               customTitle={`Piper Diagram - ${stName}`}
+                              activeSpatialText={`State: ${stName}`}
                             />
                           </div>
                         );
                       })}
                     </div>
                   ) : piperCompareBy === "none" ? (
-                    <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md flex justify-center w-full">
+                    <div className="bg-white p-2 sm:p-6 rounded-3xl border border-slate-200/80 shadow-md flex justify-center w-full overflow-x-auto">
                       <PiperDiagram
                         data={validData}
                         pointColors={getActiveColorsForMode("piper")}
@@ -3478,13 +3692,19 @@ export default function UsslPiperAnalysisView({
                         stateHeader={stateHeader}
                         is3d={is3d}
                         bubbleSizeMultiplier={bubbleSizeMultiplier}
+                        onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
                         showLocationLabels={showLocationLabels}
                         showAllPoints={true}
+                        pointSymbols={pointSymbols}
+                        onPointSymbolsChange={setPointSymbols}
+                        defaultSymbol={defaultPointSymbol}
+                        onDefaultSymbolChange={setDefaultPointSymbol}
                         customTitle={
                           selectedMultiStates.length > 0 && selectedMultiStates.length < uniqueStatesList.length
-                            ? `Combined Piper Diagram (${selectedMultiStates.join(", ")})`
+                            ? `Piper Diagram for Ground Water of ${selectedMultiStates.join(", ")}\n(Pre-Monsoon 2025)`
                             : undefined
                         }
+                        activeSpatialText={activeSpatialText}
                       />
                     </div>
                   ) : (
@@ -3501,9 +3721,15 @@ export default function UsslPiperAnalysisView({
                           stateHeader={stateHeader}
                           is3d={is3d}
                           bubbleSizeMultiplier={bubbleSizeMultiplier}
+                          onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
                           showLocationLabels={showLocationLabels}
                           showAllPoints={true}
+                          pointSymbols={pointSymbols}
+                          onPointSymbolsChange={setPointSymbols}
+                          defaultSymbol={defaultPointSymbol}
+                          onDefaultSymbolChange={setDefaultPointSymbol}
                           customTitle={`Piper Diagram (${piperLeftVal})`}
+                          activeSpatialText={`${activeSpatialText} (${piperCompareBy}: ${piperLeftVal})`}
                         />
                       </div>
                       <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md relative w-full">
@@ -3518,9 +3744,133 @@ export default function UsslPiperAnalysisView({
                           stateHeader={stateHeader}
                           is3d={is3d}
                           bubbleSizeMultiplier={bubbleSizeMultiplier}
+                          onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
                           showLocationLabels={showLocationLabels}
                           showAllPoints={true}
+                          pointSymbols={pointSymbols}
+                          onPointSymbolsChange={setPointSymbols}
+                          defaultSymbol={defaultPointSymbol}
+                          onDefaultSymbolChange={setDefaultPointSymbol}
                           customTitle={`Piper Diagram (${piperRightVal})`}
+                          activeSpatialText={`${activeSpatialText} (${piperCompareBy}: ${piperRightVal})`}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {viewMode === "chadha" && (
+                <div className="space-y-6">
+                  {selectedMultiStates.length > 1 && multiStateDiagramLayout === "grid" ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+                      {selectedMultiStates.map((stName) => {
+                        const stateData = validData.filter((d) => stateHeader && String(d[stateHeader] || "").trim() === stName);
+                        const stColor = stateColors[stName] || "#3b82f6";
+                        return (
+                          <div key={stName} className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md flex flex-col items-center w-full relative">
+                            <div className="flex items-center justify-between w-full pb-3 mb-2 border-b border-slate-100">
+                              <div className="flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full shadow-xs" style={{ backgroundColor: stColor }} />
+                                <span className="text-xs font-black text-slate-800 uppercase tracking-wider">Chadha Diagram &bull; {stName}</span>
+                              </div>
+                              <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                                {stateData.length} Samples
+                              </span>
+                            </div>
+                            <ChadhaDiagram
+                              data={stateData}
+                              pointColors={getActiveColorsForMode("chadha")}
+                              pointSizes={getActiveSizesForMode("chadha")}
+                              getPointKey={(d) => getPointKeyForMode(d, "chadha")}
+                              stateHeader={stateHeader}
+                              is3d={is3d}
+                              bubbleSizeMultiplier={bubbleSizeMultiplier}
+                              onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
+                              showLocationLabels={showLocationLabels}
+                              showAllPoints={true}
+                              pointSymbols={pointSymbols}
+                              onPointSymbolsChange={setPointSymbols}
+                              defaultSymbol={defaultPointSymbol}
+                              onDefaultSymbolChange={setDefaultPointSymbol}
+                              customTitle={`Chadha Diagram - ${stName}`}
+                              activeSpatialText={`State: ${stName}`}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : chadhaCompareBy === "none" ? (
+                    <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md flex justify-center w-full">
+                      <ChadhaDiagram
+                        data={validData}
+                        pointColors={getActiveColorsForMode("chadha")}
+                        pointSizes={getActiveSizesForMode("chadha")}
+                        getPointKey={(d) => getPointKeyForMode(d, "chadha")}
+                        stateHeader={stateHeader}
+                        is3d={is3d}
+                        bubbleSizeMultiplier={bubbleSizeMultiplier}
+                        onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
+                        showLocationLabels={showLocationLabels}
+                        showAllPoints={true}
+                        pointSymbols={pointSymbols}
+                        onPointSymbolsChange={setPointSymbols}
+                        defaultSymbol={defaultPointSymbol}
+                        onDefaultSymbolChange={setDefaultPointSymbol}
+                        customTitle={
+                          selectedMultiStates.length > 0 && selectedMultiStates.length < uniqueStatesList.length
+                            ? `Chadha Diagram for Ground Water of ${selectedMultiStates.join(", ")}`
+                            : undefined
+                        }
+                        activeSpatialText={activeSpatialText}
+                      />
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md relative w-full">
+                        <div className="absolute top-4 left-4 bg-indigo-50 text-indigo-700 text-[9px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wider border border-indigo-200 z-10 shadow-xs">
+                          {chadhaCompareBy.charAt(0).toUpperCase() + chadhaCompareBy.slice(1)}: {chadhaLeftVal}
+                        </div>
+                        <ChadhaDiagram
+                          data={chadhaLeftData}
+                          pointColors={getActiveColorsForMode("chadha")}
+                          pointSizes={getActiveSizesForMode("chadha")}
+                          getPointKey={(d) => getPointKeyForMode(d, "chadha")}
+                          stateHeader={stateHeader}
+                          is3d={is3d}
+                          bubbleSizeMultiplier={bubbleSizeMultiplier}
+                          onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
+                          showLocationLabels={showLocationLabels}
+                          showAllPoints={true}
+                          pointSymbols={pointSymbols}
+                          onPointSymbolsChange={setPointSymbols}
+                          defaultSymbol={defaultPointSymbol}
+                          onDefaultSymbolChange={setDefaultPointSymbol}
+                          customTitle={`Chadha Diagram (${chadhaLeftVal})`}
+                          activeSpatialText={`${activeSpatialText} (${chadhaCompareBy}: ${chadhaLeftVal})`}
+                        />
+                      </div>
+                      <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-md relative w-full">
+                        <div className="absolute top-4 left-4 bg-indigo-50 text-indigo-700 text-[9px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wider border border-indigo-200 z-10 shadow-xs">
+                          {chadhaCompareBy.charAt(0).toUpperCase() + chadhaCompareBy.slice(1)}: {chadhaRightVal}
+                        </div>
+                        <ChadhaDiagram
+                          data={chadhaRightData}
+                          pointColors={getActiveColorsForMode("chadha")}
+                          pointSizes={getActiveSizesForMode("chadha")}
+                          getPointKey={(d) => getPointKeyForMode(d, "chadha")}
+                          stateHeader={stateHeader}
+                          is3d={is3d}
+                          bubbleSizeMultiplier={bubbleSizeMultiplier}
+                          onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
+                          showLocationLabels={showLocationLabels}
+                          showAllPoints={true}
+                          pointSymbols={pointSymbols}
+                          onPointSymbolsChange={setPointSymbols}
+                          defaultSymbol={defaultPointSymbol}
+                          onDefaultSymbolChange={setDefaultPointSymbol}
+                          customTitle={`Chadha Diagram (${chadhaRightVal})`}
+                          activeSpatialText={`${activeSpatialText} (${chadhaCompareBy}: ${chadhaRightVal})`}
                         />
                       </div>
                     </div>
@@ -3557,6 +3907,10 @@ export default function UsslPiperAnalysisView({
                                 stateHeader={stateHeader}
                                 is3d={is3d}
                                 bubbleSizeMultiplier={bubbleSizeMultiplier}
+                                onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
+                                pointSymbols={pointSymbols}
+                                defaultSymbol={defaultPointSymbol}
+                                activeSpatialText={`State: ${stName}`}
                               />
                               <GibbsPlot
                                 data={stateData}
@@ -3568,6 +3922,10 @@ export default function UsslPiperAnalysisView({
                                 stateHeader={stateHeader}
                                 is3d={is3d}
                                 bubbleSizeMultiplier={bubbleSizeMultiplier}
+                                onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
+                                pointSymbols={pointSymbols}
+                                defaultSymbol={defaultPointSymbol}
+                                activeSpatialText={`State: ${stName}`}
                               />
                             </div>
                           </div>
@@ -3591,6 +3949,10 @@ export default function UsslPiperAnalysisView({
                           stateHeader={stateHeader}
                           is3d={is3d}
                           bubbleSizeMultiplier={bubbleSizeMultiplier}
+                          onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
+                          pointSymbols={pointSymbols}
+                          defaultSymbol={defaultPointSymbol}
+                          activeSpatialText={activeSpatialText}
                         />
                       </div>
                       <div className="bg-transparent p-5 rounded-3xl">
@@ -3608,6 +3970,10 @@ export default function UsslPiperAnalysisView({
                           stateHeader={stateHeader}
                           is3d={is3d}
                           bubbleSizeMultiplier={bubbleSizeMultiplier}
+                          onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
+                          pointSymbols={pointSymbols}
+                          defaultSymbol={defaultPointSymbol}
+                          activeSpatialText={activeSpatialText}
                         />
                       </div>
                     </div>
@@ -3634,6 +4000,10 @@ export default function UsslPiperAnalysisView({
                             stateHeader={stateHeader}
                             is3d={is3d}
                             bubbleSizeMultiplier={bubbleSizeMultiplier}
+                            onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
+                            pointSymbols={pointSymbols}
+                            defaultSymbol={defaultPointSymbol}
+                            activeSpatialText={`${activeSpatialText} (${gibbsCompareBy}: ${gibbsLeftVal})`}
                           />
                         </div>
                         <div className="bg-transparent p-4 rounded-3xl">
@@ -3647,6 +4017,10 @@ export default function UsslPiperAnalysisView({
                             stateHeader={stateHeader}
                             is3d={is3d}
                             bubbleSizeMultiplier={bubbleSizeMultiplier}
+                            onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
+                            pointSymbols={pointSymbols}
+                            defaultSymbol={defaultPointSymbol}
+                            activeSpatialText={`${activeSpatialText} (${gibbsCompareBy}: ${gibbsLeftVal})`}
                           />
                         </div>
                       </div>
@@ -3672,6 +4046,10 @@ export default function UsslPiperAnalysisView({
                             stateHeader={stateHeader}
                             is3d={is3d}
                             bubbleSizeMultiplier={bubbleSizeMultiplier}
+                            onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
+                            pointSymbols={pointSymbols}
+                            defaultSymbol={defaultPointSymbol}
+                            activeSpatialText={`${activeSpatialText} (${gibbsCompareBy}: ${gibbsRightVal})`}
                           />
                         </div>
                         <div className="bg-transparent p-4 rounded-3xl">
@@ -3685,6 +4063,10 @@ export default function UsslPiperAnalysisView({
                             stateHeader={stateHeader}
                             is3d={is3d}
                             bubbleSizeMultiplier={bubbleSizeMultiplier}
+                            onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
+                            pointSymbols={pointSymbols}
+                            defaultSymbol={defaultPointSymbol}
+                            activeSpatialText={`${activeSpatialText} (${gibbsCompareBy}: ${gibbsRightVal})`}
                           />
                         </div>
                       </div>
@@ -3873,9 +4255,15 @@ export default function UsslPiperAnalysisView({
                                       stateHeader={stateHeader}
                                       is3d={is3d}
                                       bubbleSizeMultiplier={bubbleSizeMultiplier}
+                                      onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
                                       showLocationLabels={showLocationLabels}
                                       showAllPoints={true}
+                                      pointSymbols={pointSymbols}
+                                      onPointSymbolsChange={setPointSymbols}
+                                      defaultSymbol={defaultPointSymbol}
+                                      onDefaultSymbolChange={setDefaultPointSymbol}
                                       customTitle={`USSL Matrix (${aq})`}
+                                      activeSpatialText={`Aquifer: ${aq}`}
                                     />
                                   </div>
 
@@ -3892,9 +4280,15 @@ export default function UsslPiperAnalysisView({
                                       stateHeader={stateHeader}
                                       is3d={is3d}
                                       bubbleSizeMultiplier={bubbleSizeMultiplier}
+                                      onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
                                       showLocationLabels={showLocationLabels}
                                       showAllPoints={true}
+                                      pointSymbols={pointSymbols}
+                                      onPointSymbolsChange={setPointSymbols}
+                                      defaultSymbol={defaultPointSymbol}
+                                      onDefaultSymbolChange={setDefaultPointSymbol}
                                       customTitle={`Piper Diagram (${aq})`}
+                                      activeSpatialText={`Aquifer: ${aq}`}
                                     />
                                   </div>
 
@@ -3913,6 +4307,10 @@ export default function UsslPiperAnalysisView({
                                       stateHeader={stateHeader}
                                       is3d={is3d}
                                       bubbleSizeMultiplier={bubbleSizeMultiplier}
+                                      onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
+                                      pointSymbols={pointSymbols}
+                                      defaultSymbol={defaultPointSymbol}
+                                      activeSpatialText={`Aquifer: ${aq}`}
                                     />
                                   </div>
 
@@ -3931,6 +4329,10 @@ export default function UsslPiperAnalysisView({
                                       stateHeader={stateHeader}
                                       is3d={is3d}
                                       bubbleSizeMultiplier={bubbleSizeMultiplier}
+                                      onBubbleSizeMultiplierChange={setBubbleSizeMultiplier}
+                                      pointSymbols={pointSymbols}
+                                      defaultSymbol={defaultPointSymbol}
+                                      activeSpatialText={`Aquifer: ${aq}`}
                                     />
                                   </div>
                                 </div>
@@ -4042,7 +4444,6 @@ export default function UsslPiperAnalysisView({
                   )}
                 </div>
               )}
-            </div>
 
             {!["gibbs", "aquifer_compare"].includes(viewMode) && (
               <div className={isComparisonActive ? "w-full grid grid-cols-1 lg:grid-cols-2 gap-6 items-start" : "w-full max-w-xl mx-auto space-y-6"}>
@@ -4124,10 +4525,10 @@ export default function UsslPiperAnalysisView({
                                 <tr>
                                   <th className="px-2 py-1">Category / Class</th>
                                   <th className="px-2 py-1 text-center bg-indigo-50/50 text-indigo-900">
-                                    {viewMode === "ussl" ? usslLeftVal : piperLeftVal}
+                                    {viewMode === "ussl" ? usslLeftVal : viewMode === "piper" ? piperLeftVal : chadhaLeftVal}
                                   </th>
                                   <th className="px-2 py-1 text-center bg-amber-50/50 text-amber-900">
-                                    {viewMode === "ussl" ? usslRightVal : piperRightVal}
+                                    {viewMode === "ussl" ? usslRightVal : viewMode === "piper" ? piperRightVal : chadhaRightVal}
                                   </th>
                                 </tr>
                               </thead>
@@ -4195,13 +4596,26 @@ export default function UsslPiperAnalysisView({
                           compact={true}
                         />
                       )}
+                      {viewMode === "chadha" && (
+                        <DonutChart
+                          data={stats.facies}
+                          colors={faciesColors}
+                          sizes={faciesSizes}
+                          onColorChange={(k, c) => setFaciesColors((p) => ({ ...p, [k]: c }))}
+                          onSizeChange={(k, s) => setFaciesSizes((p) => ({ ...p, [k]: s }))}
+                          onNameChange={(k, n) => setFaciesNames((p) => ({ ...p, [k]: n }))}
+                          defaultTitle="Chadha Water Hydrochemical Facies"
+                          compact={true}
+                        />
+                      )}
                     </>
                   );
                 })()}
               </div>
             )}
           </div>
-        ) : viewMode === "completeness" ? (
+        </div>
+      ) : viewMode === "completeness" ? (
           <div className="bg-white rounded-[2rem] border border-slate-200 overflow-hidden shadow-lg flex flex-col h-[650px] w-full">
             <div className="flex justify-between items-center p-4 bg-slate-50 border-b border-slate-200 sticky top-0 shrink-0 z-20">
               <span className="text-[10px] font-black uppercase text-indigo-650 flex items-center gap-1">

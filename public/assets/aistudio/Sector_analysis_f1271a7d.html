@@ -1,0 +1,1552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Groundwater Sector Analyst Pro - Advanced Units</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/shpjs@latest/dist/shp.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background: #0f172a; margin: 0; padding: 0; height: 100vh; width: 100vw; overflow: hidden; }
+        #map { height: 100vh; width: 100vw; z-index: 1; background: #0f172a; }
+        
+        .floating-sidebar {
+            position: absolute; top: 20px; left: 20px; width: 440px;
+            max-height: calc(100vh - 40px); z-index: 1000;
+            background: rgba(255, 255, 255, 0.98); backdrop-filter: blur(10px);
+            border-radius: 1.5rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            display: flex; flex-direction: column; border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .map-legend {
+            position: absolute; bottom: 30px; right: 30px; z-index: 1000;
+            background: white; padding: 12px; border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); border: 1px solid #e2e8f0;
+            min-width: 180px;
+        }
+
+        .analysis-label {
+            background: rgba(255, 255, 255, 0.95); 
+            backdrop-filter: blur(4px);
+            color: #0f172a; 
+            padding: 6px 10px;
+            border-radius: 8px; 
+            font-size: 9px; 
+            text-align: center; 
+            font-weight: 700;
+            pointer-events: none; 
+            border: 1px solid rgba(79, 70, 229, 0.3);
+            white-space: nowrap; 
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            line-height: 1.4;
+            transform: translate(-50%, -50%); /* Added for perfect visual centering */
+        }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        
+        .drawing-mode-active #map { cursor: crosshair; outline: 6px inset #6366f1; }
+        
+        .toast-info {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            background: #1e293b; color: white; padding: 10px 24px; border-radius: 50px;
+            font-size: 13px; font-weight: bold; z-index: 9999; display: none; align-items: center; gap: 10px;
+            border: 1px solid #4f46e5;
+        }
+
+        .pulse-marker {
+            width: 24px; height: 24px;
+            background: #4f46e5; border: 4px solid white;
+            border-radius: 50%;
+            box-shadow: 0 0 0 rgba(79, 70, 229, 0.4);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(79, 70, 229, 0.7); }
+            70% { box-shadow: 0 0 0 25px rgba(79, 70, 229, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(79, 70, 229, 0); }
+        }
+
+        .range-item:hover .remove-range-btn { opacity: 1; }
+
+        .leaflet-popup-content-wrapper { border-radius: 12px; padding: 0; overflow: hidden; }
+        .leaflet-popup-content { margin: 0; width: 260px !important; }
+        .stats-popup-header { background: #1e293b; color: white; padding: 10px 14px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; }
+        .stats-popup-body { padding: 12px; background: white; }
+        .stat-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f1f5f9; }
+        .stat-row:last-child { border-bottom: none; }
+        
+        /* Custom map layer control styling */
+        .leaflet-control-layers { border-radius: 12px !important; border: 1px solid #e2e8f0 !important; box-shadow: 0 10px 25px rgba(0,0,0,0.1) !important; padding: 5px !important; }
+        .leaflet-control-layers-list { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 11px; font-weight: 600; color: #1e293b; }
+    </style>
+</head>
+<body id="mainBody">
+
+    <div id="map"></div>
+    
+    <div id="toast" class="toast-info">
+        <i data-lucide="crosshair" class="w-4 h-4 text-indigo-400"></i>
+        <span id="toastMsg">Ready</span>
+    </div>
+    
+    <div id="legendContainer" class="map-legend hidden"></div>
+
+    <div class="floating-sidebar p-5">
+        <div class="flex items-center gap-3 border-b pb-4 mb-4">
+            <div class="p-2 bg-indigo-600 rounded-lg shadow-lg shadow-indigo-200">
+                <i data-lucide="layers" class="w-5 h-5 text-white"></i>
+            </div>
+            <div>
+                <h1 class="text-sm font-extrabold text-slate-800 uppercase tracking-tight">Sector Analyst Pro</h1>
+                <p class="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Advanced Spatial Reporting</p>
+            </div>
+        </div>
+
+        <div class="flex-1 overflow-y-auto custom-scrollbar space-y-4 pr-1">
+            <div class="space-y-3">
+                <label class="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Step 1: Data Preparation</label>
+                
+                <div class="flex gap-2">
+                    <label class="flex-1 cursor-pointer bg-slate-900 text-white px-3 py-2.5 rounded-xl font-bold text-[10px] uppercase tracking-wider flex items-center justify-center gap-2 hover:bg-black transition-all group">
+                        <i data-lucide="file-up" class="w-4 h-4 group-hover:-translate-y-1 transition-transform"></i> 
+                        Excel
+                        <input type="file" id="fileInput" class="hidden" accept=".xlsx, .xls">
+                    </label>
+                    <label class="flex-1 cursor-pointer bg-slate-700 text-white px-3 py-2.5 rounded-xl font-bold text-[10px] uppercase tracking-wider flex items-center justify-center gap-2 hover:bg-slate-800 transition-all group" title="Select multiple linked shapefile components (.shp, .shx, .dbf) at once, or upload a .zip/.geojson">
+                        <i data-lucide="map" class="w-4 h-4 group-hover:-translate-y-1 transition-transform"></i> 
+                        Boundary
+                        <input type="file" id="shapeInput" class="hidden" accept=".zip,.geojson,.json,.shp,.shx,.dbf,.prj" multiple>
+                    </label>
+                </div>
+
+                <!-- NEW: Multiple Boundary Layers List -->
+                <div id="boundaryListContainer" class="space-y-1.5 mt-2 empty:hidden"></div>
+            </div>
+
+            <!-- MAPPING SECTION -->
+            <div id="mappingSection" class="hidden bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-3 shadow-inner">
+                <label class="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Step 2: Map Columns</label>
+                
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="space-y-1">
+                        <label class="text-[9px] font-bold text-slate-500 uppercase">Latitude</label>
+                        <select id="latMap" onchange="updateLatLonMap()" class="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none shadow-sm"></select>
+                    </div>
+                    <div class="space-y-1">
+                        <label class="text-[9px] font-bold text-slate-500 uppercase">Longitude</label>
+                        <select id="lonMap" onchange="updateLatLonMap()" class="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none shadow-sm"></select>
+                    </div>
+                </div>
+                <div class="space-y-1 border-t border-slate-200 pt-2 mt-2">
+                    <label class="text-[9px] font-bold text-slate-500 uppercase">Data Column for <span id="mapParamName" class="text-indigo-600 font-black">pH</span></label>
+                    <select id="valMap" onchange="updateValMap()" class="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none shadow-sm"></select>
+                </div>
+            </div>
+
+            <div class="bg-indigo-600 p-4 rounded-2xl shadow-lg space-y-3">
+                <label class="text-[10px] font-black text-white/70 uppercase tracking-widest block">Step 3: Origin & Points</label>
+                <div class="flex gap-2">
+                    <button onclick="locateUser()" class="flex-1 bg-white text-indigo-600 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-indigo-50 transition-all">
+                        <i data-lucide="navigation" class="w-4 h-4"></i> GPS Center
+                    </button>
+                    <button onclick="toggleDrawingMode()" class="flex-1 bg-indigo-500 text-white py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-indigo-400 transition-all">
+                        <i data-lucide="mouse-pointer-2" class="w-4 h-4"></i> Pick Center
+                    </button>
+                </div>
+                <div class="flex justify-between text-[10px] text-white/90 font-bold px-1 pt-1 border-t border-white/10">
+                    <div id="centerLatDisp">Lat: --</div>
+                    <div id="centerLngDisp">Lng: --</div>
+                </div>
+            </div>
+
+            <div class="bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-3">
+                <label class="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Step 4: Ring & Sector Config</label>
+                
+                <div class="space-y-2">
+                    <div class="flex items-center justify-between">
+                        <label class="text-[9px] font-bold text-slate-500 uppercase">Radial Rings (km)</label>
+                        <div class="flex gap-1">
+                            <input id="newRingInput" type="number" step="0.5" placeholder="KM" class="w-16 bg-white border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-bold outline-none">
+                            <button onclick="addRingFromInput()" class="bg-indigo-600 text-white px-2 py-1 rounded-lg text-[10px] font-black uppercase hover:bg-indigo-700">Add</button>
+                        </div>
+                    </div>
+                    <div id="ringsContainer" class="flex flex-wrap gap-2 min-h-[30px] p-2 bg-white rounded-xl border border-dashed border-slate-200"></div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3 pt-2">
+                    <div class="space-y-1">
+                        <label class="text-[9px] font-bold text-slate-500 uppercase">Sector Angle (°)</label>
+                        <input id="sectorAngle" type="number" value="45" min="1" max="360" class="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none" onchange="runAnalysis()">
+                    </div>
+                    <div class="space-y-1">
+                         <label class="text-[9px] font-bold text-slate-500 uppercase">Target Parameter</label>
+                         <select id="activeParam" onchange="syncLimits(); runAnalysis()" class="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none shadow-sm"></select>
+                    </div>
+                </div>
+
+                <div class="pt-2 border-t border-slate-200 space-y-3">
+                    <div class="flex flex-wrap gap-4">
+                        <label class="flex items-center gap-2 cursor-pointer group">
+                            <input type="checkbox" id="hideEmptySectors" onchange="runAnalysis()" class="w-4 h-4 accent-indigo-600 rounded">
+                            <span class="text-[10px] font-bold text-slate-600 uppercase group-hover:text-indigo-600 transition-colors">Hide Empty Sectors</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer group" title="Hide locations missing data for this parameter">
+                            <input type="checkbox" id="hideMissingData" onchange="plotAllPoints()" checked class="w-4 h-4 accent-indigo-600 rounded">
+                            <span class="text-[10px] font-bold text-slate-600 uppercase group-hover:text-indigo-600 transition-colors">Hide Missing Data</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer group" title="Crop sectors so they do not go outside the uploaded boundary">
+                            <input type="checkbox" id="clipToBoundary" onchange="runAnalysis()" checked class="w-4 h-4 accent-indigo-600 rounded">
+                            <span class="text-[10px] font-bold text-slate-600 uppercase group-hover:text-indigo-600 transition-colors">Clip to Boundary</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer group" title="Automatically restrict the analysis ONLY to the specific shape (State/District) where the center point is located.">
+                            <input type="checkbox" id="autoRestrictOrigin" onchange="runAnalysis()" checked class="w-4 h-4 accent-indigo-600 rounded">
+                            <span class="text-[10px] font-bold text-slate-600 uppercase group-hover:text-indigo-600 transition-colors">Isolate Origin Shape</span>
+                        </label>
+                    </div>
+
+                    <div class="bg-white p-3 rounded-xl border border-slate-200 space-y-2">
+                        <div class="flex justify-between items-center mb-1">
+                            <label class="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Sector Stats to Display</label>
+                            <button onclick="document.getElementById('labelFormatPanel').classList.toggle('hidden')" class="text-[8px] font-black text-indigo-500 hover:text-indigo-700 hover:underline flex items-center gap-1 transition-colors">
+                                <i data-lucide="palette" class="w-3 h-3"></i> Format
+                            </button>
+                        </div>
+                        <div class="grid grid-cols-2 gap-y-2 gap-x-1">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="showLabelId" onchange="runAnalysis()" checked class="w-3.5 h-3.5 accent-indigo-600 rounded">
+                                <span class="text-[9px] font-bold text-slate-500 uppercase">Sector ID</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="showLabelAvg" onchange="runAnalysis()" checked class="w-3.5 h-3.5 accent-indigo-600 rounded">
+                                <span class="text-[9px] font-bold text-slate-500 uppercase">Avg Value</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="showLabelCount" onchange="runAnalysis()" checked class="w-3.5 h-3.5 accent-indigo-600 rounded">
+                                <span class="text-[9px] font-bold text-slate-500 uppercase">Samples</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="showLabelArea" onchange="runAnalysis()" checked class="w-3.5 h-3.5 accent-indigo-600 rounded">
+                                <span class="text-[9px] font-bold text-slate-500 uppercase">Area (km²)</span>
+                            </label>
+                        </div>
+                        
+                        <!-- Label Formatting Panel -->
+                        <div id="labelFormatPanel" class="hidden mt-2 pt-2 border-t border-slate-100 bg-slate-50 p-2 rounded">
+                            <div class="grid grid-cols-[1fr_auto_auto] gap-2 items-center text-[8px] font-black text-slate-400 uppercase tracking-wider mb-1 px-1">
+                                <span>Label Type</span><span>Color</span><span>Size (px)</span>
+                            </div>
+                            <div class="grid grid-cols-[1fr_auto_auto] gap-2 items-center text-[9px] font-bold text-slate-600 mb-1">
+                                <span>Sector ID</span>
+                                <input type="color" id="fmtColorId" value="#4f46e5" onchange="updateLabelFormat()" class="w-4 h-4 rounded cursor-pointer border-none bg-transparent p-0">
+                                <input type="number" id="fmtSizeId" value="7" min="4" max="24" onchange="updateLabelFormat()" class="w-12 border border-slate-200 rounded px-1 py-0.5 text-center bg-white">
+                            </div>
+                            <div class="grid grid-cols-[1fr_auto_auto] gap-2 items-center text-[9px] font-bold text-slate-600 mb-1">
+                                <span>Avg Value</span>
+                                <input type="color" id="fmtColorAvg" value="#0f172a" onchange="updateLabelFormat()" class="w-4 h-4 rounded cursor-pointer border-none bg-transparent p-0">
+                                <input type="number" id="fmtSizeAvg" value="9" min="4" max="24" onchange="updateLabelFormat()" class="w-12 border border-slate-200 rounded px-1 py-0.5 text-center bg-white">
+                            </div>
+                            <div class="grid grid-cols-[1fr_auto_auto] gap-2 items-center text-[9px] font-bold text-slate-600 mb-1">
+                                <span>Samples</span>
+                                <input type="color" id="fmtColorCount" value="#0f172a" onchange="updateLabelFormat()" class="w-4 h-4 rounded cursor-pointer border-none bg-transparent p-0">
+                                <input type="number" id="fmtSizeCount" value="8" min="4" max="24" onchange="updateLabelFormat()" class="w-12 border border-slate-200 rounded px-1 py-0.5 text-center bg-white">
+                            </div>
+                            <div class="grid grid-cols-[1fr_auto_auto] gap-2 items-center text-[9px] font-bold text-slate-600">
+                                <span>Area</span>
+                                <input type="color" id="fmtColorArea" value="#64748b" onchange="updateLabelFormat()" class="w-4 h-4 rounded cursor-pointer border-none bg-transparent p-0">
+                                <input type="number" id="fmtSizeArea" value="8" min="4" max="24" onchange="updateLabelFormat()" class="w-12 border border-slate-200 rounded px-1 py-0.5 text-center bg-white">
+                            </div>
+                            
+                            <!-- New Sector Boundary Styling Controls -->
+                            <div class="border-t border-slate-200 mt-2 pt-2">
+                                <div class="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center text-[8px] font-black text-slate-400 uppercase tracking-wider mb-1 px-1">
+                                    <span>Sector Borders</span>
+                                    <span class="text-center" title="Match Fill Color">Match Fill</span>
+                                    <span>Color</span>
+                                    <span>Thick</span>
+                                </div>
+                                <div class="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center text-[9px] font-bold text-slate-600">
+                                    <span>Border Line</span>
+                                    <input type="checkbox" id="fmtMatchFill" checked onchange="updateLabelFormat()" class="w-3.5 h-3.5 accent-indigo-600 rounded mx-auto cursor-pointer" title="Match Fill Color">
+                                    <input type="color" id="fmtColorSectorBorder" value="#ffffff" onchange="updateLabelFormat()" class="w-4 h-4 rounded cursor-pointer border-none bg-transparent p-0 mx-auto" title="Border Color">
+                                    <input type="number" id="fmtWeightSectorBorder" value="1.5" step="0.5" min="0" max="10" onchange="updateLabelFormat()" class="w-12 border border-slate-200 rounded px-1 py-0.5 text-center bg-white" title="Border Thickness">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="pt-2 border-t border-slate-200">
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="text-[9px] font-bold text-slate-500 uppercase">Range Thresholds & Units</label>
+                        <button onclick="addNewRange()" class="text-[9px] font-black text-indigo-600 uppercase hover:underline">Add Tier</button>
+                    </div>
+                    <div id="rangeEditor" class="space-y-1.5"></div>
+                </div>
+            </div>
+
+            <div id="filterList" class="space-y-2"></div>
+        </div>
+
+        <div class="mt-4">
+            <button id="exportBtn" onclick="exportAdvancedReport()" class="hidden w-full bg-emerald-600 text-white py-3.5 rounded-2xl font-black text-[11px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-xl hover:bg-emerald-700 transition-all active:scale-[0.98]">
+                <i data-lucide="download" class="w-4 h-4"></i> Export Detailed Reports
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const PARAM_CONFIG = {
+            'pH': { b1: 6.5, b2: 8.5, unit: '', name: 'pH Level', keywords: ['ph', 'ph level', 'hydrogen'] },
+            'TDS': { b1: 500, b2: 2000, unit: 'mg/l', name: 'Total Dissolved Solids', keywords: ['tds', 'total dissolved solids'] },
+            'Turbidity': { b1: 1, b2: 5, unit: 'NTU', name: 'Turbidity', keywords: ['turbidity'] },
+            'Alkalinity': { b1: 200, b2: 600, unit: 'mg/l', name: 'Total Alkalinity', keywords: ['alkalinity', 'total alkalinity'] },
+            'TH': { b1: 200, b2: 600, unit: 'mg/l as CaCO3', name: 'Total Hardness', keywords: ['th', 'total hardness', 'hardness'] },
+            'EC': { b1: 750, b2: 3000, unit: 'µS/cm at 25°C  ', name: 'Electrical Conductivity', keywords: ['ec', 'cond', 'conductivity', 'electrical conductivity'] },
+            'Cl': { b1: 250, b2: 1000, unit: 'mg/l', name: 'Chloride', keywords: ['cl', 'chloride'] },
+            'NO3': { b1: 45, b2: 45, unit: 'mg/l', name: 'Nitrate', keywords: ['no3', 'nitrate'] },
+            'F': { b1: 1.0, b2: 1.5, unit: 'mg/l', name: 'Fluoride', keywords: ['f', 'fluoride'] },
+            'Fe': { b1: 1.0, b2: 1.0, unit: 'mg/l', name: 'Iron', keywords: ['fe', 'iron', 'total iron'] },
+            'As': { b1: 10, b2: 10, unit: 'ppb', name: 'Arsenic', keywords: ['as', 'arsenic'] },
+            'U': { b1: 30, b2: 30, unit: 'ppb', name: 'Uranium', keywords: ['u', 'uranium'] },
+            'Zn': { b1: 5, b2: 15, unit: 'mg/l', name: 'Zinc', keywords: ['zn', 'zinc'] },
+            'Cu': { b1: 0.05, b2: 1.5, unit: 'mg/l', name: 'Copper', keywords: ['cu', 'copper'] },
+            'Pb': { b1: 0.01, b2: 0.01, unit: 'mg/L', name: 'Lead', keywords: ['Pb', 'lead'] },
+            'Cd': { b1: 0.003, b2: 0.003, unit: 'mg/L', name: 'Cadmium', keywords: ['cd', 'cadmium'] },
+            'Cr': { b1: 0.05, b2: 0.05, unit: 'mg/l', name: 'Chromium', keywords: ['cr', 'chromium'] },
+            'Hg': { b1: 0.001, b2: 0.001, unit: 'mg/L', name: 'Mercury', keywords: ['hg', 'mercury'] },
+            'Ni': { b1: 0.02, b2: 0.02, unit: 'mg/l', name: 'Nickel', keywords: ['ni', 'nickel'] },
+            'Se': { b1: 0.01, b2: 0.01, unit: 'mg/L', name: 'Selenium', keywords: ['se', 'selenium'] },
+            'Ca': { b1: 75, b2: 200, unit: 'mg/l', name: 'Calcium', keywords: ['ca', 'calcium'] },
+            'Mg': { b1: 30, b2: 100, unit: 'mg/l', name: 'Magnesium', keywords: ['mg', 'magnesium'] },
+            'SO4': { b1: 200, b2: 400, unit: 'mg/l', name: 'Sulphate', keywords: ['so4', 'sulphate', 'sulfate'] },
+            'Mn': { b1: 0.1, b2: 0.3, unit: 'mg/l', name: 'Manganese', keywords: ['Mn', 'Manganese'] },
+            'Al': { b1: 0.03, b2: 0.2, unit: 'mg/l', name: 'Alluminium', keywords: ['Al', 'Alluminium'] },
+            'Ba': { b1: 0.7, b2: 0.7, unit: 'mg/l', name: 'Barium', keywords: ['Ba', 'Barium'] },
+            'B': { b1: 0.5, b2: 2.4, unit: 'mg/l', name: 'Boran', keywords: ['B', 'Boran'] },
+        };
+
+        let map, rawData = [], filters = {};
+        let filterMeta = [];
+        let layers = { polys: null, labels: null, centerMarker: null, wells: null };
+        let customRanges = [], activeSectorData = [];
+        let availableColumns = [];
+        let columnMap = { lat: '', lon: '', params: {} };
+        let isDrawing = false, centerPoint = null;
+        let radii = [5, 10]; 
+        
+        // LABEL FORMATTING STATE
+        let labelFormat = {
+            id: { color: '#4f46e5', size: 7 },
+            avg: { color: '#0f172a', size: 9 },
+            count: { color: '#0f172a', size: 8 },
+            area: { color: '#64748b', size: 8 },
+            sector: { borderColor: '#ffffff', weight: 1.5, matchFill: true }
+        };
+
+        // MULTI-LAYER Boundary/Shape Variables
+        let shapefileLayers = []; // Stores all uploaded boundary objects
+        const LAYER_COLORS = ['#4f46e5', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4'];
+        let colorIndex = 0;
+        
+        let currentFilteredData = [];  // OPTIMIZATION: Cached Filtered Dataset
+
+        // HELPER: Prevents double-counting points that sit exactly on boundaries
+        function getRangeMatch(val) {
+            return customRanges.find((r, i) => 
+                (i === customRanges.length - 1) ? (val >= r.min && val <= r.max) : (val >= r.min && val < r.max)
+            );
+        }
+
+        // HELPER: Extract a readable name from a shapefile feature
+        function getFeatureName(feature, index) {
+            if (!feature.properties) return `Feature ${index}`;
+            const keys = Object.keys(feature.properties);
+            
+            // Priority 1: Common specific names
+            let nameKey = keys.find(k => /^(name|nam|dist|district|block|state|mandal|tehsil|aq|aquifer)$/i.test(k.trim()));
+            
+            // Priority 2: Contains 'name'
+            if (!nameKey) nameKey = keys.find(k => /name/i.test(k.trim()));
+            
+            // Priority 3: First string property that isn't too long
+            if (!nameKey) nameKey = keys.find(k => typeof feature.properties[k] === 'string' && feature.properties[k].length < 50);
+            
+            if (nameKey && feature.properties[nameKey]) return String(feature.properties[nameKey]).trim();
+            return `Feature ${index}`;
+        }
+
+        function updateLabelFormat() {
+            labelFormat.id.color = document.getElementById('fmtColorId').value;
+            labelFormat.id.size = document.getElementById('fmtSizeId').value;
+            
+            labelFormat.avg.color = document.getElementById('fmtColorAvg').value;
+            labelFormat.avg.size = document.getElementById('fmtSizeAvg').value;
+            
+            labelFormat.count.color = document.getElementById('fmtColorCount').value;
+            labelFormat.count.size = document.getElementById('fmtSizeCount').value;
+            
+            labelFormat.area.color = document.getElementById('fmtColorArea').value;
+            labelFormat.area.size = document.getElementById('fmtSizeArea').value;
+            
+            // Sector Borders formatting updates
+            labelFormat.sector.borderColor = document.getElementById('fmtColorSectorBorder').value;
+            labelFormat.sector.weight = parseFloat(document.getElementById('fmtWeightSectorBorder').value);
+            labelFormat.sector.matchFill = document.getElementById('fmtMatchFill').checked;
+            
+            if(centerPoint) runAnalysis();
+        }
+
+        // OPTIMIZATION: Process attribute and spatial filters ONCE and store in memory
+        function refreshFilteredData() {
+            if (rawData.length === 0) {
+                currentFilteredData = [];
+                return;
+            }
+
+            const latKey = columnMap.lat;
+            const lonKey = columnMap.lon;
+            const activeFilters = shapefileLayers.filter(l => l.isFilter);
+
+            currentFilteredData = rawData.filter(d => {
+                // 1. Check Dropdown Attribute Filters
+                const passesFilters = Object.entries(filters).every(([k, vSet]) => 
+                    vSet.size === 0 || vSet.has(String(d[k] || ''))
+                );
+                if (!passesFilters) return false;
+
+                // 2. Check Spatial Boundary Filters (Intersection of all active clip layers)
+                if (activeFilters.length > 0 && latKey && lonKey) {
+                    const lat = parseFloat(d[latKey]);
+                    const lon = parseFloat(d[lonKey]);
+                    
+                    if (isNaN(lat) || isNaN(lon)) return false;
+                    const pt = turf.point([lon, lat]);
+
+                    // Point must be inside ALL active filter layers
+                    for (let f = 0; f < activeFilters.length; f++) {
+                        const filterLayer = activeFilters[f];
+                        
+                        // Only check against user-selected (checked) sub-features in this layer
+                        const activeFeatures = filterLayer.features.filter(feat => feat.isSelected);
+                        if (activeFeatures.length === 0) return false; // Everything is unchecked
+
+                        // FAST CHECK: Is the point inside the rough layer bounding box?
+                        if (lon < filterLayer.bbox[0] || lon > filterLayer.bbox[2] || lat < filterLayer.bbox[1] || lat > filterLayer.bbox[3]) {
+                            return false; 
+                        }
+
+                        // SLOW CHECK: Point in exact selected polygon shapes
+                        let isInside = false;
+                        for (let i = 0; i < activeFeatures.length; i++) {
+                            const feat = activeFeatures[i];
+                            // MASSIVE SPEEDUP: Bounding Box check for individual sub-polygons before exact math
+                            if (lon < feat.bbox[0] || lon > feat.bbox[2] || lat < feat.bbox[1] || lat > feat.bbox[3]) {
+                                continue; 
+                            }
+                            if (turf.booleanPointInPolygon(pt, feat.poly)) {
+                                isInside = true;
+                                break;
+                            }
+                        }
+                        if (!isInside) return false;
+                    }
+                }
+                
+                return true;
+            });
+        }
+
+        window.onload = () => {
+            lucide.createIcons();
+            initMap();
+            populateParamList();
+            renderRadii();
+            syncLimits();
+        };
+
+        function initMap() {
+            map = L.map('map', { zoomControl: false, attributionControl: false }).setView([22.5, 82.5], 5);
+            
+            // MAP LAYERS (BASEMAPS)
+            const googleHybrid = L.tileLayer('https://{s}.google.com/vt/lyrs=y,h&x={x}&y={y}&z={z}', {
+                maxZoom: 20, subdomains:['mt0','mt1','mt2','mt3'], crossOrigin: true
+            });
+            
+            const googleSatellite = L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+                maxZoom: 20, subdomains:['mt0','mt1','mt2','mt3'], crossOrigin: true
+            });
+            
+            const googlePhysical = L.tileLayer('https://{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', {
+                maxZoom: 20, subdomains:['mt0','mt1','mt2','mt3'], crossOrigin: true
+            });
+            
+            const googleStreets = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                maxZoom: 20, subdomains:['mt0','mt1','mt2','mt3'], crossOrigin: true
+            });
+
+            // Set default basemap
+            googleHybrid.addTo(map);
+
+            // Layer Control UI
+            const baseMaps = {
+                "Google Earth (Satellite + Names)": googleHybrid,
+                "Google Earth (No Names)": googleSatellite,
+                "Physical Map (Terrain)": googlePhysical,
+                "Standard Map (Streets)": googleStreets
+            };
+            
+            L.control.layers(baseMaps, null, { position: 'topright' }).addTo(map);
+
+            layers.polys = L.layerGroup().addTo(map);
+            layers.labels = L.layerGroup().addTo(map);
+            layers.centerMarker = L.layerGroup().addTo(map);
+            layers.wells = L.layerGroup().addTo(map);
+
+            map.on('click', handleMapClick);
+        }
+
+        function renderRadii() {
+            const container = document.getElementById('ringsContainer');
+            radii.sort((a,b) => a-b);
+            container.innerHTML = radii.map((r, i) => `
+                <div class="flex items-center bg-indigo-50 border border-indigo-200 rounded-lg px-2 py-1 gap-2 shadow-sm">
+                    <span class="text-[10px] font-bold text-indigo-700">${r} km</span>
+                    <button onclick="removeRing(${i})" class="text-indigo-400 hover:text-red-500">
+                        <i data-lucide="x" class="w-3 h-3"></i>
+                    </button>
+                </div>
+            `).join('');
+            lucide.createIcons();
+            if(centerPoint) runAnalysis();
+        }
+
+        function addRingFromInput() {
+            const input = document.getElementById('newRingInput');
+            const num = parseFloat(input.value);
+            if(!isNaN(num) && num > 0 && !radii.includes(num)) {
+                radii.push(num);
+                input.value = '';
+                renderRadii();
+            }
+        }
+
+        function removeRing(index) {
+            radii.splice(index, 1);
+            renderRadii();
+        }
+
+        function syncLimits() {
+            const pKey = document.getElementById('activeParam').value;
+            
+            // Sync the Mapping UI
+            document.getElementById('mapParamName').innerText = pKey;
+            if (availableColumns.length > 0) {
+                document.getElementById('valMap').value = columnMap.params[pKey] || '';
+            }
+
+            const config = PARAM_CONFIG[pKey];
+            customRanges = [
+                { min: 0, max: config.b1, label: 'Desirable', color: '#10b981', unit: config.unit, visible: true },
+                { min: config.b1, max: config.b2, label: 'Permissible', color: '#fbbf24', unit: config.unit, visible: true },
+                { min: config.b2, max: 100000, label: 'Unsuitable', color: '#ef4444', unit: config.unit, visible: true }
+            ];
+            renderRangeEditor();
+            updateLegend();
+            plotAllPoints();
+            if(centerPoint) runAnalysis();
+        }
+
+        function addNewRange() {
+            const lastMax = customRanges.length > 0 ? customRanges[customRanges.length - 1].max : 0;
+            const lastUnit = customRanges.length > 0 ? customRanges[customRanges.length - 1].unit : '';
+            customRanges.push({ min: lastMax + 0.001, max: lastMax + 100, label: 'New Tier', color: '#6366f1', unit: lastUnit, visible: true });
+            renderRangeEditor();
+            updateLegend();
+            if(centerPoint) runAnalysis();
+        }
+
+        function removeRange(index) {
+            if (customRanges.length <= 1) return;
+            customRanges.splice(index, 1);
+            renderRangeEditor();
+            updateLegend();
+            plotAllPoints();
+            if(centerPoint) runAnalysis();
+        }
+
+        function toggleRangeVisibility(index, isVisible) {
+            customRanges[index].visible = isVisible;
+            renderRangeEditor();
+            updateLegend();
+            plotAllPoints();
+            if(centerPoint) runAnalysis();
+        }
+
+        function renderRangeEditor() {
+            const container = document.getElementById('rangeEditor');
+            container.innerHTML = customRanges.map((r, i) => `
+                <div class="range-item flex flex-col bg-white p-2 rounded-xl border border-slate-200 transition-all shadow-sm ${r.visible === false ? 'opacity-50 grayscale' : ''}">
+                    <div class="flex items-center gap-1.5 mb-1.5">
+                        <input type="checkbox" ${r.visible !== false ? 'checked' : ''} onchange="toggleRangeVisibility(${i}, this.checked)" class="w-3.5 h-3.5 accent-indigo-600 rounded cursor-pointer" title="Show/Hide Points">
+                        <input type="color" value="${r.color}" onchange="customRanges[${i}].color=this.value; updateLegend(); plotAllPoints(); runAnalysis()" class="w-4 h-4 rounded cursor-pointer border-none bg-transparent p-0">
+                        <input type="text" value="${r.label}" placeholder="Label" onchange="customRanges[${i}].label=this.value; updateLegend()" class="flex-1 text-[9px] font-extrabold outline-none text-slate-700 bg-slate-50 px-1 rounded">
+                        <input type="text" value="${r.unit}" placeholder="Unit" onchange="customRanges[${i}].unit=this.value; runAnalysis(); updateLegend()" class="w-14 text-[8px] font-black text-indigo-500 uppercase border-b border-indigo-100 outline-none">
+                        <button onclick="removeRange(${i})" class="remove-range-btn opacity-0 text-slate-300 hover:text-red-500 ml-auto">
+                            <i data-lucide="trash-2" class="w-3 h-3"></i>
+                        </button>
+                    </div>
+                    <div class="flex items-center gap-1 pl-5">
+                        <input type="number" step="0.01" value="${r.min}" onchange="customRanges[${i}].min=parseFloat(this.value); updateLegend(); runAnalysis(); plotAllPoints();" class="flex-1 text-[9px] font-bold bg-slate-100 text-center rounded py-0.5">
+                        <span class="text-[8px] text-slate-400 font-bold">TO</span>
+                        <input type="number" step="0.01" value="${r.max}" onchange="customRanges[${i}].max=parseFloat(this.value); updateLegend(); runAnalysis(); plotAllPoints();" class="flex-1 text-[9px] font-bold bg-slate-100 text-center rounded py-0.5">
+                    </div>
+                </div>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        document.getElementById('fileInput').onchange = (e) => {
+            const file = e.target.files[0]; if(!file) return;
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                const wb = XLSX.read(evt.target.result, { type: 'binary' });
+                
+                // CRITICAL FIX: { defval: "" } forces it to map all columns even if cells are empty 
+                rawData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+                
+                // AUTO DETECT & MAP COLUMNS ON LOAD (Scanning all rows, not just 50)
+                const allKeys = new Set();
+                rawData.forEach(row => Object.keys(row).forEach(k => allKeys.add(k)));
+                availableColumns = Array.from(allKeys).sort();
+
+                columnMap.lat = availableColumns.find(k => /^(lat|latitude|y)$/i.test(k.trim())) || availableColumns[0];
+                columnMap.lon = availableColumns.find(k => /^(lon|long|longitude|lng|x)$/i.test(k.trim())) || availableColumns[0];
+
+                Object.keys(PARAM_CONFIG).forEach(pKey => {
+                    const config = PARAM_CONFIG[pKey];
+                    const match = availableColumns.find(k => {
+                        const kl = k.toLowerCase().trim();
+                        const pl = pKey.toLowerCase().trim();
+                        if (kl === pl) return true;
+                        return config.keywords && config.keywords.some(kw => kl === kw.toLowerCase().trim());
+                    });
+                    columnMap.params[pKey] = match || ''; 
+                });
+
+                document.getElementById('mappingSection').classList.remove('hidden');
+                updateMappingDropdowns();
+                
+                setupFilters(); 
+                document.getElementById('exportBtn').classList.remove('hidden'); 
+                
+                refreshFilteredData(); // OPTIMIZATION: Cache data
+                plotAllPoints();
+                fitMapToPoints();
+            };
+            reader.readAsBinaryString(file);
+            e.target.value = ''; // Reset input
+        };
+
+        // --- NEW: Boundary / Shapefile Upload Handling (Supports Multiple Linked Files) ---
+        document.getElementById('shapeInput').onchange = async (e) => {
+            const files = e.target.files;
+            if (!files || files.length === 0) return;
+            
+            try {
+                let geojson;
+                let mainFileName = files[0].name;
+
+                if (files.length === 1) {
+                    const file = files[0];
+                    const fileName = file.name.toLowerCase();
+                    if (fileName.endsWith('.zip')) {
+                        const buffer = await file.arrayBuffer();
+                        geojson = await shp(buffer); // Uses shpjs to parse shapefiles inside ZIP
+                    } else if (fileName.endsWith('.geojson') || fileName.endsWith('.json')) {
+                        const text = await file.text();
+                        geojson = JSON.parse(text);
+                    } else if (fileName.endsWith('.shp') || fileName.endsWith('.shx') || fileName.endsWith('.dbf')) {
+                        alert('For raw shapefiles, please select ALL linked files together (.shp, .shx, .dbf, .prj) at the same time, or upload them as a .zip file.');
+                        e.target.value = '';
+                        return;
+                    } else {
+                        alert('Please upload a valid Boundary file (.zip, .geojson, or multiple shapefile components).');
+                        return;
+                    }
+                } else {
+                    // Multiple files selected - bundle them virtually
+                    const shpFile = Array.from(files).find(f => f.name.toLowerCase().endsWith('.shp'));
+                    if (shpFile) mainFileName = shpFile.name;
+
+                    const zip = new JSZip();
+                    for (let i = 0; i < files.length; i++) {
+                        const file = files[i];
+                        const arrayBuffer = await file.arrayBuffer();
+                        zip.file(file.name, arrayBuffer);
+                    }
+                    
+                    const zipBuffer = await zip.generateAsync({type: "arraybuffer"});
+                    geojson = await shp(zipBuffer);
+                }
+                
+                // Standardize format if shpjs returns an array of multiple shapefiles
+                if (Array.isArray(geojson)) {
+                    geojson = turf.featureCollection(geojson.flatMap(g => g.features || [g]));
+                }
+
+                addBoundaryLayer(geojson, mainFileName);
+            } catch (err) {
+                console.error("Boundary parsing error:", err);
+                alert('Error processing boundary file. Ensure you selected all necessary components of the shapefile (at least .shp, .shx, and .dbf).');
+            }
+            e.target.value = ''; // Reset input
+        };
+
+        function addBoundaryLayer(geojson, name) {
+            const id = 'layer_' + Date.now();
+            const color = LAYER_COLORS[colorIndex % LAYER_COLORS.length];
+            colorIndex++;
+
+            const bbox = turf.bbox(geojson);
+            const features = [];
+            let fIndex = 0;
+
+            turf.flattenEach(geojson, function (currentFeature) {
+                if (currentFeature.geometry && (currentFeature.geometry.type === 'Polygon' || currentFeature.geometry.type === 'MultiPolygon')) {
+                    currentFeature.bbox = turf.bbox(currentFeature); 
+                    features.push({
+                        poly: currentFeature,
+                        name: getFeatureName(currentFeature, ++fIndex),
+                        bbox: currentFeature.bbox,
+                        isSelected: true, // All sub-features selected by default
+                        color: color // Assign initial layer color
+                    });
+                }
+            });
+
+            // Sort sub-features alphabetically
+            features.sort((a,b) => String(a.name).localeCompare(String(b.name)));
+
+            const newLayer = {
+                id, name, geojson, bbox, features,
+                isVisible: true, isFilter: true, color, isExpanded: false, mapLayer: null
+            };
+
+            shapefileLayers.push(newLayer);
+            
+            redrawLayerMap(newLayer); // Draws layer and sets bounds
+            map.fitBounds(newLayer.mapLayer.getBounds());
+
+            renderBoundaryList();
+            refreshFilteredData();
+            plotAllPoints();
+            if (centerPoint) runAnalysis();
+        }
+
+        // Helper: Draw or Redraw the layer on map based on selected features
+        function redrawLayerMap(layer) {
+            if (layer.mapLayer) map.removeLayer(layer.mapLayer);
+            
+            const activePolys = layer.features.filter(f => f.isSelected).map(f => {
+                if (!f.poly.properties) f.poly.properties = {};
+                f.poly.properties._renderColor = f.color;
+                return f.poly;
+            });
+            
+            if (activePolys.length > 0) {
+                layer.mapLayer = L.geoJSON(turf.featureCollection(activePolys), {
+                    style: function(feature) {
+                        return {
+                            color: feature.properties._renderColor || layer.color,
+                            weight: 2,
+                            fillOpacity: 0.08,
+                            dashArray: '5, 5'
+                        };
+                    },
+                    interactive: false
+                });
+                if (layer.isVisible) layer.mapLayer.addTo(map);
+            } else {
+                layer.mapLayer = null; // Nothing to draw
+            }
+        }
+
+        function toggleLayerVisibility(id) {
+            const layer = shapefileLayers.find(l => l.id === id);
+            if (!layer || !layer.mapLayer) return;
+            layer.isVisible = !layer.isVisible;
+            
+            if (layer.isVisible) map.addLayer(layer.mapLayer);
+            else map.removeLayer(layer.mapLayer);
+            
+            renderBoundaryList();
+        }
+
+        function toggleLayerFilter(id) {
+            const layer = shapefileLayers.find(l => l.id === id);
+            if (!layer) return;
+            layer.isFilter = !layer.isFilter;
+            
+            renderBoundaryList();
+            refreshFilteredData();
+            plotAllPoints();
+            if (centerPoint) runAnalysis();
+        }
+
+        function toggleLayerExpand(id) {
+            const layer = shapefileLayers.find(l => l.id === id);
+            if (!layer) return;
+            layer.isExpanded = !layer.isExpanded;
+            renderBoundaryList();
+        }
+
+        function toggleFeatureSelect(layerId, featureIndex, isChecked) {
+            const layer = shapefileLayers.find(l => l.id === layerId);
+            if (!layer) return;
+            
+            layer.features[featureIndex].isSelected = isChecked;
+            redrawLayerMap(layer);
+            
+            if (layer.isFilter) {
+                refreshFilteredData();
+                plotAllPoints();
+                if (centerPoint) runAnalysis();
+            }
+            renderBoundaryList();
+        }
+
+        function toggleAllFeatures(layerId, isChecked) {
+            const layer = shapefileLayers.find(l => l.id === layerId);
+            if (!layer) return;
+            
+            layer.features.forEach(f => f.isSelected = isChecked);
+            redrawLayerMap(layer);
+            
+            if (layer.isFilter) {
+                refreshFilteredData();
+                plotAllPoints();
+                if (centerPoint) runAnalysis();
+            }
+            renderBoundaryList();
+        }
+        
+        function changeLayerColor(layerId, newColor) {
+            const layer = shapefileLayers.find(l => l.id === layerId);
+            if (!layer) return;
+            layer.color = newColor;
+            layer.features.forEach(f => f.color = newColor);
+            redrawLayerMap(layer);
+            renderBoundaryList();
+        }
+
+        function changeFeatureColor(layerId, featureIndex, newColor) {
+            const layer = shapefileLayers.find(l => l.id === layerId);
+            if (!layer) return;
+            layer.features[featureIndex].color = newColor;
+            redrawLayerMap(layer);
+            // Intentionally not re-rendering the whole boundary list to prevent the color picker from losing focus
+        }
+
+        function deleteLayer(id) {
+            const idx = shapefileLayers.findIndex(l => l.id === id);
+            if (idx === -1) return;
+            
+            if (shapefileLayers[idx].mapLayer) map.removeLayer(shapefileLayers[idx].mapLayer);
+            shapefileLayers.splice(idx, 1);
+            
+            renderBoundaryList();
+            refreshFilteredData();
+            plotAllPoints();
+            if (centerPoint) runAnalysis();
+        }
+
+        // NEW: Export specific Shapefile Feature Statistics (Sample Counts, Avg)
+        function exportLayerStats(layerId) {
+            const layer = shapefileLayers.find(l => l.id === layerId);
+            if (!layer) return;
+
+            const pKey = document.getElementById('activeParam').value;
+            const valKey = columnMap.params[pKey];
+            const latKey = columnMap.lat;
+            const lonKey = columnMap.lon;
+
+            if (!latKey || !lonKey) {
+                alert("Please ensure Latitude and Longitude columns are mapped first.");
+                return;
+            }
+
+            // Get base data currently passing drop-down attribute filters (ignoring ALL spatial boundaries for this base calculation)
+            const baseData = rawData.filter(d => Object.entries(filters).every(([k, vSet]) => vSet.size === 0 || vSet.has(String(d[k] || ''))));
+
+            const results = layer.features.filter(f => f.isSelected).map(f => {
+                let count = 0;
+                let sum = 0;
+                let min = Infinity;
+                let max = -Infinity;
+
+                baseData.forEach(d => {
+                    const lat = parseFloat(d[latKey]);
+                    const lon = parseFloat(d[lonKey]);
+                    const val = parseFloat(d[valKey]);
+
+                    if (isNaN(lat) || isNaN(lon)) return; // Need coords
+
+                    // BBox Fast Check
+                    if (lon < f.bbox[0] || lon > f.bbox[2] || lat < f.bbox[1] || lat > f.bbox[3]) return;
+
+                    // Exact Point-in-Polygon Check
+                    if (turf.booleanPointInPolygon(turf.point([lon, lat]), f.poly)) {
+                        count++;
+                        if (!isNaN(val)) {
+                            sum += val;
+                            if (val < min) min = val;
+                            if (val > max) max = val;
+                        }
+                    }
+                });
+
+                return {
+                    "Shape Feature Name": f.name,
+                    "Total Samples Found": count,
+                    "Parameter": pKey,
+                    "Average Value": count > 0 && sum > 0 ? (sum / count).toFixed(3) : "No Data",
+                    "Min Value": count > 0 && min !== Infinity ? min.toFixed(3) : "-",
+                    "Max Value": count > 0 && max !== -Infinity ? max.toFixed(3) : "-"
+                };
+            });
+
+            if (results.length === 0) {
+                alert("No features are currently selected in this layer.");
+                return;
+            }
+
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(results), "Shape_Feature_Stats");
+            XLSX.writeFile(wb, `Shapefile_Stats_${layer.name}_${pKey}.xlsx`);
+        }
+
+        function renderBoundaryList() {
+            const container = document.getElementById('boundaryListContainer');
+            container.innerHTML = shapefileLayers.map(layer => `
+                <div class="flex flex-col bg-white border border-slate-200 rounded-lg shadow-sm">
+                    <div class="flex items-center justify-between p-2">
+                        <div class="flex items-center gap-2 overflow-hidden flex-1 cursor-pointer" onclick="toggleLayerExpand('${layer.id}')">
+                            <input type="color" value="${layer.color}" onchange="changeLayerColor('${layer.id}', this.value); event.stopPropagation();" onclick="event.stopPropagation();" class="w-3.5 h-3.5 rounded cursor-pointer border-none bg-transparent p-0 flex-shrink-0" title="Change Base Layer Color">
+                            <span class="text-[10px] font-bold text-slate-700 truncate" title="${layer.name}">${layer.name}</span>
+                            <i data-lucide="${layer.isExpanded ? 'chevron-up' : 'chevron-down'}" class="w-3 h-3 text-slate-400 ml-1"></i>
+                        </div>
+                        <div class="flex items-center gap-1 ml-2">
+                            <button onclick="event.stopPropagation(); toggleLayerVisibility('${layer.id}')" class="p-1.5 rounded hover:bg-slate-100 ${layer.isVisible ? 'text-indigo-600' : 'text-slate-300'}" title="Toggle Map Visibility">
+                                <i data-lucide="${layer.isVisible ? 'eye' : 'eye-off'}" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <button onclick="event.stopPropagation(); toggleLayerFilter('${layer.id}')" class="p-1.5 rounded hover:bg-slate-100 ${layer.isFilter ? 'text-emerald-600' : 'text-slate-300'}" title="Use as Spatial Filter/Clip">
+                                <i data-lucide="scissors" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <button onclick="event.stopPropagation(); deleteLayer('${layer.id}')" class="p-1.5 rounded hover:bg-red-50 text-slate-300 hover:text-red-500" title="Remove Layer">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="${layer.isExpanded ? 'block' : 'hidden'} border-t border-slate-100 bg-slate-50 p-2 rounded-b-lg">
+                        <button onclick="exportLayerStats('${layer.id}')" class="w-full mb-2 bg-indigo-100 text-indigo-700 hover:bg-indigo-200 py-1.5 rounded flex items-center justify-center gap-1 text-[9px] font-black uppercase tracking-wider transition-colors shadow-sm">
+                            <i data-lucide="download-cloud" class="w-3 h-3"></i> Export Feature Stats
+                        </button>
+                        
+                        <div class="flex justify-between items-center mb-1.5 px-1">
+                            <span class="text-[8px] font-black text-slate-400 uppercase">Sub-Features Selection</span>
+                            <div class="flex gap-2">
+                                <button onclick="toggleAllFeatures('${layer.id}', true)" class="text-[8px] font-bold text-indigo-600 hover:underline">All</button>
+                                <button onclick="toggleAllFeatures('${layer.id}', false)" class="text-[8px] font-bold text-slate-500 hover:underline">None</button>
+                            </div>
+                        </div>
+                        
+                        <div class="max-h-32 overflow-y-auto space-y-1 custom-scrollbar pr-1 bg-white border border-slate-200 rounded p-1 shadow-inner">
+                            ${layer.features.map((f, i) => `
+                                <label class="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-1 rounded transition-colors border border-transparent hover:border-slate-100">
+                                    <input type="checkbox" onchange="toggleFeatureSelect('${layer.id}', ${i}, this.checked)" ${f.isSelected ? 'checked' : ''} class="w-3 h-3 accent-indigo-600 rounded">
+                                    <input type="color" value="${f.color}" onchange="changeFeatureColor('${layer.id}', ${i}, this.value)" class="w-3.5 h-3.5 rounded cursor-pointer border-none bg-transparent p-0 flex-shrink-0" title="Change Feature Color">
+                                    <span class="text-[9px] text-slate-600 font-medium truncate flex-1" title="${f.name}">${f.name}</span>
+                                </label>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        function updateMappingDropdowns() {
+            const latSel = document.getElementById('latMap');
+            const lonSel = document.getElementById('lonMap');
+            const valSel = document.getElementById('valMap');
+            
+            let opts = `<option value="">-- Select Column --</option>` + 
+                availableColumns.map(c => `<option value="${c.replace(/"/g, '&quot;')}">${c}</option>`).join('');
+            
+            latSel.innerHTML = opts;
+            lonSel.innerHTML = opts;
+            valSel.innerHTML = opts;
+
+            latSel.value = columnMap.lat;
+            lonSel.value = columnMap.lon;
+            
+            const pKey = document.getElementById('activeParam').value;
+            valSel.value = columnMap.params[pKey] || '';
+        }
+
+        function updateLatLonMap() {
+            columnMap.lat = document.getElementById('latMap').value;
+            columnMap.lon = document.getElementById('lonMap').value;
+            refreshFilteredData(); // Recalculate spatial bounds on column change
+            plotAllPoints();
+            if(centerPoint) runAnalysis();
+        }
+
+        function updateValMap() {
+            const pKey = document.getElementById('activeParam').value;
+            columnMap.params[pKey] = document.getElementById('valMap').value;
+            plotAllPoints();
+            if(centerPoint) runAnalysis();
+        }
+
+        function setupFilters() {
+            const container = document.getElementById('filterList'); 
+            container.innerHTML = '';
+            const targetKeys = ['State', 'District', 'Block', 'Source', 'Season', 'Year'];
+            
+            filterMeta = targetKeys.map(key => {
+                const actualKey = Object.keys(rawData[0] || {}).find(k => 
+                    k.toLowerCase() === key.toLowerCase() || 
+                    (k.toLowerCase().includes(key.toLowerCase()) && !k.toLowerCase().includes('date'))
+                );
+                return { label: key, actualKey: actualKey };
+            }).filter(f => f.actualKey);
+
+            filterMeta.forEach(fm => {
+                const safeId = fm.label.toLowerCase();
+                const wrap = document.createElement('div');
+                wrap.className = "bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm";
+                wrap.innerHTML = `
+                    <button onclick="this.nextElementSibling.classList.toggle('hidden')" class="w-full px-3 py-2 text-left text-[10px] font-bold flex justify-between items-center bg-slate-50 uppercase tracking-tighter">
+                        <span id="label-${safeId}">${fm.label} (0)</span>
+                        <i data-lucide="chevron-down" class="w-3 h-3 text-slate-400"></i>
+                    </button>
+                    <div id="opts-${safeId}" class="hidden p-2 max-h-40 overflow-y-auto space-y-1 bg-white"></div>`;
+                container.appendChild(wrap);
+            });
+            lucide.createIcons();
+            updateFilterUI();
+        }
+
+        function updateFilterUI() {
+            const stateKey = filterMeta.find(f => f.label === 'State')?.actualKey;
+            const distKey = filterMeta.find(f => f.label === 'District')?.actualKey;
+            
+            const selectedStates = stateKey ? (filters[stateKey] || new Set()) : new Set();
+            const selectedDistricts = distKey ? (filters[distKey] || new Set()) : new Set();
+
+            filterMeta.forEach(fm => {
+                const safeId = fm.label.toLowerCase();
+                const container = document.getElementById(`opts-${safeId}`);
+                const labelSpan = document.getElementById(`label-${safeId}`);
+                
+                let availableData = rawData;
+                
+                if (fm.label === 'District' && selectedStates.size > 0) {
+                    availableData = availableData.filter(d => selectedStates.has(String(d[stateKey] || '')));
+                } else if (fm.label === 'Block') {
+                    if (selectedStates.size > 0) {
+                        availableData = availableData.filter(d => selectedStates.has(String(d[stateKey] || '')));
+                    }
+                    if (selectedDistricts.size > 0) {
+                        availableData = availableData.filter(d => selectedDistricts.has(String(d[distKey] || '')));
+                    }
+                }
+                
+                const vals = [...new Set(availableData.map(d => String(d[fm.actualKey] || '')))].filter(v => v.trim() !== '').sort();
+                const currentSelected = filters[fm.actualKey] || new Set();
+                
+                const escapedKey = fm.actualKey.replace(/'/g, "\\'");
+                container.innerHTML = vals.map(v => {
+                    const escapedVal = v.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                    return `
+                    <label class="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-1 rounded">
+                        <input type="checkbox" onchange="updateFilter('${escapedKey}', '${escapedVal}', this.checked)" ${currentSelected.has(v) ? 'checked' : ''} class="w-3.5 h-3.5 accent-indigo-600 rounded">
+                        <span class="text-[10px] text-slate-600 font-medium truncate">${v}</span>
+                    </label>`;
+                }).join('');
+                
+                labelSpan.innerText = `${fm.label} (${vals.length})`;
+            });
+        }
+
+        function updateFilter(key, val, checked) {
+            if(!filters[key]) filters[key] = new Set();
+            if(checked) filters[key].add(val); else filters[key].delete(val);
+            
+            const fm = filterMeta.find(f => f.actualKey === key);
+            if (fm) {
+                if (fm.label === 'State') {
+                    const distKey = filterMeta.find(f => f.label === 'District')?.actualKey;
+                    const blockKey = filterMeta.find(f => f.label === 'Block')?.actualKey;
+                    if (distKey && filters[distKey]) filters[distKey].clear();
+                    if (blockKey && filters[blockKey]) filters[blockKey].clear();
+                    updateFilterUI();
+                } else if (fm.label === 'District') {
+                    const blockKey = filterMeta.find(f => f.label === 'Block')?.actualKey;
+                    if (blockKey && filters[blockKey]) filters[blockKey].clear();
+                    updateFilterUI();
+                }
+            }
+            
+            refreshFilteredData(); // OPTIMIZATION: Cache data
+            plotAllPoints();
+            if(centerPoint) runAnalysis();
+        }
+
+        function plotAllPoints() {
+            layers.wells.clearLayers();
+            if (currentFilteredData.length === 0) return;
+            const pKey = document.getElementById('activeParam').value;
+            const hideMissing = document.getElementById('hideMissingData').checked;
+            
+            const latKey = columnMap.lat;
+            const lonKey = columnMap.lon;
+            const valKey = columnMap.params[pKey];
+
+            // Uses pre-filtered cache instead of running heavy math every time
+            currentFilteredData.forEach(d => {
+                const lat = parseFloat(d[latKey]);
+                const lon = parseFloat(d[lonKey]);
+                const val = parseFloat(d[valKey]);
+                if(!isNaN(lat) && !isNaN(lon)) {
+                    let color = '#6366f1'; // Default color if no range match (e.g. missing data)
+                    let isVisible = true;
+                    
+                    if (!isNaN(val)) {
+                        const rangeMatch = getRangeMatch(val);
+                        if (rangeMatch) {
+                            color = rangeMatch.color;
+                            isVisible = rangeMatch.visible !== false;
+                        }
+                    } else {
+                        // Value is missing / NaN for this specific parameter
+                        if (hideMissing) isVisible = false;
+                    }
+                    
+                    if (isVisible) {
+                        L.circleMarker([lat, lon], { radius: 3, color: 'white', weight: 0.5, fillColor: color, fillOpacity: 0.8 }).addTo(layers.wells);
+                    }
+                }
+            });
+        }
+
+        function fitMapToPoints() {
+            if (layers.wells.getLayers().length > 0) {
+                const group = new L.featureGroup(layers.wells.getLayers());
+                map.fitBounds(group.getBounds(), { padding: [50, 50] });
+            }
+        }
+
+        function runAnalysis() {
+            if(!centerPoint || radii.length === 0) {
+                layers.polys.clearLayers(); layers.labels.clearLayers();
+                return;
+            }
+            layers.polys.clearLayers(); layers.labels.clearLayers();
+            activeSectorData = [];
+
+            const pKey = document.getElementById('activeParam').value;
+            const config = PARAM_CONFIG[pKey];
+            let angleInput = parseFloat(document.getElementById('sectorAngle').value);
+            if (isNaN(angleInput) || angleInput <= 0) angleInput = 45; // Critical fix: Prevent infinite loops
+            
+            const hideEmpty = document.getElementById('hideEmptySectors').checked;
+            const clipToBoundary = document.getElementById('clipToBoundary').checked;
+            const autoRestrictOrigin = document.getElementById('autoRestrictOrigin').checked;
+            
+            const clipLayers = shapefileLayers.filter(l => l.isFilter);
+            
+            const showId = document.getElementById('showLabelId').checked;
+            const showAvg = document.getElementById('showLabelAvg').checked;
+            const showCount = document.getElementById('showLabelCount').checked;
+            const showArea = document.getElementById('showLabelArea').checked;
+            
+            if (currentFilteredData.length === 0) return;
+            
+            const latKey = columnMap.lat;
+            const lonKey = columnMap.lon;
+            const valKey = columnMap.params[pKey];
+
+            const center = turf.point(centerPoint);
+
+            let points = currentFilteredData.map(d => {
+                const lat = parseFloat(d[latKey]);
+                const lon = parseFloat(d[lonKey]);
+                const val = parseFloat(d[valKey]);
+                
+                if(!isNaN(lat) && !isNaN(lon) && !isNaN(val)) {
+                    const rangeMatch = getRangeMatch(val);
+                    if (rangeMatch && rangeMatch.visible === false) return null; // Skip hidden points in analysis
+
+                    const pt = turf.point([lon, lat], { ...d, _val: val });
+                    // Pre-calculate exact distance and bearing for 100% accurate sector allocation
+                    pt.properties._dist = turf.distance(center, pt, { units: 'kilometers' });
+                    let b = turf.bearing(center, pt);
+                    if (b < 0) b += 360;
+                    pt.properties._bearing = b;
+                    return pt;
+                }
+                return null;
+            }).filter(p => p);
+
+            // NEW: Auto-Isolate Origin Shape logic
+            if (clipToBoundary && autoRestrictOrigin && clipLayers.length > 0) {
+                for (let c = 0; c < clipLayers.length; c++) {
+                    const validFeatures = clipLayers[c].features.filter(f => f.isSelected);
+                    const originFeatures = validFeatures.filter(f => {
+                        if (centerPoint[0] < f.bbox[0] || centerPoint[0] > f.bbox[2] || centerPoint[1] < f.bbox[1] || centerPoint[1] > f.bbox[3]) return false;
+                        return turf.booleanPointInPolygon(center, f.poly);
+                    });
+                    
+                    if (originFeatures.length > 0) {
+                        // Filter the global point pool down mathematically to only points within the clicked feature
+                        points = points.filter(p => {
+                            const coords = p.geometry.coordinates;
+                            for (let i = 0; i < originFeatures.length; i++) {
+                                const feat = originFeatures[i];
+                                if (coords[0] < feat.bbox[0] || coords[0] > feat.bbox[2] || coords[1] < feat.bbox[1] || coords[1] > feat.bbox[3]) continue;
+                                if (turf.booleanPointInPolygon(p, feat.poly)) return true;
+                            }
+                            return false;
+                        });
+                    }
+                }
+            }
+
+            const sortedRadii = [...radii].sort((a,b) => a-b);
+
+            for (let rIdx = 0; rIdx < sortedRadii.length; rIdx++) {
+                const innerRadius = rIdx === 0 ? 0 : sortedRadii[rIdx - 1];
+                const outerRadius = sortedRadii[rIdx];
+
+                for (let start = 0; start < 360; start += angleInput) {
+                    let end = start + angleInput;
+                    
+                    // CONCENTRIC RING LOGIC (Donut): 
+                    // If angle is 360, it's a full ring analysis.
+                    // If angle < 360, it's a sector-based ring analysis.
+                    if (end > 360 || (360 - end < 0.001)) end = 360;
+
+                    let finalCell;
+                    if (end - start >= 360) {
+                        // FULL CIRCLE LOGIC - Optimized Steps
+                        const outerCircle = turf.circle(center, outerRadius, { units: 'kilometers', steps: 128 });
+                        if (innerRadius > 0) {
+                            const innerCircle = turf.circle(center, innerRadius, { units: 'kilometers', steps: 128 });
+                            finalCell = turf.difference(outerCircle, innerCircle);
+                        } else {
+                            finalCell = outerCircle;
+                        }
+                    } else {
+                        // SECTOR LOGIC - Adding visual overlap back to fix Web Mercator projection gaps.
+                        // (This does NOT affect the mathematical area or point allocation anymore!)
+                        const vStart = start - 0.05;
+                        const vEnd = end + 0.05;
+                        const outerSector = turf.sector(center, outerRadius, vStart, vEnd, { units: 'kilometers', steps: 64 });
+                        if (innerRadius > 0) {
+                            const innerSector = turf.sector(center, innerRadius, vStart, vEnd, { units: 'kilometers', steps: 64 });
+                            finalCell = turf.difference(outerSector, innerSector);
+                        } else {
+                            finalCell = outerSector;
+                        }
+                    }
+                    
+                    if(!finalCell) {
+                        if (end >= 360) break;
+                        continue;
+                    }
+
+                    const unclippedTurfArea = turf.area(finalCell) / 1000000;
+                    const theoreticalArea = Math.PI * (Math.pow(outerRadius, 2) - Math.pow(innerRadius, 2)) * ((end - start) / 360);
+                    let isClipped = false;
+
+                    // SPATIAL CLIPPING: Reshape sector to fit exactly inside active boundaries
+                    if (clipToBoundary && clipLayers.length > 0) {
+                        isClipped = true;
+                        let sectorBBox = turf.bbox(finalCell); // Cache sector bounding box
+                        
+                        for (let c = 0; c < clipLayers.length; c++) {
+                            if (!finalCell) break;
+                            let clipFeatures = clipLayers[c].features.filter(f => f.isSelected);
+                            
+                            // Auto-Isolate Origin Shape for Geometric Clipping
+                            if (autoRestrictOrigin) {
+                                const originFeatures = clipFeatures.filter(f => {
+                                    if (centerPoint[0] < f.bbox[0] || centerPoint[0] > f.bbox[2] || centerPoint[1] < f.bbox[1] || centerPoint[1] > f.bbox[3]) return false;
+                                    return turf.booleanPointInPolygon(center, f.poly);
+                                });
+                                if (originFeatures.length > 0) clipFeatures = originFeatures;
+                            }
+
+                            let clippedFeatures = [];
+                            
+                            for (let i = 0; i < clipFeatures.length; i++) {
+                                const poly = clipFeatures[i].poly;
+                                
+                                // MASSIVE SPEEDUP: Fast Collision Detection to skip heavy intersection math
+                                if (sectorBBox[0] > clipFeatures[i].bbox[2] || sectorBBox[2] < clipFeatures[i].bbox[0] ||
+                                    sectorBBox[1] > clipFeatures[i].bbox[3] || sectorBBox[3] < clipFeatures[i].bbox[1]) {
+                                    continue; 
+                                }
+
+                                try {
+                                    let intersection = turf.intersect(finalCell, poly);
+                                    if (intersection) clippedFeatures.push(intersection);
+                                } catch (e) {
+                                    console.warn("Clipping intersection error:", e);
+                                }
+                            }
+                            
+                            if (clippedFeatures.length === 0) {
+                                finalCell = null; // Sector is completely outside this boundary
+                            } else {
+                                // Merge all intersecting parts for this layer
+                                finalCell = clippedFeatures[0];
+                                for (let i = 1; i < clippedFeatures.length; i++) {
+                                    try { finalCell = turf.union(finalCell, clippedFeatures[i]); } catch (e) { }
+                                }
+                            }
+                        }
+                    }
+
+                    if(!finalCell) {
+                        if (end >= 360) break;
+                        continue;
+                    }
+
+                    // ACCURATE POINT ALLOCATION: Math-based distance & bearing checks (No topological overlap errors)
+                    const cellPoints = points.filter(p => {
+                        const d = p.properties._dist;
+                        let b = p.properties._bearing;
+                        
+                        const distValid = innerRadius === 0 ? (d <= outerRadius) : (d > innerRadius && d <= outerRadius);
+                        if (!distValid) return false;
+
+                        if (end - start >= 360) return true;
+                        
+                        let b_check = b;
+                        if (start < 360 && end > 360 && b < (end - 360)) {
+                            b_check += 360;
+                        }
+                        return (b_check >= start && b_check < end);
+                    }).map(f => f.properties);
+                    
+                    if (hideEmpty && cellPoints.length === 0) {
+                        if (end >= 360) break;
+                        continue;
+                    }
+
+                    // Use exact flat mathematical area for unclipped shapes, and proportional area for clipped shapes
+                    const clippedTurfArea = turf.area(finalCell) / 1000000;
+                    let areaSqKm = theoreticalArea;
+                    
+                    if (isClipped && unclippedTurfArea > 0) {
+                        // Apply the exact percentage of the remaining clipped area to the theoretical mathematical area
+                        areaSqKm = theoreticalArea * (clippedTurfArea / unclippedTurfArea);
+                    }
+
+                    const cellId = end - start >= 360 ? `Ring_${innerRadius}-${outerRadius}` : `R${outerRadius}_A${Math.round(start)}`;
+                    let avg = 0, color = 'rgba(203, 213, 225, 0.15)', min = 0, max = 0, unit = '';
+
+                    if (cellPoints.length > 0) {
+                        const vals = cellPoints.map(p => p._val);
+                        avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+                        min = Math.min(...vals); max = Math.max(...vals);
+                        const rangeMatch = getRangeMatch(avg);
+                        if(rangeMatch) {
+                            color = rangeMatch.color;
+                            unit = rangeMatch.unit || '';
+                        }
+                    }
+
+                    const polyLayer = L.geoJSON(finalCell, { 
+                        style: { 
+                            fillColor: color, fillOpacity: 0.7, stroke: true,
+                            color: labelFormat.sector.matchFill ? color : labelFormat.sector.borderColor, 
+                            weight: labelFormat.sector.weight, 
+                            opacity: 0.7 
+                        } 
+                    }).addTo(layers.polys);
+
+                    polyLayer.on('click', (e) => {
+                        const subStatusRows = customRanges.map((range, i) => {
+                            const count = cellPoints.filter(p => 
+                                (i === customRanges.length - 1) ? (p._val >= range.min && p._val <= range.max) : (p._val >= range.min && p._val < range.max)
+                            ).length;
+                            const perc = cellPoints.length > 0 ? ((count / cellPoints.length) * 100).toFixed(1) : 0;
+                            return `
+                                <div class="stat-row">
+                                    <div class="flex items-center gap-2">
+                                        <div class="w-2.5 h-2.5 rounded-full" style="background:${range.color}"></div>
+                                        <span class="text-[10px] font-bold text-slate-600">${range.label}</span>
+                                    </div>
+                                    <span class="text-[10px] font-black text-slate-900">${count} <small class="text-slate-400 font-normal">(${perc}%)</small></span>
+                                </div>
+                            `;
+                        }).join('');
+
+                        const popupContent = `
+                            <div class="stats-popup-header">Concentric Details: ${cellId}</div>
+                            <div class="stats-popup-body">
+                                <div class="flex justify-between mb-3 pb-2 border-b border-slate-100">
+                                    <div>
+                                        <div class="text-[8px] text-slate-400 uppercase font-black">Average</div>
+                                        <div class="text-[11px] font-bold text-indigo-600">${avg.toFixed(2)} ${unit}</div>
+                                    </div>
+                                    <div class="text-right">
+                                        <div class="text-[8px] text-slate-400 uppercase font-black">Total Samples</div>
+                                        <div class="text-[11px] font-bold text-slate-800">${cellPoints.length}</div>
+                                    </div>
+                                </div>
+                                <div class="text-[8px] text-slate-400 uppercase font-black mb-1">Status Breakdown</div>
+                                ${subStatusRows}
+                                <div class="mt-3 pt-2 border-t border-slate-100 text-[8px] text-slate-400 italic">
+                                    Ring Range: ${innerRadius}km to ${outerRadius}km | Area: ${areaSqKm.toFixed(2)} km²
+                                </div>
+                            </div>
+                        `;
+                        L.popup().setLatLng(e.latlng).setContent(popupContent).openOn(map);
+                    });
+
+                    if (showId || showAvg || showCount || showArea) {
+                        const labelPos = turf.centroid(finalCell).geometry.coordinates;
+                        let labelHtml = `<div class="analysis-label flex flex-col items-center">`;
+                        
+                        if(showId) labelHtml += `<span style="color:${labelFormat.id.color}; font-size:${labelFormat.id.size}px; font-weight:900;">ID: ${cellId}</span>`;
+                        if(showAvg) labelHtml += `<span style="color:${labelFormat.avg.color}; font-size:${labelFormat.avg.size}px;">Avg: <b style="font-weight:900">${cellPoints.length > 0 ? avg.toFixed(1) : '0'}</b> <small style="font-size:0.8em">${unit}</small></span>`;
+                        if(showCount) labelHtml += `<span style="color:${labelFormat.count.color}; font-size:${labelFormat.count.size}px; font-weight:700">Samples: <b style="font-weight:900">${cellPoints.length}</b></span>`;
+                        if(showArea) labelHtml += `<span style="color:${labelFormat.area.color}; font-size:${labelFormat.area.size}px; opacity:0.8; font-style:italic;">${areaSqKm.toFixed(1)} km²</span>`;
+                        
+                        labelHtml += `</div>`;
+
+                        L.marker([labelPos[1], labelPos[0]], { 
+                            icon: L.divIcon({ className: '', html: labelHtml }) 
+                        }).addTo(layers.labels);
+                    }
+
+                    activeSectorData.push({ id: cellId, ring: `${innerRadius}-${outerRadius}`, angle: `${Math.round(start)}-${Math.round(end)}`, area: areaSqKm, points: cellPoints, avg, min, max, count: cellPoints.length, unit });
+                    
+                    if (end >= 360) break;
+                }
+            }
+        }
+
+        function exportAdvancedReport() {
+            if(activeSectorData.length === 0) return;
+            const wb = XLSX.utils.book_new();
+            const pKey = document.getElementById('activeParam').value;
+            
+            const summaryData = activeSectorData.map(s => ({
+                "Sector/Ring ID": s.id,
+                "Ring (km)": s.ring,
+                "Angle Range": s.angle,
+                "Samples": s.count,
+                "Average": s.avg.toFixed(3),
+                "Min": s.min.toFixed(3),
+                "Max": s.max.toFixed(3),
+                "Unit": s.unit,
+                "Area (sq km)": s.area.toFixed(4)
+            }));
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryData), "Analysis_Summary");
+
+            activeSectorData.filter(s => s.count > 0).forEach(sector => {
+                const statSheetName = `STAT_${sector.id}`.replace(/[^a-zA-Z0-9_]/g, '').substring(0, 31);
+                const distributionRows = customRanges.map((range, i) => {
+                    const countInRange = sector.points.filter(pt => 
+                        (i === customRanges.length - 1) ? (pt._val >= range.min && pt._val <= range.max) : (pt._val >= range.min && pt._val < range.max)
+                    ).length;
+                    return {
+                        "Range Name": range.label,
+                        "Limits": `${range.min} - ${range.max}`,
+                        "Unit": range.unit,
+                        "No. of Samples": countInRange,
+                        "Percentage (%)": (sector.count > 0 ? (countInRange / sector.count * 100).toFixed(2) : 0) + "%"
+                    };
+                });
+                const combinedRows = [
+                    { "Metric": "Identifier", "Value": sector.id },
+                    { "Metric": "Ring Span", "Value": sector.ring + " km" },
+                    { "Metric": "Total Samples", "Value": sector.count },
+                    { "Metric": "Average", "Value": sector.avg.toFixed(3) + " " + sector.unit },
+                    { "Metric": "Area (sq km)", "Value": sector.area.toFixed(4) },
+                    {},
+                    ...distributionRows
+                ];
+                XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(combinedRows), statSheetName);
+            });
+
+            XLSX.writeFile(wb, `Advanced_Concentric_Report_${pKey}_${new Date().toISOString().split('T')[0]}.xlsx`);
+        }
+
+        function locateUser() {
+            if (!navigator.geolocation) return;
+            navigator.geolocation.getCurrentPosition((pos) => {
+                setCenter(pos.coords.latitude, pos.coords.longitude);
+                map.flyTo([pos.coords.latitude, pos.coords.longitude], 12);
+            });
+        }
+
+        function setCenter(lat, lng) {
+            centerPoint = [lng, lat];
+            document.getElementById('centerLatDisp').innerText = `Lat: ${lat.toFixed(5)}`;
+            document.getElementById('centerLngDisp').innerText = `Lng: ${lng.toFixed(5)}`;
+            layers.centerMarker.clearLayers();
+            L.marker([lat, lng], { icon: L.divIcon({ className: 'pulse-marker', iconAnchor: [12, 12] }) }).addTo(layers.centerMarker);
+            runAnalysis();
+        }
+
+        function toggleDrawingMode() {
+            isDrawing = !isDrawing;
+            document.getElementById('mainBody').classList.toggle('drawing-mode-active', isDrawing);
+            document.getElementById('toast').style.display = isDrawing ? 'flex' : 'none';
+        }
+
+        function handleMapClick(e) {
+            if (!isDrawing) return;
+            setCenter(e.latlng.lat, e.latlng.lng);
+            toggleDrawingMode();
+        }
+
+        function populateParamList() {
+            const sel = document.getElementById('activeParam');
+            Object.keys(PARAM_CONFIG).forEach(k => sel.add(new Option(k, k)));
+        }
+
+        function updateLegend() {
+            const c = document.getElementById('legendContainer'); 
+            c.classList.remove('hidden');
+            const p = document.getElementById('activeParam').value;
+            c.innerHTML = `<div class="text-[10px] font-black uppercase mb-1 border-b pb-1">${p} Legend</div>` +
+                customRanges.map(r => `<div class="flex justify-between items-center gap-3 text-[9px] font-bold text-slate-600 ${r.visible === false ? 'opacity-40 line-through' : ''} mb-1">
+                <div class="flex items-center gap-2">
+                    <div class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background:${r.color}"></div>
+                    <span>${r.label} <span class="text-[8px] opacity-60 font-normal">(${r.unit || '-'})</span></span>
+                </div>
+                <span class="text-[8px] font-mono text-slate-400 bg-slate-50 px-1 rounded border border-slate-100">[${r.min} - ${r.max >= 99999 ? 'MAX' : r.max}]</span>
+                </div>`).join('');
+        }
+    </script>
+</body>
+</html>

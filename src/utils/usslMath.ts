@@ -91,6 +91,10 @@ export interface ProcessedSample {
     };
     lat: number | null;
     lng: number | null;
+    chadhaX?: number;
+    chadhaY?: number;
+    chadhaField?: string;
+    hasChadha?: boolean;
     hasUSSL: boolean;
     hasFacies: boolean;
     hasGibbs: boolean;
@@ -205,6 +209,30 @@ export const processAquiferData = (
     const hasGibbs = hasGibbsCation && hasGibbsAnion;
     const isComplete = hasUSSL && hasFacies && hasGibbs;
 
+    // Chadha Diagram (1999) Math:
+    // X = (Ca + Mg) - (Na + K) % meq/L
+    // Y = (HCO3 + CO3) - (Cl + SO4) % meq/L
+    const hasChadha = hasFacies && catSumReal > 0 && anSumReal > 0;
+    const cTotal = meqPerc.Ca + meqPerc.Mg;
+    const aTotal = meqPerc.Na + meqPerc.K;
+    const wTotal = meqPerc.HCO3 + meqPerc.CO3;
+    const sTotal = meqPerc.Cl + meqPerc.SO4;
+    const chadhaX = Number((cTotal - aTotal).toFixed(2));
+    const chadhaY = Number((wTotal - sTotal).toFixed(2));
+
+    let chadhaField = "Unknown";
+    if (hasChadha) {
+      if (chadhaX >= 0 && chadhaY >= 0) {
+        chadhaField = "5: Weathering & Recharge (Ca-Mg-HCO3)";
+      } else if (chadhaX < 0 && chadhaY >= 0) {
+        chadhaField = "8: Base Ion Exchange (NaHCO3)";
+      } else if (chadhaX < 0 && chadhaY < 0) {
+        chadhaField = "7: Saline Water/Evaporation (NaCl)";
+      } else {
+        chadhaField = "6: Reverse Ion Exchange (Ca-Mg-Cl-SO4)";
+      }
+    }
+
     return {
       ...row,
       _calc: {
@@ -222,6 +250,10 @@ export const processAquiferData = (
         meqPerc,
         lat,
         lng,
+        chadhaX,
+        chadhaY,
+        chadhaField,
+        hasChadha,
         hasUSSL,
         hasFacies,
         hasGibbs,

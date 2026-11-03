@@ -489,6 +489,99 @@ table td, table th, .tabular-nums, .font-mono {
   background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10'><rect width='10' height='10' fill='%23ffffff'/><path d='M-2,2 l4,-4 M0,10 l10,-10 M8,12 l4,-4' stroke='%23475569' stroke-width='1.5'/></svg>") repeat;
 }
 
+/* Pulse animation for Sector Analysis origin marker */
+@keyframes pulseMarker {
+  0% {
+    box-shadow: 0 0 0 0 rgba(79, 70, 229, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 24px rgba(79, 70, 229, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(79, 70, 229, 0);
+  }
+}
 
+.leaflet-popup-content-wrapper {
+  border-radius: 14px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25) !important;
+}
 
+.leaflet-popup-content {
+  margin: 0 !important;
+  line-height: 1.4 !important;
+}
 
+/* Page Break Avoidance for Print/Word */
+.avoid-break { page-break-inside: avoid !important; }
+tr { page-break-inside: avoid !important; }
+
+/* Standard Browser Print Mode for Alert Report */
+@media print {
+  @page { 
+    size: A4 portrait; 
+    margin: var(--page-print-margin-top, 15mm) var(--page-print-margin-right, 15mm) var(--page-print-margin-bottom, 15mm) var(--page-print-margin-left, 15mm); 
+  }
+  *, *::before, *::after {
+    box-shadow: none !important;
+    text-shadow: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+  body { 
+    background-color: white !important; 
+    margin: 0 !important; 
+    padding: 0 !important; 
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  .print-wrapper { 
+    max-width: 100% !important; 
+    width: 100% !important; 
+    margin: 0 !important; 
+    padding: 0 !important; 
+  }
+  .print-container { 
+    box-shadow: none !important; 
+    border: none !important; 
+    margin: 0 !important; 
+    width: 100% !important;
+    max-width: 100% !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  .print-container table { 
+    width: 100% !important; 
+    table-layout: auto !important; 
+    page-break-inside: auto !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  .print-container tr {
+    page-break-inside: avoid !important;
+  }
+  .print-container th {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  .print-container th, .print-container td { 
+    font-size: 9.5pt !important; 
+    padding: 4px 6px !important; 
+    line-height: 1.25 !important; 
+  }
+  .print-container .overflow-x-auto, .print-container .overflow-hidden { 
+    overflow: visible !important; 
+  }
+  .no-print { 
+    display: none !important; 
+  }
+  .print-only { 
+    display: inline-block !important; 
+  }
+  .page-break-before { 
+    page-break-before: always !important; 
+  }
+}

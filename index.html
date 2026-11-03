@@ -3,17 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <script>
-      // Automatically redirect to trailing slash on GitHub Pages if accessed without one
-      // This prevents relative asset paths (base: "./") from resolving incorrectly to 404 / blank screen
+      // Automatically redirect to trailing slash on GitHub Pages repository root if accessed without one
+      // This ensures relative asset paths (./assets/...) resolve accurately in all browsers
       if (window.location.hostname.endsWith('.github.io')) {
-        var path = window.location.pathname;
-        if (path && !path.endsWith('/') && !path.split('/').pop().includes('.')) {
-          window.location.replace(window.location.href + '/');
+        var loc = window.location;
+        if (loc.pathname && !loc.pathname.endsWith('/') && !loc.pathname.split('/').pop().includes('.')) {
+          loc.replace(loc.origin + loc.pathname + '/' + loc.search + loc.hash);
         }
       }
     </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Groundwater Compliance Reporting Engine</title>
+    <meta name="description" content="Assess groundwater quality against Bureau of Indian Standards IS 10500, generating customized compliance mapping, spatial stats, exceedance logs, and official bulletins." />
+    <meta property="og:title" content="Groundwater Compliance Reporting Engine" />
+    <meta property="og:description" content="Assess groundwater quality against Bureau of Indian Standards IS 10500, generating customized compliance mapping, spatial stats, exceedance logs, and official bulletins." />
 
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />

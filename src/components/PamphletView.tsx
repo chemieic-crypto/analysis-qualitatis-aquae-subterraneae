@@ -5,6 +5,11 @@ import { getStats } from "../utils/math";
 import { generateParamDonutChart } from "../utils/chartHelpers";
 import { downloadMhtmlWordDoc } from "../utils/export";
 import {
+  DIAGRAM_LINE_TEMPLATES,
+  DiagramLineTheme,
+  DEFAULT_DIAGRAM_TEMPLATE
+} from "../types/diagramTemplates";
+import {
   FileCheck2,
   FileDown,
   ChevronDown,
@@ -16,7 +21,8 @@ import {
   Sparkles,
   Droplets,
   Sprout,
-  Globe
+  Globe,
+  Palette
 } from "lucide-react";
 
 function darkenColor(hex: string, percent = 30): string {
@@ -68,6 +74,9 @@ export default function PamphletView({
   const [ecMapBase64, setEcMapBase64] = useState<string | null>(null);
   const [summaryMapBase64, setSummaryMapBase64] = useState<string | null>(null);
 
+  // Hydrogeochemical diagram theme selection state (7 line color templates)
+  const [selectedDiagramThemeId, setSelectedDiagramThemeId] = useState<string>("cobalt");
+
   // Generated document state
   const [isGenerating, setIsGenerating] = useState(false);
   const [hasGenerated, setHasGenerated] = useState(false);
@@ -111,7 +120,7 @@ export default function PamphletView({
     }
   };
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (overrideThemeId?: string) => {
     if (!rawData.length) return;
     if (selectedPamphletParams.length === 0) return;
 
@@ -119,6 +128,11 @@ export default function PamphletView({
     await new Promise((resolve) => setTimeout(resolve, 100)); // allow spin lock
 
     try {
+      const themeIdToUse = typeof overrideThemeId === "string" ? overrideThemeId : selectedDiagramThemeId;
+      const activeDiagramTheme: DiagramLineTheme =
+        DIAGRAM_LINE_TEMPLATES.find((t) => t.id === themeIdToUse) ||
+        DIAGRAM_LINE_TEMPLATES[1] ||
+        DEFAULT_DIAGRAM_TEMPLATE;
       // 1. Filter Data
       let filtered = rawData;
       let regionName = "India";
@@ -777,6 +791,18 @@ export default function PamphletView({
         const gibbsCation = hasGibbs ? (meq.Na + meq.K) / (meq.Na + meq.K + meq.Ca || 1) : null;
         const gibbsAnion = hasGibbs ? meq.Cl / (meq.Cl + meq.HCO3 || 1) : null;
 
+        // Chadha (1999) Hydrogeochemical Facies Parameters
+        const hasChadha = hasFacies && catSumReal > 0 && anSumReal > 0;
+        const chadhaX = hasChadha ? (meqPerc.Ca + meqPerc.Mg) - (meqPerc.Na + meqPerc.K) : null;
+        const chadhaY = hasChadha ? (meqPerc.HCO3 + meqPerc.CO3) - (meqPerc.Cl + meqPerc.SO4) : null;
+        let chadhaField = "Unknown";
+        if (hasChadha && chadhaX !== null && chadhaY !== null) {
+          if (chadhaX >= 0 && chadhaY >= 0) chadhaField = "Field 5: Weathering and Recharge (Ca-Mg-HCO3)";
+          else if (chadhaX < 0 && chadhaY >= 0) chadhaField = "Field 8: Base Ion Exchange (NaHCO3)";
+          else if (chadhaX < 0 && chadhaY < 0) chadhaField = "Field 7: Saline Water/Evaporation (NaCl)";
+          else chadhaField = "Field 6: Reverse Ion Exchange (Ca-Mg-Cl-SO4)";
+        }
+
         return {
           locName,
           block: blockVal,
@@ -793,7 +819,11 @@ export default function PamphletView({
           tdsVal,
           hasGibbs,
           gibbsCation,
-          gibbsAnion
+          gibbsAnion,
+          hasChadha,
+          chadhaX,
+          chadhaY,
+          chadhaField
         };
       });
 
@@ -1020,7 +1050,12 @@ export default function PamphletView({
         `;
       };
 
-      const generatePiperDiagramHTML = (title: string, samples: typeof validFaciesSamples, includeLegend = true) => {
+      const generatePiperDiagramHTML = (
+        title: string,
+        samples: typeof validFaciesSamples,
+        includeLegend = true,
+        theme: DiagramLineTheme = activeDiagramTheme
+      ) => {
         // Validation check for Piper: cations > 0, anions > 0, non-negative percentages
         const validPiperSamples = samples.filter((d) => {
           const ca = d.meqPerc?.Ca ?? -1;
@@ -1051,13 +1086,14 @@ export default function PamphletView({
         const H_val = (100 * SQRT3) / 2;
         const tx = (x: number) => x + 40;
         const ty = (y: number) => 230 - y;
-        const gridLineColor = "#cbd5e1";
-        const frameColor = "#0f172a";
+        const gridLineColor = theme.secondaryLine;
+        const frameColor = theme.primaryLine;
+        const gridDash = theme.gridDash;
 
         let gridLines = "";
         for (let i = 20; i < 100; i += 20) {
           const y = (i * SQRT3) / 2;
-          const strokeProps = `stroke="${gridLineColor}" stroke-dasharray="2 2" stroke-width="0.8" fill="none"`;
+          const strokeProps = `stroke="${gridLineColor}" stroke-dasharray="${gridDash}" stroke-width="0.8" fill="none"`;
           gridLines += `<line x1="${tx(0.5 * i)}" y1="${ty(y)}" x2="${tx(100 - 0.5 * i)}" y2="${ty(y)}" ${strokeProps} />`;
           gridLines += `<line x1="${tx(i)}" y1="${ty(0)}" x2="${tx(50 + 0.5 * i)}" y2="${ty(((100 - i) * SQRT3) / 2)}" ${strokeProps} />`;
           gridLines += `<line x1="${tx(100 - i)}" y1="${ty(0)}" x2="${tx(0.5 * (100 - i))}" y2="${ty(((100 - i) * SQRT3) / 2)}" ${strokeProps} />`;
@@ -1071,33 +1107,33 @@ export default function PamphletView({
         // Add 50% sub-field boundary lines for standard Piper hydrogeochemical facies classification
         let subfieldLines = `
           <!-- Cation Triangle 50% Lines -->
-          <line x1="${tx(25)}" y1="${ty(H_val / 2)}" x2="${tx(75)}" y2="${ty(H_val / 2)}" stroke="#64748b" stroke-width="0.9" stroke-dasharray="3 3" />
-          <line x1="${tx(25)}" y1="${ty(H_val / 2)}" x2="${tx(50)}" y2="${ty(0)}" stroke="#64748b" stroke-width="0.9" stroke-dasharray="3 3" />
-          <line x1="${tx(75)}" y1="${ty(H_val / 2)}" x2="${tx(50)}" y2="${ty(0)}" stroke="#64748b" stroke-width="0.9" stroke-dasharray="3 3" />
+          <line x1="${tx(25)}" y1="${ty(H_val / 2)}" x2="${tx(75)}" y2="${ty(H_val / 2)}" stroke="${theme.secondaryLine}" stroke-width="0.9" stroke-dasharray="${theme.gridDash}" />
+          <line x1="${tx(25)}" y1="${ty(H_val / 2)}" x2="${tx(50)}" y2="${ty(0)}" stroke="${theme.secondaryLine}" stroke-width="0.9" stroke-dasharray="${theme.gridDash}" />
+          <line x1="${tx(75)}" y1="${ty(H_val / 2)}" x2="${tx(50)}" y2="${ty(0)}" stroke="${theme.secondaryLine}" stroke-width="0.9" stroke-dasharray="${theme.gridDash}" />
 
           <!-- Anion Triangle 50% Lines -->
-          <line x1="${tx(145)}" y1="${ty(H_val / 2)}" x2="${tx(195)}" y2="${ty(H_val / 2)}" stroke="#64748b" stroke-width="0.9" stroke-dasharray="3 3" />
-          <line x1="${tx(145)}" y1="${ty(H_val / 2)}" x2="${tx(170)}" y2="${ty(0)}" stroke="#64748b" stroke-width="0.9" stroke-dasharray="3 3" />
-          <line x1="${tx(195)}" y1="${ty(H_val / 2)}" x2="${tx(170)}" y2="${ty(0)}" stroke="#64748b" stroke-width="0.9" stroke-dasharray="3 3" />
+          <line x1="${tx(145)}" y1="${ty(H_val / 2)}" x2="${tx(195)}" y2="${ty(H_val / 2)}" stroke="${theme.secondaryLine}" stroke-width="0.9" stroke-dasharray="${theme.gridDash}" />
+          <line x1="${tx(145)}" y1="${ty(H_val / 2)}" x2="${tx(170)}" y2="${ty(0)}" stroke="${theme.secondaryLine}" stroke-width="0.9" stroke-dasharray="${theme.gridDash}" />
+          <line x1="${tx(195)}" y1="${ty(H_val / 2)}" x2="${tx(170)}" y2="${ty(0)}" stroke="${theme.secondaryLine}" stroke-width="0.9" stroke-dasharray="${theme.gridDash}" />
 
           <!-- Central Diamond Hydrogeochemical Sub-field Divisions -->
-          <line x1="${tx(85)}" y1="${ty(85 * SQRT3)}" x2="${tx(135)}" y2="${ty(85 * SQRT3)}" stroke="#475569" stroke-width="1.0" stroke-dasharray="3 3" />
-          <line x1="${tx(85)}" y1="${ty(35 * SQRT3)}" x2="${tx(135)}" y2="${ty(35 * SQRT3)}" stroke="#475569" stroke-width="1.0" stroke-dasharray="3 3" />
-          <line x1="${tx(85)}" y1="${ty(85 * SQRT3)}" x2="${tx(110)}" y2="${ty(60 * SQRT3)}" stroke="#475569" stroke-width="1.0" stroke-dasharray="3 3" />
-          <line x1="${tx(135)}" y1="${ty(85 * SQRT3)}" x2="${tx(110)}" y2="${ty(60 * SQRT3)}" stroke="#475569" stroke-width="1.0" stroke-dasharray="3 3" />
-          <line x1="${tx(85)}" y1="${ty(35 * SQRT3)}" x2="${tx(110)}" y2="${ty(60 * SQRT3)}" stroke="#475569" stroke-width="1.0" stroke-dasharray="3 3" />
-          <line x1="${tx(135)}" y1="${ty(35 * SQRT3)}" x2="${tx(110)}" y2="${ty(60 * SQRT3)}" stroke="#475569" stroke-width="1.0" stroke-dasharray="3 3" />
-          <line x1="${tx(60)}" y1="${ty(60 * SQRT3)}" x2="${tx(160)}" y2="${ty(60 * SQRT3)}" stroke="#334155" stroke-width="1.1" stroke-dasharray="4 2" opacity="0.8" />
-          <line x1="${tx(110)}" y1="${ty(10 * SQRT3)}" x2="${tx(110)}" y2="${ty(110 * SQRT3)}" stroke="#334155" stroke-width="1.1" stroke-dasharray="4 2" opacity="0.8" />
+          <line x1="${tx(85)}" y1="${ty(85 * SQRT3)}" x2="${tx(135)}" y2="${ty(85 * SQRT3)}" stroke="${theme.secondaryLine}" stroke-width="1.0" stroke-dasharray="${theme.gridDash}" />
+          <line x1="${tx(85)}" y1="${ty(35 * SQRT3)}" x2="${tx(135)}" y2="${ty(35 * SQRT3)}" stroke="${theme.secondaryLine}" stroke-width="1.0" stroke-dasharray="${theme.gridDash}" />
+          <line x1="${tx(85)}" y1="${ty(85 * SQRT3)}" x2="${tx(110)}" y2="${ty(60 * SQRT3)}" stroke="${theme.secondaryLine}" stroke-width="1.0" stroke-dasharray="${theme.gridDash}" />
+          <line x1="${tx(135)}" y1="${ty(85 * SQRT3)}" x2="${tx(110)}" y2="${ty(60 * SQRT3)}" stroke="${theme.secondaryLine}" stroke-width="1.0" stroke-dasharray="${theme.gridDash}" />
+          <line x1="${tx(85)}" y1="${ty(35 * SQRT3)}" x2="${tx(110)}" y2="${ty(60 * SQRT3)}" stroke="${theme.secondaryLine}" stroke-width="1.0" stroke-dasharray="${theme.gridDash}" />
+          <line x1="${tx(135)}" y1="${ty(35 * SQRT3)}" x2="${tx(110)}" y2="${ty(60 * SQRT3)}" stroke="${theme.secondaryLine}" stroke-width="1.0" stroke-dasharray="${theme.gridDash}" />
+          <line x1="${tx(60)}" y1="${ty(60 * SQRT3)}" x2="${tx(160)}" y2="${ty(60 * SQRT3)}" stroke="${theme.primaryLine}" stroke-width="1.1" stroke-dasharray="${theme.gridDash}" opacity="0.8" />
+          <line x1="${tx(110)}" y1="${ty(10 * SQRT3)}" x2="${tx(110)}" y2="${ty(110 * SQRT3)}" stroke="${theme.primaryLine}" stroke-width="1.1" stroke-dasharray="${theme.gridDash}" opacity="0.8" />
         `;
 
         // Percentage Scale Ticks & Number Labels (0, 20, 40, 60, 80, 100)
         let axisTicks = "";
         for (let v = 0; v <= 100; v += 20) {
           // Bottom Cation axis (Ca -> Mg)
-          axisTicks += `<text x="${tx(v)}" y="${ty(-7)}" text-anchor="middle" font-size="6.5" fill="#475569" font-weight="bold">${100 - v}</text>`;
+          axisTicks += `<text x="${tx(v)}" y="${ty(-7)}" text-anchor="middle" font-size="6.5" fill="${theme.axisColor}" font-weight="bold">${100 - v}</text>`;
           // Bottom Anion axis (HCO3 -> Cl)
-          axisTicks += `<text x="${tx(120 + v)}" y="${ty(-7)}" text-anchor="middle" font-size="6.5" fill="#475569" font-weight="bold">${v}</text>`;
+          axisTicks += `<text x="${tx(120 + v)}" y="${ty(-7)}" text-anchor="middle" font-size="6.5" fill="${theme.axisColor}" font-weight="bold">${v}</text>`;
         }
 
         let pointsMarkup = "";
@@ -1113,10 +1149,10 @@ export default function PamphletView({
 
           if (ca + mg + nak === 0 || cl + so4 + hco3 === 0) return;
 
-          // Standard Piper Coordinate Transformation:
-          // Cation triangle: Ca²⁺ at lower-left (0,0), Mg²⁺ at lower-right (100,0), Na⁺+K⁺ at top (50, 50√3)
-          const xc = mg + 0.5 * nak;
-          const yc = (nak * SQRT3) / 2;
+          // Standard Arthur M. Piper (1944) Coordinate Transformation:
+          // Cation triangle: Ca²⁺ at lower-left (0,0), Mg²⁺ at top apex (50, 50√3), Na⁺+K⁺ at lower-right (100,0)
+          const xc = 0.5 * mg + nak;
+          const yc = (mg * SQRT3) / 2;
 
           // Anion triangle: HCO₃⁻+CO₃²⁻ at lower-left (120,0), Cl⁻ at lower-right (220,0), SO₄²⁻ at top (170, 50√3)
           const xa = 120 + cl + 0.5 * so4;
@@ -1188,28 +1224,28 @@ export default function PamphletView({
             <g>${axisTicks}</g>
 
             <!-- Diagram Title Header -->
-            <text x="${tx(110)}" y="-12" text-anchor="middle" font-size="11" font-weight="900" fill="#1e3a8a" letter-spacing="0.02em">${title || "Piper Trilinear Diagram"}</text>
+            <text x="${tx(110)}" y="-12" text-anchor="middle" font-size="11" font-weight="900" fill="${theme.primaryLine}" letter-spacing="0.02em">${title || "Piper Trilinear Diagram"}</text>
 
             <!-- Cation Triangle Axis Labels (Matching USSL & Piper Analysis Template) -->
-            <text transform="translate(${tx(50)}, ${ty(-14)})" text-anchor="middle" font-size="9.5" fill="#1e293b" font-weight="bold">Ca²⁺</text>
-            <text transform="translate(${tx(82)}, ${ty(45)}) rotate(60)" text-anchor="middle" font-size="9.5" fill="#1e293b" font-weight="bold">Na⁺ + K⁺</text>
-            <text transform="translate(${tx(18)}, ${ty(45)}) rotate(-60)" text-anchor="middle" font-size="9.5" fill="#1e293b" font-weight="bold">Mg²⁺</text>
+            <text transform="translate(${tx(50)}, ${ty(-14)})" text-anchor="middle" font-size="9.5" fill="${theme.axisColor}" font-weight="bold">Ca²⁺</text>
+            <text transform="translate(${tx(82)}, ${ty(45)}) rotate(60)" text-anchor="middle" font-size="9.5" fill="${theme.axisColor}" font-weight="bold">Na⁺ + K⁺</text>
+            <text transform="translate(${tx(18)}, ${ty(45)}) rotate(-60)" text-anchor="middle" font-size="9.5" fill="${theme.axisColor}" font-weight="bold">Mg²⁺</text>
 
             <!-- Anion Triangle Axis Labels (Matching USSL & Piper Analysis Template) -->
-            <text transform="translate(${tx(170)}, ${ty(-14)})" text-anchor="middle" font-size="9.5" fill="#1e293b" font-weight="bold">Cl⁻</text>
-            <text transform="translate(${tx(138)}, ${ty(45)}) rotate(-60)" text-anchor="middle" font-size="9.5" fill="#1e293b" font-weight="bold">HCO₃⁻ + CO₃²⁻</text>
-            <text transform="translate(${tx(202)}, ${ty(45)}) rotate(60)" text-anchor="middle" font-size="9.5" fill="#1e293b" font-weight="bold">SO₄²⁻</text>
+            <text transform="translate(${tx(170)}, ${ty(-14)})" text-anchor="middle" font-size="9.5" fill="${theme.axisColor}" font-weight="bold">Cl⁻</text>
+            <text transform="translate(${tx(138)}, ${ty(45)}) rotate(-60)" text-anchor="middle" font-size="9.5" fill="${theme.axisColor}" font-weight="bold">HCO₃⁻ + CO₃²⁻</text>
+            <text transform="translate(${tx(202)}, ${ty(45)}) rotate(60)" text-anchor="middle" font-size="9.5" fill="${theme.axisColor}" font-weight="bold">SO₄²⁻</text>
 
             <!-- Central Diamond Side Axis Labels (Matching USSL & Piper Analysis Template) -->
-            <text transform="translate(${tx(75)}, ${ty(135)}) rotate(-60)" text-anchor="middle" font-size="9" fill="#1e293b" font-weight="bold">SO₄²⁻ + Cl⁻</text>
-            <text transform="translate(${tx(145)}, ${ty(135)}) rotate(60)" text-anchor="middle" font-size="9" fill="#1e293b" font-weight="bold">Ca²⁺ + Mg²⁺</text>
+            <text transform="translate(${tx(75)}, ${ty(135)}) rotate(-60)" text-anchor="middle" font-size="9" fill="${theme.axisColor}" font-weight="bold">SO₄²⁻ + Cl⁻</text>
+            <text transform="translate(${tx(145)}, ${ty(135)}) rotate(60)" text-anchor="middle" font-size="9" fill="${theme.axisColor}" font-weight="bold">Ca²⁺ + Mg²⁺</text>
 
             <!-- Hydrogeochemical Facies Field Labels inside Central Diamond -->
-            <text x="${tx(110)}" y="${ty(88 * SQRT3)}" text-anchor="middle" font-size="7" font-weight="bold" fill="#1e3a8a" opacity="0.9">Ca²⁺-SO₄²⁻ / Ca-Cl Type</text>
-            <text x="${tx(82)}" y="${ty(60 * SQRT3 + 2)}" text-anchor="middle" font-size="7" font-weight="bold" fill="#1e3a8a" opacity="0.9">Ca²⁺-HCO₃⁻ Type</text>
-            <text x="${tx(138)}" y="${ty(60 * SQRT3 + 2)}" text-anchor="middle" font-size="7" font-weight="bold" fill="#1e3a8a" opacity="0.9">Na⁺-Cl⁻ Type</text>
-            <text x="${tx(110)}" y="${ty(32 * SQRT3)}" text-anchor="middle" font-size="7" font-weight="bold" fill="#1e3a8a" opacity="0.9">Na⁺-HCO₃⁻ Type</text>
-            <text x="${tx(110)}" y="${ty(60 * SQRT3 - 2)}" text-anchor="middle" font-size="6.5" font-weight="bold" fill="#475569" opacity="0.8">Mixed Type</text>
+            <text x="${tx(110)}" y="${ty(88 * SQRT3)}" text-anchor="middle" font-size="7" font-weight="bold" fill="${theme.zoneTextColor}" opacity="0.95">Ca²⁺-SO₄²⁻ / Ca-Cl Type</text>
+            <text x="${tx(82)}" y="${ty(60 * SQRT3 + 2)}" text-anchor="middle" font-size="7" font-weight="bold" fill="${theme.zoneTextColor}" opacity="0.95">Ca²⁺-HCO₃⁻ Type</text>
+            <text x="${tx(138)}" y="${ty(60 * SQRT3 + 2)}" text-anchor="middle" font-size="7" font-weight="bold" fill="${theme.zoneTextColor}" opacity="0.95">Na⁺-Cl⁻ Type</text>
+            <text x="${tx(110)}" y="${ty(32 * SQRT3)}" text-anchor="middle" font-size="7" font-weight="bold" fill="${theme.zoneTextColor}" opacity="0.95">Na⁺-HCO₃⁻ Type</text>
+            <text x="${tx(110)}" y="${ty(60 * SQRT3 - 2)}" text-anchor="middle" font-size="6.5" font-weight="bold" fill="${theme.axisColor}" opacity="0.8">Mixed Type</text>
 
             <!-- Plotted Points -->
             <g>${pointsMarkup}</g>
@@ -1232,7 +1268,122 @@ export default function PamphletView({
         return svgMarkup;
       };
 
-      const generateGibbsDiagramHTML = (type: "cation" | "anion", regionNameStr: string, samples: typeof validFaciesSamples) => {
+      // Chadha's (1999) Diagram (Modified Piper Hydrogeochemical Facies)
+      const generateChadhaDiagramHTML = (
+        regionNameStr: string,
+        samples: typeof validFaciesSamples,
+        theme: DiagramLineTheme = activeDiagramTheme
+      ): string => {
+        const width = 450;
+        const height = 360;
+        const boxLeft = 60;
+        const boxTop = 32;
+        const boxSize = 250;
+        const boxRight = boxLeft + boxSize;
+        const boxBottom = boxTop + boxSize;
+        const centerX = boxLeft + boxSize / 2;
+        const centerY = boxTop + boxSize / 2;
+
+        const mapX = (val: number) => {
+          const clamped = Math.max(-100, Math.min(100, val));
+          return centerX + (clamped / 100) * (boxSize / 2);
+        };
+
+        const mapY = (val: number) => {
+          const clamped = Math.max(-100, Math.min(100, val));
+          return centerY - (clamped / 100) * (boxSize / 2);
+        };
+
+        const validChadhaSamples = samples.filter((s) => s.hasChadha && s.chadhaX !== null && s.chadhaY !== null);
+
+        let pointsSvg = "";
+        const pointRadius = 3.8;
+        validChadhaSamples.forEach((s) => {
+          const cx = mapX(s.chadhaX!);
+          const cy = mapY(s.chadhaY!);
+          const groupVal = s.locName || "Unknown";
+          const locId = getLocId(groupVal);
+          const color = locationColorMap[groupVal] || "#2563eb";
+          const shape = locationShapeMap[groupVal] || "circle";
+          pointsSvg += renderPointSymbol(cx, cy, shape, color, locId, pointRadius);
+        });
+
+        return `
+          <svg viewBox="0 0 ${width} ${height}" width="100%" height="auto" style="background: #ffffff; border: 1.5px solid #cbd5e1; border-radius: 12px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); font-family: 'Times New Roman', Times, serif; margin: 0 auto; display: block; max-width: 395px; max-height: 288px; width: 100%; height: auto;" xmlns="http://www.w3.org/2000/svg" shape-rendering="geometricPrecision" text-rendering="geometricPrecision">
+            <!-- Header Title -->
+            <text x="${width / 2}" y="18" font-size="10.5" font-weight="900" fill="${theme.primaryLine}" text-anchor="middle" style="letter-spacing: 0.05em;">CHADHA'S DIAGRAM (MODIFIED PIPER FACIES)</text>
+
+            <!-- Plot Box Canvas -->
+            <rect x="${boxLeft}" y="${boxTop}" width="${boxSize}" height="${boxSize}" fill="#ffffff" stroke="${theme.primaryLine}" stroke-width="1.8" />
+
+            <!-- Subdivisions (-50%, +50%) -->
+            <line x1="${mapX(-50)}" y1="${boxTop}" x2="${mapX(-50)}" y2="${boxBottom}" stroke="${theme.secondaryLine}" stroke-width="0.75" stroke-dasharray="${theme.gridDash}" />
+            <line x1="${mapX(50)}" y1="${boxTop}" x2="${mapX(50)}" y2="${boxBottom}" stroke="${theme.secondaryLine}" stroke-width="0.75" stroke-dasharray="${theme.gridDash}" />
+            <line x1="${boxLeft}" y1="${mapY(-50)}" x2="${boxRight}" y2="${mapY(-50)}" stroke="${theme.secondaryLine}" stroke-width="0.75" stroke-dasharray="${theme.gridDash}" />
+            <line x1="${boxLeft}" y1="${mapY(50)}" x2="${boxRight}" y2="${mapY(50)}" stroke="${theme.secondaryLine}" stroke-width="0.75" stroke-dasharray="${theme.gridDash}" />
+
+            <!-- Central Cross Axes (X=0, Y=0) -->
+            <line x1="${centerX}" y1="${boxTop}" x2="${centerX}" y2="${boxBottom}" stroke="${theme.primaryLine}" stroke-width="1.4" />
+            <line x1="${boxLeft}" y1="${centerY}" x2="${boxRight}" y2="${centerY}" stroke="${theme.primaryLine}" stroke-width="1.4" />
+
+            <!-- Quadrant Text Descriptions -->
+            <!-- Quadrant 5: Top-Right (Weathering & Recharge) -->
+            <g>
+              <text x="${centerX + 6}" y="${boxTop + 14}" font-size="6.8" font-weight="800" font-style="italic" fill="${theme.primaryLine}">5: Weathering and Recharge</text>
+              <text x="${centerX + 6}" y="${boxTop + 24}" font-size="6.2" font-weight="700" fill="${theme.zoneTextColor}">Ca-Mg-HCO3</text>
+            </g>
+            <!-- Quadrant 8: Top-Left (Base Ion Exchange) -->
+            <g>
+              <text x="${boxLeft + 6}" y="${boxTop + 14}" font-size="6.8" font-weight="800" font-style="italic" fill="${theme.primaryLine}">8: Base Ion Exchange</text>
+              <text x="${boxLeft + 6}" y="${boxTop + 24}" font-size="6.2" font-weight="700" fill="${theme.zoneTextColor}">NaHCO3</text>
+            </g>
+            <!-- Quadrant 7: Bottom-Left (Saline Water / Evaporation) -->
+            <g>
+              <text x="${boxLeft + 6}" y="${boxBottom - 16}" font-size="6.8" font-weight="800" font-style="italic" fill="${theme.primaryLine}">7: Saline Water/ Evaporation</text>
+              <text x="${boxLeft + 6}" y="${boxBottom - 6}" font-size="6.2" font-weight="700" fill="${theme.zoneTextColor}">NaCl</text>
+            </g>
+            <!-- Quadrant 6: Bottom-Right (Reverse Ion Exchange) -->
+            <g>
+              <text x="${centerX + 6}" y="${boxBottom - 16}" font-size="6.8" font-weight="800" font-style="italic" fill="${theme.primaryLine}">6: Reverse Ion Exchange</text>
+              <text x="${centerX + 6}" y="${boxBottom - 6}" font-size="6.2" font-weight="700" fill="${theme.zoneTextColor}">Ca-Mg-Cl-SO4</text>
+            </g>
+
+            <!-- Red Axis Quadrant Designators (1, 2, 3, 4) from official Chadha specification -->
+            <text x="${boxRight - 28}" y="${centerY - 2.5}" font-size="9" font-weight="900" fill="#dc2626" text-anchor="middle">1</text>
+            <text x="${centerX - 4}" y="${boxTop + 48}" font-size="9" font-weight="900" fill="#dc2626" text-anchor="end">2</text>
+            <text x="${boxLeft + 28}" y="${centerY - 2.5}" font-size="9" font-weight="900" fill="#dc2626" text-anchor="middle">3</text>
+            <text x="${centerX - 4}" y="${boxBottom - 48}" font-size="9" font-weight="900" fill="#dc2626" text-anchor="end">4</text>
+
+            <!-- Numerical Ticks and Values on Axes -->
+            ${[-100, -50, 0, 50, 100].map(val => `
+              <line x1="${mapX(val)}" y1="${boxBottom}" x2="${mapX(val)}" y2="${boxBottom + 3}" stroke="${theme.axisColor}" stroke-width="1" />
+              <text x="${mapX(val)}" y="${boxBottom + 10}" font-size="5.5" font-weight="bold" text-anchor="middle" fill="${theme.axisColor}">${val}</text>
+              <line x1="${boxLeft - 3}" y1="${mapY(val)}" x2="${boxLeft}" y2="${mapY(val)}" stroke="${theme.axisColor}" stroke-width="1" />
+              <text x="${boxLeft - 5}" y="${mapY(val) + 2}" font-size="5.5" font-weight="bold" text-anchor="end" fill="${theme.axisColor}">${val}</text>
+            `).join("")}
+
+            <!-- X Axis Label -->
+            <text x="${centerX}" y="${boxBottom + 22}" text-anchor="middle" font-size="7.5" font-weight="900" fill="${theme.axisColor}">
+              (Ca²⁺+Mg²⁺) - (Na⁺+K⁺) % meq/L
+            </text>
+
+            <!-- Y Axis Label -->
+            <text transform="translate(${boxLeft - 20}, ${centerY}) rotate(-90)" text-anchor="middle" font-size="7.5" font-weight="900" fill="${theme.axisColor}">
+              (HCO₃¹⁻+CO₃²⁻) - (Cl¹⁻+SO₄²⁻) % meq/L
+            </text>
+
+            <!-- Plotted Points -->
+            ${pointsSvg}
+          </svg>
+        `;
+      };
+
+      const generateGibbsDiagramHTML = (
+        type: "cation" | "anion",
+        regionNameStr: string,
+        samples: typeof validFaciesSamples,
+        theme: DiagramLineTheme = activeDiagramTheme
+      ) => {
         const isCation = type === "cation";
         const titleText = isCation ? "Gibbs Cation Ratio Diagram" : "Gibbs Anion Ratio Diagram";
         const xLabel = isCation ? "Na⁺ / (Na⁺ + Ca²⁺)" : "Cl⁻ / (Cl⁻ + HCO₃⁻)";
@@ -1285,8 +1436,8 @@ export default function PamphletView({
             if (val <= 30000) {
               const y = getY(val);
               minorYTicks += `
-                <line x1="${padding.left}" y1="${y}" x2="${padding.left + 3}" y2="${y}" stroke="#94a3b8" stroke-width="0.8" />
-                <line x1="${width - padding.right - 3}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="#94a3b8" stroke-width="0.8" />
+                <line x1="${padding.left}" y1="${y}" x2="${padding.left + 3}" y2="${y}" stroke="${theme.secondaryLine}" stroke-width="0.8" opacity="0.6" />
+                <line x1="${width - padding.right - 3}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="${theme.secondaryLine}" stroke-width="0.8" opacity="0.6" />
               `;
             }
           });
@@ -1295,10 +1446,10 @@ export default function PamphletView({
         ticksY.forEach(val => {
           const y = getY(val);
           gridYLines += `
-            <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3" />
-            <line x1="${padding.left}" y1="${y}" x2="${padding.left + 5}" y2="${y}" stroke="#1e293b" stroke-width="1.5" />
-            <line x1="${width - padding.right - 5}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="#1e293b" stroke-width="1.5" />
-            <text x="${padding.left - 8}" y="${y + 3.5}" font-size="9" fill="#1e293b" font-weight="bold" font-family="'Times New Roman', Times, serif" text-anchor="end">${val}</text>
+            <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="${theme.secondaryLine}" stroke-width="0.8" stroke-dasharray="${theme.gridDash}" opacity="0.8" />
+            <line x1="${padding.left}" y1="${y}" x2="${padding.left + 5}" y2="${y}" stroke="${theme.primaryLine}" stroke-width="1.5" />
+            <line x1="${width - padding.right - 5}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="${theme.primaryLine}" stroke-width="1.5" />
+            <text x="${padding.left - 8}" y="${y + 3.5}" font-size="9" fill="${theme.axisColor}" font-weight="bold" font-family="'Times New Roman', Times, serif" text-anchor="end">${val}</text>
           `;
         });
 
@@ -1308,10 +1459,10 @@ export default function PamphletView({
         ticksX.forEach(val => {
           const x = getX(val);
           gridXLines += `
-            <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${height - padding.bottom}" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3" />
-            <line x1="${x}" y1="${height - padding.bottom - 5}" x2="${x}" y2="${height - padding.bottom}" stroke="#1e293b" stroke-width="1.5" />
-            <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${padding.top + 5}" stroke="#1e293b" stroke-width="1.5" />
-            <text x="${x}" y="${height - padding.bottom + 16}" font-size="9" fill="#1e293b" font-weight="bold" font-family="'Times New Roman', Times, serif" text-anchor="middle">${val.toFixed(1)}</text>
+            <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${height - padding.bottom}" stroke="${theme.secondaryLine}" stroke-width="0.8" stroke-dasharray="${theme.gridDash}" opacity="0.8" />
+            <line x1="${x}" y1="${height - padding.bottom - 5}" x2="${x}" y2="${height - padding.bottom}" stroke="${theme.primaryLine}" stroke-width="1.5" />
+            <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${padding.top + 5}" stroke="${theme.primaryLine}" stroke-width="1.5" />
+            <text x="${x}" y="${height - padding.bottom + 16}" font-size="9" fill="${theme.axisColor}" font-weight="bold" font-family="'Times New Roman', Times, serif" text-anchor="middle">${val.toFixed(1)}</text>
           `;
         });
 
@@ -1321,8 +1472,8 @@ export default function PamphletView({
         minorTicksX.forEach(val => {
           const x = getX(val);
           minorXTicks += `
-            <line x1="${x}" y1="${height - padding.bottom - 3}" x2="${x}" y2="${height - padding.bottom}" stroke="#94a3b8" stroke-width="0.8" />
-            <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${padding.top + 3}" stroke="#94a3b8" stroke-width="0.8" />
+            <line x1="${x}" y1="${height - padding.bottom - 3}" x2="${x}" y2="${height - padding.bottom}" stroke="${theme.secondaryLine}" stroke-width="0.8" opacity="0.6" />
+            <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${padding.top + 3}" stroke="${theme.secondaryLine}" stroke-width="0.8" opacity="0.6" />
           `;
         });
 
@@ -1366,10 +1517,10 @@ export default function PamphletView({
             </defs>
 
             <!-- Chart Header Title -->
-            <text x="${width / 2}" y="22" font-size="11.5" font-weight="bold" fill="#1e3a8a" font-family="'Times New Roman', Times, serif" text-anchor="middle" style="letter-spacing: 0.04em;">${titleText.toUpperCase()}</text>
+            <text x="${width / 2}" y="22" font-size="11.5" font-weight="bold" fill="${theme.primaryLine}" font-family="'Times New Roman', Times, serif" text-anchor="middle" style="letter-spacing: 0.04em;">${titleText.toUpperCase()}</text>
 
             <!-- Classic Gibbs Boomerang Envelope (Gibbs 1970) -->
-            <path d="${envelopePath}" fill="#3b82f6" fill-opacity="0.08" stroke="#2563eb" stroke-width="1.4" stroke-dasharray="4 3" />
+            <path d="${envelopePath}" fill="${theme.zoneBgTint}" fill-opacity="0.3" stroke="${theme.primaryLine}" stroke-width="1.4" stroke-dasharray="${theme.gridDash}" />
 
             <!-- Zone Badges / Text Labels -->
             <!-- Evaporation Zone -->
@@ -1397,13 +1548,13 @@ export default function PamphletView({
             ${minorXTicks}
 
             <!-- Bounding Box -->
-            <rect x="${padding.left}" y="${padding.top}" width="${width - padding.left - padding.right}" height="${height - padding.top - padding.bottom}" fill="none" stroke="#1e293b" stroke-width="1.5" />
+            <rect x="${padding.left}" y="${padding.top}" width="${width - padding.left - padding.right}" height="${height - padding.top - padding.bottom}" fill="none" stroke="${theme.primaryLine}" stroke-width="1.5" />
 
             <!-- Y Axis Label -->
-            <text x="18" y="${(padding.top + height - padding.bottom) / 2}" font-size="10" font-weight="bold" fill="#1e293b" font-family="'Times New Roman', Times, serif" transform="rotate(-90 18 ${(padding.top + height - padding.bottom) / 2})" text-anchor="middle" style="letter-spacing: 0.05em;">TDS (mg/L)</text>
+            <text x="18" y="${(padding.top + height - padding.bottom) / 2}" font-size="10" font-weight="bold" fill="${theme.axisColor}" font-family="'Times New Roman', Times, serif" transform="rotate(-90 18 ${(padding.top + height - padding.bottom) / 2})" text-anchor="middle" style="letter-spacing: 0.05em;">TDS (mg/L)</text>
 
             <!-- X Axis Label -->
-            <text x="${padding.left + (width - padding.left - padding.right) / 2}" y="${height - 12}" font-size="10" font-weight="bold" fill="#1e293b" font-family="'Times New Roman', Times, serif" text-anchor="middle" style="letter-spacing: 0.05em;">${xLabel}</text>
+            <text x="${padding.left + (width - padding.left - padding.right) / 2}" y="${height - 12}" font-size="10" font-weight="bold" fill="${theme.axisColor}" font-family="'Times New Roman', Times, serif" text-anchor="middle" style="letter-spacing: 0.05em;">${xLabel}</text>
 
             <!-- Plotted Points -->
             ${pointsSvg}
@@ -1421,7 +1572,7 @@ export default function PamphletView({
         return "#475569"; // Slate
       };
 
-      const generateUsslDiagramHTML = (samples: any[]): string => {
+      const generateUsslDiagramHTML = (samples: any[], theme: DiagramLineTheme = activeDiagramTheme): string => {
         const width = 450;
         const height = 360;
         const padding = { left: 45, right: 15, top: 25, bottom: 40 };
@@ -1460,7 +1611,7 @@ export default function PamphletView({
         ecBorders.forEach((border) => {
           const x = getX(border);
           gridLinesSvg += `
-            <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${height - padding.bottom}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4 3" />
+            <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${height - padding.bottom}" stroke="${theme.secondaryLine}" stroke-width="1.2" stroke-dasharray="${theme.gridDash}" />
           `;
         });
 
@@ -1471,9 +1622,9 @@ export default function PamphletView({
         const curve3Path = ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s3s4(ec))}`).join(" ");
 
         const curvesSvg = `
-          <path d="${curve1Path}" fill="none" stroke="#2563eb" stroke-width="1.5" />
-          <path d="${curve2Path}" fill="none" stroke="#2563eb" stroke-width="1.5" />
-          <path d="${curve3Path}" fill="none" stroke="#2563eb" stroke-width="1.5" />
+          <path d="${curve1Path}" fill="none" stroke="${theme.primaryLine}" stroke-width="1.5" />
+          <path d="${curve2Path}" fill="none" stroke="${theme.primaryLine}" stroke-width="1.5" />
+          <path d="${curve3Path}" fill="none" stroke="${theme.primaryLine}" stroke-width="1.5" />
         `;
 
         // Standard 16 Category Labels (C1-S1 through C4-S4)
@@ -1487,11 +1638,11 @@ export default function PamphletView({
         let labelsSvg = "";
         xCentroids.forEach((xC) => {
           labelsSvg += `
-            <g opacity="0.65">
-              <text x="${getX(xC.val)}" y="${getY(s1s2(xC.val) / 2)}" text-anchor="middle" font-size="8" fill="#475569" font-weight="bold">${xC.id}-S1</text>
-              <text x="${getX(xC.val)}" y="${getY((s1s2(xC.val) + s2s3(xC.val)) / 2)}" text-anchor="middle" font-size="8" fill="#475569" font-weight="bold">${xC.id}-S2</text>
-              <text x="${getX(xC.val)}" y="${getY((s2s3(xC.val) + s3s4(xC.val)) / 2)}" text-anchor="middle" font-size="8" fill="#475569" font-weight="bold">${xC.id}-S3</text>
-              <text x="${getX(xC.val)}" y="${getY((s3s4(xC.val) + 32) / 2)}" text-anchor="middle" font-size="8" fill="#475569" font-weight="bold">${xC.id}-S4</text>
+            <g opacity="0.95">
+              <text x="${getX(xC.val)}" y="${getY(s1s2(xC.val) / 2)}" text-anchor="middle" font-size="8" fill="${theme.zoneTextColor}" font-weight="bold">${xC.id}-S1</text>
+              <text x="${getX(xC.val)}" y="${getY((s1s2(xC.val) + s2s3(xC.val)) / 2)}" text-anchor="middle" font-size="8" fill="${theme.zoneTextColor}" font-weight="bold">${xC.id}-S2</text>
+              <text x="${getX(xC.val)}" y="${getY((s2s3(xC.val) + s3s4(xC.val)) / 2)}" text-anchor="middle" font-size="8" fill="${theme.zoneTextColor}" font-weight="bold">${xC.id}-S3</text>
+              <text x="${getX(xC.val)}" y="${getY((s3s4(xC.val) + 32) / 2)}" text-anchor="middle" font-size="8" fill="${theme.primaryLine}" font-weight="900">${xC.id}-S4</text>
             </g>
           `;
         });
@@ -1501,8 +1652,8 @@ export default function PamphletView({
         ticksX.forEach(tick => {
           const x = getX(tick);
           gridLinesSvg += `
-            <line x1="${x}" y1="${height - padding.bottom}" x2="${x}" y2="${height - padding.bottom + 5}" stroke="#1e293b" stroke-width="1.5" />
-            <text x="${x}" y="${height - padding.bottom + 15}" font-size="8" fill="#1e293b" font-weight="bold" font-family="'Times New Roman', Times, serif" text-anchor="middle">${tick}</text>
+            <line x1="${x}" y1="${height - padding.bottom}" x2="${x}" y2="${height - padding.bottom + 5}" stroke="${theme.primaryLine}" stroke-width="1.5" />
+            <text x="${x}" y="${height - padding.bottom + 15}" font-size="8" fill="${theme.axisColor}" font-weight="bold" font-family="'Times New Roman', Times, serif" text-anchor="middle">${tick}</text>
           `;
         });
 
@@ -1510,8 +1661,8 @@ export default function PamphletView({
         ticksY.forEach(tick => {
           const y = getY(tick);
           gridLinesSvg += `
-            <line x1="${padding.left - 5}" y1="${y}" x2="${padding.left}" y2="${y}" stroke="#1e293b" stroke-width="1.5" />
-            <text x="${padding.left - 8}" y="${y + 3}" font-size="8" fill="#1e293b" font-weight="bold" font-family="'Times New Roman', Times, serif" text-anchor="end">${tick}</text>
+            <line x1="${padding.left - 5}" y1="${y}" x2="${padding.left}" y2="${y}" stroke="${theme.primaryLine}" stroke-width="1.5" />
+            <text x="${padding.left - 8}" y="${y + 3}" font-size="8" fill="${theme.axisColor}" font-weight="bold" font-family="'Times New Roman', Times, serif" text-anchor="end">${tick}</text>
           `;
         });
 
@@ -1534,7 +1685,7 @@ export default function PamphletView({
         });
 
         const svg = `
-          <svg viewBox="0 0 ${width} ${height}" width="100%" height="auto" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 1.5px solid #cbd5e1; border-radius: 16px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05); font-family: 'Times New Roman', Times, serif; margin: 0 auto; display: block; max-width: 395px; max-height: 288px; width: 100%; height: auto;" xmlns="http://www.w3.org/2000/svg" shape-rendering="geometricPrecision" text-rendering="geometricPrecision">
+          <svg viewBox="0 0 ${width} ${height}" width="100%" height="auto" style="background: #ffffff; border: 1.5px solid #cbd5e1; border-radius: 12px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); font-family: 'Times New Roman', Times, serif; margin: 0 auto; display: block; max-width: 395px; max-height: 288px; width: 100%; height: auto;" xmlns="http://www.w3.org/2000/svg" shape-rendering="geometricPrecision" text-rendering="geometricPrecision">
             <defs>
               <filter id="3d-emboss" x="-20%" y="-20%" width="140%" height="140%">
                 <feGaussianBlur in="SourceAlpha" stdDeviation="0.4" result="blur" />
@@ -1549,13 +1700,13 @@ export default function PamphletView({
               </filter>
               ${getDefsMarkup()}
             </defs>
-            <text x="${width / 2}" y="15" font-size="9.5" font-weight="900" fill="#1e3a8a" text-anchor="middle" style="letter-spacing: 0.1em;">USSL IRRIGATION SUITABILITY MATRIX</text>
+            <text x="${width / 2}" y="15" font-size="9.5" font-weight="900" fill="${theme.primaryLine}" text-anchor="middle" style="letter-spacing: 0.1em;">USSL IRRIGATION SUITABILITY MATRIX</text>
             
             <!-- Y-Axis Label -->
-            <text x="12" y="${height / 2}" font-size="8" font-weight="900" fill="#1e293b" transform="rotate(-90 12 ${height / 2})" text-anchor="middle" style="letter-spacing: 0.08em;">SODIUM ADSORPTION RATIO (SAR)</text>
+            <text x="12" y="${height / 2}" font-size="8" font-weight="900" fill="${theme.axisColor}" transform="rotate(-90 12 ${height / 2})" text-anchor="middle" style="letter-spacing: 0.08em;">SODIUM ADSORPTION RATIO (SAR)</text>
             
             <!-- X-Axis Label -->
-            <text x="${width / 2}" y="${height - 12}" font-size="8" font-weight="900" fill="#1e293b" text-anchor="middle" style="letter-spacing: 0.08em;">ELECTRICAL CONDUCTIVITY (EC, &mu;S/cm)</text>
+            <text x="${width / 2}" y="${height - 12}" font-size="8" font-weight="900" fill="${theme.axisColor}" text-anchor="middle" style="letter-spacing: 0.08em;">ELECTRICAL CONDUCTIVITY (EC, &mu;S/cm)</text>
             
             <!-- Grid and curves -->
             ${gridLinesSvg}
@@ -1563,7 +1714,7 @@ export default function PamphletView({
             ${labelsSvg}
             
             <!-- Axis Box -->
-            <rect x="${padding.left}" y="${padding.top}" width="${width - padding.left - padding.right}" height="${height - padding.top - padding.bottom}" fill="none" stroke="#1e293b" stroke-width="1.5" />
+            <rect x="${padding.left}" y="${padding.top}" width="${width - padding.left - padding.right}" height="${height - padding.top - padding.bottom}" fill="none" stroke="${theme.primaryLine}" stroke-width="1.5" />
             
             <!-- Plotted points -->
             ${pointsSvg}
@@ -1695,6 +1846,55 @@ export default function PamphletView({
         gibbsInterpretationText = `Gibbs Cation Ratio diagram data is insufficient for process categorization in ${regionName}.`;
       }
 
+      // --- Chadha's Modified Piper Diagram Interpretation Calculation ---
+      const chadhaValidSamples = processedFaciesSamples.filter(
+        (s) => s.hasChadha && s.chadhaX !== null && s.chadhaY !== null
+      );
+      const totalChadhaValid = chadhaValidSamples.length;
+
+      let chadhaF5 = 0; // Weathering and Recharge (Ca-Mg-HCO3)
+      let chadhaF8 = 0; // Base Ion Exchange (NaHCO3)
+      let chadhaF7 = 0; // Saline Water / Evaporation (NaCl)
+      let chadhaF6 = 0; // Reverse Ion Exchange (Ca-Mg-Cl-SO4)
+
+      chadhaValidSamples.forEach((s) => {
+        const x = s.chadhaX!;
+        const y = s.chadhaY!;
+        if (x >= 0 && y >= 0) chadhaF5++;
+        else if (x < 0 && y >= 0) chadhaF8++;
+        else if (x < 0 && y < 0) chadhaF7++;
+        else chadhaF6++;
+      });
+
+      const f5Pct = totalChadhaValid > 0 ? (chadhaF5 / totalChadhaValid) * 100 : 0;
+      const f8Pct = totalChadhaValid > 0 ? (chadhaF8 / totalChadhaValid) * 100 : 0;
+      const f7Pct = totalChadhaValid > 0 ? (chadhaF7 / totalChadhaValid) * 100 : 0;
+      const f6Pct = totalChadhaValid > 0 ? (chadhaF6 / totalChadhaValid) * 100 : 0;
+
+      const chadhaRanked = [
+        { field: "Field 5", name: "Field 5 (Ca-Mg-HCO₃ Type: Weathering & Recharge)", count: chadhaF5, pct: f5Pct },
+        { field: "Field 8", name: "Field 8 (Na-HCO₃ Type: Base Ion Exchange)", count: chadhaF8, pct: f8Pct },
+        { field: "Field 7", name: "Field 7 (Na-Cl Type: Saline Water & Evaporation)", count: chadhaF7, pct: f7Pct },
+        { field: "Field 6", name: "Field 6 (Ca-Mg-Cl-SO₄ Type: Reverse Ion Exchange)", count: chadhaF6, pct: f6Pct },
+      ].sort((a, b) => b.count - a.count);
+
+      const dominantChadha = chadhaRanked[0] || { field: "Field 5", name: "Field 5", count: 0, pct: 0 };
+
+      let chadhaInterpretationText = "";
+      if (totalChadhaValid > 0) {
+        chadhaInterpretationText = `Chadha's (1999) modified Piper diagram provides an unambiguous rectangular coordinate projection of geochemical facies based on percent milliequivalent differences: (Ca²⁺+Mg²⁺)-(Na⁺+K⁺) on the X-axis and (HCO₃⁻+CO₃²⁻)-(Cl⁻+SO₄²⁻) on the Y-axis. In <strong>${regionName}</strong>, <strong>${dominantChadha.count} out of ${totalChadhaValid} samples (${dominantChadha.pct.toFixed(1)}%)</strong> classify under <strong>${dominantChadha.name}</strong>. Overall, Field 5 accounts for <strong>${f5Pct.toFixed(1)}%</strong> (${chadhaF5} samples), Field 8 represents <strong>${f8Pct.toFixed(1)}%</strong> (${chadhaF8} samples), Field 7 constitutes <strong>${f7Pct.toFixed(1)}%</strong> (${chadhaF7} samples), and Field 6 includes <strong>${f6Pct.toFixed(1)}%</strong> (${chadhaF6} samples). This hydrogeochemical distribution demonstrates that ${
+          dominantChadha.field === "Field 5"
+            ? "active meteoric groundwater recharge and carbonate/silicate mineral weathering predominate throughout the aquifer system."
+            : dominantChadha.field === "Field 8"
+            ? "direct base cation exchange is the dominant geochemical control, wherein Ca²⁺ and Mg²⁺ are exchanged for Na⁺ on aquifer clay surfaces."
+            : dominantChadha.field === "Field 7"
+            ? "intense surface evaporative concentration, mineral dissolution from saline lithologies, or stagnant groundwater circulation governs the water matrix."
+            : "reverse ion exchange reactions predominate, releasing calcium and magnesium into solution while trapping sodium in clay lattices."
+        }`;
+      } else {
+        chadhaInterpretationText = `Chadha's diagram classification data is insufficient for detailed interpretation in ${regionName}.`;
+      }
+
       const sarSamples = processedFaciesSamples.filter((s) => s.hasSAR && s.sar !== null);
       const totalSARSamples = sarSamples.length;
       const rscSamples = processedFaciesSamples.filter((s) => s.hasRSC && s.rsc !== null);
@@ -1780,61 +1980,120 @@ export default function PamphletView({
             <h3 style="font-size: 20px; font-weight: 900; color: #1e3a8a; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; margin: 0 0 20px 0;">Hydrogeochemical Facies & Agricultural Suitability</h3>
             
             <p style="color: #475569; font-size: 14.5px; line-height: 1.6; margin-bottom: 20px;">
-              Comprehensive hydrochemical evaluation combining Piper trilinear facies classification, U.S. Salinity Laboratory (USSL) irrigation hazard matrix, and Gibbs rock-water interaction mechanism plots for <strong>${districtRegionStr}</strong>.
+              Comprehensive hydrochemical evaluation combining Arthur M. Piper trilinear diagram, D.K. Chadha modified Piper rectangular facies diagram, U.S. Salinity Laboratory (USSL) Richards irrigation hazard matrix, and Gibbs rock-water interaction mechanism plots for <strong>${districtRegionStr}</strong>.
             </p>
 
             <!-- COMPOSITE HYDROGEOCHEMICAL DIAGRAMS PANEL WITH COMMON LEGEND -->
             <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 20px; margin-bottom: 25px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);">
               <h4 style="font-size: 15px; font-weight: 900; color: #1e3a8a; margin: 0 0 16px 0; text-align: center; letter-spacing: 0.01em;">
-                Figure 3: Hydrogeochemical Facies & Classification Diagrams for ${districtRegionStr} Groundwater Samples
+                Figure 3: Hydrogeochemical Facies & Classification Diagrams for ${districtRegionStr} Groundwater Samples (${activeDiagramTheme.name} Theme)
               </h4>
 
-              <!-- 2x2 Grid Layout Table for the 4 Diagrams -->
+              <!-- 3-Row Grid Layout Table for the Diagrams -->
               <table class="layout-table" style="width: 100%; border-collapse: separate; border-spacing: 16px; border: none; margin: 0 auto;">
                 <tr>
                   <td style="width: 50%; vertical-align: top; border: 1px solid #cbd5e1; border-radius: 12px; padding: 14px; background: #ffffff; text-align: center;">
                     <h5 style="font-size: 12.5px; font-weight: 900; color: #1e3a8a; margin: 0 0 10px 0;">(A) Piper Diagram – Hydrochemical Facies</h5>
                     <div style="width: 100%; max-width: 395px; height: 288px; display: flex; align-items: center; justify-content: center; margin: 0 auto;">
-                      ${generatePiperDiagramHTML(districtRegionStr, validFaciesSamples, false)}
+                      ${generatePiperDiagramHTML(districtRegionStr, validFaciesSamples, false, activeDiagramTheme)}
                     </div>
                     <p style="text-align: center; font-style: italic; font-size: 11px; margin-top: 10px; margin-bottom: 0; color: #334155; font-weight: bold;">
-                      Figure 3a: Piper Diagram – Hydrochemical Facies in ${districtRegionStr}
+                      Figure 3a: Piper Trilinear Diagram – Hydrochemical Facies in ${districtRegionStr}
                     </p>
                   </td>
                   <td style="width: 50%; vertical-align: top; border: 1px solid #cbd5e1; border-radius: 12px; padding: 14px; background: #ffffff; text-align: center;">
-                    <h5 style="font-size: 12.5px; font-weight: 900; color: #1e3a8a; margin: 0 0 10px 0;">(B) USSL Diagram – Irrigation Water Classification</h5>
+                    <h5 style="font-size: 12.5px; font-weight: 900; color: #1e3a8a; margin: 0 0 10px 0;">(B) Chadha Diagram – Modified Piper Facies</h5>
                     <div style="width: 100%; max-width: 395px; height: 288px; display: flex; align-items: center; justify-content: center; margin: 0 auto;">
-                      ${generateUsslDiagramHTML(validFaciesSamples)}
+                      ${generateChadhaDiagramHTML(districtRegionStr, validFaciesSamples, activeDiagramTheme)}
                     </div>
                     <p style="text-align: center; font-style: italic; font-size: 11px; margin-top: 10px; margin-bottom: 0; color: #334155; font-weight: bold;">
-                      Figure 3b: USSL Diagram – Irrigation Water Classification in ${districtRegionStr}
+                      Figure 3b: Chadha Diagram – Modified Piper Geochemical Facies in ${districtRegionStr}
                     </p>
                   </td>
                 </tr>
 
                 <tr>
                   <td style="width: 50%; vertical-align: top; border: 1px solid #cbd5e1; border-radius: 12px; padding: 14px; background: #ffffff; text-align: center;">
-                    <h5 style="font-size: 12.5px; font-weight: 900; color: #1e3a8a; margin: 0 0 10px 0;">(C1) Gibbs Cation Ratio Diagram</h5>
+                    <h5 style="font-size: 12.5px; font-weight: 900; color: #1e3a8a; margin: 0 0 10px 0;">(C) USSL Diagram – Irrigation Water Classification</h5>
                     <div style="width: 100%; max-width: 395px; height: 288px; display: flex; align-items: center; justify-content: center; margin: 0 auto;">
-                      ${generateGibbsDiagramHTML("cation", districtRegionStr, validFaciesSamples)}
+                      ${generateUsslDiagramHTML(validFaciesSamples, activeDiagramTheme)}
                     </div>
                     <p style="text-align: center; font-style: italic; font-size: 11px; margin-top: 10px; margin-bottom: 0; color: #334155; font-weight: bold;">
-                      Figure 3c: Gibbs Cation Ratio Diagram in ${districtRegionStr}
+                      Figure 3c: USSL Diagram – Irrigation Water Classification in ${districtRegionStr}
                     </p>
                   </td>
                   <td style="width: 50%; vertical-align: top; border: 1px solid #cbd5e1; border-radius: 12px; padding: 14px; background: #ffffff; text-align: center;">
-                    <h5 style="font-size: 12.5px; font-weight: 900; color: #1e3a8a; margin: 0 0 10px 0;">(C2) Gibbs Anion Ratio Diagram</h5>
+                    <h5 style="font-size: 12.5px; font-weight: 900; color: #1e3a8a; margin: 0 0 10px 0;">(D1) Gibbs Cation Ratio Diagram</h5>
                     <div style="width: 100%; max-width: 395px; height: 288px; display: flex; align-items: center; justify-content: center; margin: 0 auto;">
-                      ${generateGibbsDiagramHTML("anion", districtRegionStr, validFaciesSamples)}
+                      ${generateGibbsDiagramHTML("cation", districtRegionStr, validFaciesSamples, activeDiagramTheme)}
                     </div>
                     <p style="text-align: center; font-style: italic; font-size: 11px; margin-top: 10px; margin-bottom: 0; color: #334155; font-weight: bold;">
-                      Figure 3d: Gibbs Anion Ratio Diagram in ${districtRegionStr}
+                      Figure 3d: Gibbs Cation Ratio Diagram in ${districtRegionStr}
+                    </p>
+                  </td>
+                </tr>
+
+                <tr>
+                  <td style="width: 50%; vertical-align: top; border: 1px solid #cbd5e1; border-radius: 12px; padding: 14px; background: #ffffff; text-align: center;">
+                    <h5 style="font-size: 12.5px; font-weight: 900; color: #1e3a8a; margin: 0 0 10px 0;">(D2) Gibbs Anion Ratio Diagram</h5>
+                    <div style="width: 100%; max-width: 395px; height: 288px; display: flex; align-items: center; justify-content: center; margin: 0 auto;">
+                      ${generateGibbsDiagramHTML("anion", districtRegionStr, validFaciesSamples, activeDiagramTheme)}
+                    </div>
+                    <p style="text-align: center; font-style: italic; font-size: 11px; margin-top: 10px; margin-bottom: 0; color: #334155; font-weight: bold;">
+                      Figure 3e: Gibbs Anion Ratio Diagram in ${districtRegionStr}
+                    </p>
+                  </td>
+                  <td style="width: 50%; vertical-align: top; border: 1px solid #cbd5e1; border-radius: 12px; padding: 14px; background: #ffffff; text-align: center;">
+                    <h5 style="font-size: 12.5px; font-weight: 900; color: #1e3a8a; margin: 0 0 10px 0;">(E) Facies &amp; Suitability Summary</h5>
+                    <div style="width: 100%; max-width: 395px; min-height: 288px; display: flex; flex-direction: column; justify-content: center; margin: 0 auto; background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 12px; padding: 14px; box-sizing: border-box; text-align: left;">
+                      <div style="font-size: 11px; font-weight: 900; color: #1e3a8a; margin-bottom: 8px; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px;">
+                        Hydrochemical Equilibrium Matrix (N = ${validFaciesSamples.length})
+                      </div>
+                      <table style="width: 100%; border-collapse: collapse; font-size: 9.5px; margin-bottom: 10px;">
+                        <thead>
+                          <tr style="background: #e2e8f0; font-weight: bold; color: #1e293b;">
+                            <th style="padding: 3px 5px; border: 1px solid #cbd5e1;">Chadha (1999) Facies</th>
+                            <th style="padding: 3px 5px; border: 1px solid #cbd5e1; text-align: center;">Count</th>
+                            <th style="padding: 3px 5px; border: 1px solid #cbd5e1; text-align: center;">%</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td style="padding: 3px 5px; border: 1px solid #cbd5e1; color: #1d4ed8; font-weight: bold;">F5: Ca-Mg-HCO₃ (Recharge)</td>
+                            <td style="padding: 3px 5px; border: 1px solid #cbd5e1; text-align: center;">${chadhaF5}</td>
+                            <td style="padding: 3px 5px; border: 1px solid #cbd5e1; text-align: center; font-weight: bold;">${f5Pct.toFixed(1)}%</td>
+                          </tr>
+                          <tr style="background: #ffffff;">
+                            <td style="padding: 3px 5px; border: 1px solid #cbd5e1; color: #059669; font-weight: bold;">F8: Na-HCO₃ (Base Exchange)</td>
+                            <td style="padding: 3px 5px; border: 1px solid #cbd5e1; text-align: center;">${chadhaF8}</td>
+                            <td style="padding: 3px 5px; border: 1px solid #cbd5e1; text-align: center; font-weight: bold;">${f8Pct.toFixed(1)}%</td>
+                          </tr>
+                          <tr>
+                            <td style="padding: 3px 5px; border: 1px solid #cbd5e1; color: #dc2626; font-weight: bold;">F7: Na-Cl (Saline Water)</td>
+                            <td style="padding: 3px 5px; border: 1px solid #cbd5e1; text-align: center;">${chadhaF7}</td>
+                            <td style="padding: 3px 5px; border: 1px solid #cbd5e1; text-align: center; font-weight: bold;">${f7Pct.toFixed(1)}%</td>
+                          </tr>
+                          <tr style="background: #ffffff;">
+                            <td style="padding: 3px 5px; border: 1px solid #cbd5e1; color: #b45309; font-weight: bold;">F6: Ca-Mg-Cl-SO₄ (Reverse Exch.)</td>
+                            <td style="padding: 3px 5px; border: 1px solid #cbd5e1; text-align: center;">${chadhaF6}</td>
+                            <td style="padding: 3px 5px; border: 1px solid #cbd5e1; text-align: center; font-weight: bold;">${f6Pct.toFixed(1)}%</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      <div style="font-size: 10px; color: #334155; line-height: 1.5; background: #ffffff; padding: 8px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                        <div><strong>USSL S1 (Low Sodium Hazard):</strong> ${safeUsslCount} (${safeUsslPct.toFixed(1)}%)</div>
+                        <div><strong>Gibbs Rock-Water Weathering:</strong> ${rockWeatheringCount} (${rockWeatheringPct.toFixed(1)}%)</div>
+                        <div><strong>Gibbs Evaporation Dominance:</strong> ${evaporationCount} (${evaporationPct.toFixed(1)}%)</div>
+                      </div>
+                    </div>
+                    <p style="text-align: center; font-style: italic; font-size: 11px; margin-top: 10px; margin-bottom: 0; color: #334155; font-weight: bold;">
+                      Figure 3f: Hydrogeochemical Synthesis Matrix for ${districtRegionStr}
                     </p>
                   </td>
                 </tr>
               </table>
 
-              <!-- Single Common Legend for All Three Diagram Types -->
+              <!-- Single Common Legend for All Diagram Types -->
               <div style="margin-top: 15px;">
                 ${generateBlockLegendHTML()}
               </div>
@@ -1842,7 +2101,7 @@ export default function PamphletView({
 
             <div style="background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 22px; margin-bottom: 25px; line-height: 1.6; font-size: 13.5px; text-align: justify; color: #334155; box-shadow: 0 2px 6px rgba(0,0,0,0.02);">
               <h4 style="font-weight: 900; color: #1e3a8a; margin-top: 0; margin-bottom: 16px; font-size: 15.5px; border-bottom: 1.5px solid #e2e8f0; padding-bottom: 8px;">
-                Hydrochemical & Classification Diagrams Interpretation
+                Hydrochemical &amp; Classification Diagrams Interpretation
               </h4>
 
               <div style="margin-bottom: 16px;">
@@ -1851,12 +2110,17 @@ export default function PamphletView({
               </div>
 
               <div style="margin-bottom: 16px;">
-                <h5 style="font-weight: 800; color: #1e3a8a; font-size: 14px; margin: 0 0 6px 0;">(B) USSL Diagram (Irrigation Water Classification)</h5>
+                <h5 style="font-weight: 800; color: #1e3a8a; font-size: 14px; margin: 0 0 6px 0;">(B) Chadha's Modified Piper Diagram (Rectangular Facies Projection)</h5>
+                <p style="margin: 0; line-height: 1.6;">${chadhaInterpretationText}</p>
+              </div>
+
+              <div style="margin-bottom: 16px;">
+                <h5 style="font-weight: 800; color: #1e3a8a; font-size: 14px; margin: 0 0 6px 0;">(C) USSL Diagram (Irrigation Water Classification)</h5>
                 <p style="margin: 0; line-height: 1.6;">${usslInterpretationText}</p>
               </div>
 
               <div>
-                <h5 style="font-weight: 800; color: #1e3a8a; font-size: 14px; margin: 0 0 6px 0;">(C) Gibbs Cation Ratio Diagram (Governing Geochemical Processes)</h5>
+                <h5 style="font-weight: 800; color: #1e3a8a; font-size: 14px; margin: 0 0 6px 0;">(D) Gibbs Rock-Water Interaction Diagrams (Governing Geochemical Processes)</h5>
                 <p style="margin: 0; line-height: 1.6;">${gibbsInterpretationText}</p>
               </div>
             </div>
@@ -2151,7 +2415,7 @@ export default function PamphletView({
           </div>
           <div className="flex flex-wrap gap-2 sm:gap-3 w-full lg:w-auto">
             <button
-              onClick={handleGenerate}
+              onClick={() => handleGenerate()}
               disabled={isGenerating || selectSummaryOptionsLength === 0}
               className="glossy-btn-indigo px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm flex items-center gap-2 whitespace-nowrap disabled:opacity-50 flex-1 sm:flex-initial justify-center cursor-pointer"
             >
@@ -2226,6 +2490,67 @@ export default function PamphletView({
                 ))}
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Diagram Line Style & Color Template Selector */}
+        <div className="bg-gradient-to-b from-white/90 via-slate-50/80 to-slate-100/70 shadow-[0_12px_28px_rgba(15,23,42,0.06),inset_0_2px_0_rgba(255,255,255,1)] p-4 sm:p-5 rounded-2xl border border-white/90 relative backdrop-blur-lg">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+            <div>
+              <label className="text-[11px] font-black text-slate-900 uppercase tracking-widest flex items-center gap-2 drop-shadow-2xs">
+                <Palette className="w-4 h-4 text-indigo-600" />
+                Hydrogeochemical Diagrams Style Template (Piper / Chadha / USSL / Gibbs)
+              </label>
+              <p className="text-xs text-slate-600 font-semibold mt-0.5">
+                Select line colors and visual theme for all 4 hydrogeochemical plots in the pamphlet.
+              </p>
+            </div>
+            <span className="text-[11px] font-black text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-full self-start sm:self-auto">
+              Current: {DIAGRAM_LINE_TEMPLATES.find(t => t.id === selectedDiagramThemeId)?.name || "Cobalt Blueprint"}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+            {DIAGRAM_LINE_TEMPLATES.map((tmpl) => {
+              const isSelected = tmpl.id === selectedDiagramThemeId;
+              return (
+                <button
+                  key={tmpl.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedDiagramThemeId(tmpl.id);
+                    if (hasGenerated) {
+                      handleGenerate(tmpl.id);
+                    }
+                  }}
+                  className={`flex flex-col items-start p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                    isSelected
+                      ? "bg-white border-indigo-600 shadow-md ring-2 ring-indigo-500/20"
+                      : "bg-white/80 border-slate-200 hover:border-slate-300 hover:bg-white"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 w-full mb-1.5">
+                    <span
+                      className="w-4 h-4 rounded-full border border-slate-300 shrink-0 shadow-2xs"
+                      style={{ backgroundColor: tmpl.primaryLine }}
+                    />
+                    <span
+                      className="w-3 h-3 rounded-full border border-slate-300 shrink-0 shadow-2xs"
+                      style={{ backgroundColor: tmpl.secondaryLine }}
+                    />
+                    {isSelected && (
+                      <span className="ml-auto w-2 h-2 rounded-full bg-indigo-600" />
+                    )}
+                  </div>
+                  <span className={`text-xs font-black truncate w-full ${isSelected ? "text-indigo-950" : "text-slate-800"}`}>
+                    {tmpl.name}
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-medium truncate w-full">
+                    {tmpl.gridDash ? "Dashed Grid" : "Solid Grid"}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
 

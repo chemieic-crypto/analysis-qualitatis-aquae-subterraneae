@@ -1,0 +1,3111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WQI Pro - Spatial Analytics Dashboard</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- SheetJS for Excel -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <!-- FontAwesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Leaflet for Mapping -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Turf.js for Spatial Math & Contours -->
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+    <!-- ShpJS for reading Zip Shapefiles -->
+    <script src="https://unpkg.com/shpjs@latest/dist/shp.js"></script>
+    <!-- html2canvas for HD Image Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    
+    <!-- Highcharts 3D Engine -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highcharts/11.4.0/highcharts.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highcharts/11.4.0/highcharts-3d.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highcharts/11.4.0/modules/exporting.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highcharts/11.4.0/modules/offline-exporting.js"></script>
+
+    <!-- ExcelJS for Advanced Formatted Exports -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+
+    <style>
+        /* ==========================================
+           DARK NAVY & GREEN THEME
+        ========================================== */
+        body { background-color: #0b0e14; color: #334155; }
+        
+        .light-panel { background-color: #ffffff; border: 1px solid #e2e8f0; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05); border-radius: 1.25rem; }
+        .dark-sidebar { background-color: #13161f; border: 1px solid #2a2f45; box-shadow: 4px 0 15px rgba(0,0,0,0.3); border-radius: 1.25rem; }
+        .dark-card { background-color: #1c212f; border: 1px solid #2a2f45; border-radius: 1rem; }
+
+        .btn-green-solid { background-color: #00b87c; color: #ffffff; border: 1px solid #00a06b; border-radius: 0.5rem; font-weight: 700; transition: all 0.2s ease; }
+        .btn-green-solid:hover:not(:disabled) { background-color: #00a06b; box-shadow: 0 4px 12px rgba(0, 184, 124, 0.4); }
+        .btn-green-solid:disabled { background-color: #2a2f45; color: #64748b; border-color: #334155; cursor: not-allowed; opacity: 0.7; }
+
+        .btn-orange-solid { background-color: #f97316; color: #ffffff; border: 1px solid #ea580c; border-radius: 0.5rem; font-weight: 700; transition: all 0.2s ease; }
+        .btn-orange-solid:hover:not(:disabled) { background-color: #ea580c; box-shadow: 0 4px 12px rgba(249, 115, 22, 0.4); }
+        .btn-orange-solid:disabled { background-color: #2a2f45; color: #64748b; border-color: #334155; cursor: not-allowed; opacity: 0.7; }
+
+        .btn-yellow-solid { background-color: #facc15; color: #1e293b; border: 1px solid #eab308; border-radius: 0.5rem; font-weight: 700; transition: all 0.2s ease; }
+        .btn-yellow-solid:hover:not(:disabled) { background-color: #eab308; box-shadow: 0 4px 12px rgba(250, 204, 21, 0.4); }
+        .btn-yellow-solid:disabled { background-color: #2a2f45; color: #64748b; border-color: #334155; cursor: not-allowed; opacity: 0.7; }
+
+        .btn-red-solid { background-color: #ef4444; color: #ffffff; border: 1px solid #dc2626; border-radius: 0.5rem; font-weight: 700; transition: all 0.2s ease; }
+        .btn-red-solid:hover:not(:disabled) { background-color: #dc2626; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4); }
+        .btn-red-solid:disabled { background-color: #2a2f45; color: #64748b; border-color: #334155; cursor: not-allowed; opacity: 0.7; }
+
+        .btn-dark-outline { background-color: transparent; color: #94a3b8; border: 1px dashed #475569; border-radius: 0.5rem; transition: all 0.2s ease; font-weight: 700; }
+        .btn-dark-outline:hover { border-color: #00b87c; color: #00b87c; background-color: rgba(0, 184, 124, 0.05); }
+
+        .btn-dark-action { background-color: #2a2f45; color: #cbd5e1; border: 1px solid #3f4766; border-radius: 0.5rem; transition: all 0.2s; }
+        .btn-dark-action:hover { background-color: #3f4766; color: #ffffff; }
+
+        .btn-white { background-color: #ffffff; color: #475569; border: 1px solid #cbd5e1; border-bottom: 3px solid #94a3b8; border-radius: 0.5rem; font-weight: bold; transition: all 0.1s; }
+        .btn-white:active { transform: translateY(2px); border-bottom-width: 1px; margin-bottom: 2px; }
+
+        /* ==========================================
+           PARAMETER BUTTONS (3D PILL W/ GLOSSY CIRCLE)
+        ========================================== */
+        .param-btn-3d {
+            background: #ffffff;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 3px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s ease;
+            box-shadow: 0 3px 5px rgba(0,0,0,0.05), 0 4px 0 #cbd5e1;
+            cursor: pointer;
+            height: 42px;
+            width: 100%;
+        }
+        .param-btn-3d:active {
+            transform: translateY(3px);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05), 0 1px 0 #cbd5e1;
+            margin-bottom: 3px;
+        }
+        .param-btn-3d-inactive {
+            background: #f8fafc;
+            border-color: #cbd5e1;
+            box-shadow: 0 2px 3px rgba(0,0,0,0.05), 0 2px 0 #94a3b8;
+            transform: translateY(2px);
+            margin-bottom: 2px;
+            opacity: 0.6;
+            filter: grayscale(85%);
+        }
+        
+        .glossy-icon-circle {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 900;
+            box-shadow: 
+                inset 0 3px 4px rgba(255,255,255,0.8), 
+                inset 0 -3px 4px rgba(0,0,0,0.2), 
+                0 2px 3px rgba(0,0,0,0.2);
+            border: 2px solid transparent;
+        }
+
+        .glossy-blue   { background: radial-gradient(circle at 50% 20%, #bfdbfe, #3b82f6); border-color: #2563eb; color: #1e3a8a; text-shadow: 0 1px 1px rgba(255,255,255,0.5); }
+        .glossy-cyan   { background: radial-gradient(circle at 50% 20%, #a5f3fc, #0ea5e9); border-color: #0284c7; color: #0c4a6e; text-shadow: 0 1px 1px rgba(255,255,255,0.5); }
+        .glossy-green  { background: radial-gradient(circle at 50% 20%, #bbf7d0, #22c55e); border-color: #16a34a; color: #14532d; text-shadow: 0 1px 1px rgba(255,255,255,0.5); }
+        .glossy-amber  { background: radial-gradient(circle at 50% 20%, #fde68a, #f59e0b); border-color: #d97706; color: #78350f; text-shadow: 0 1px 1px rgba(255,255,255,0.5); }
+        .glossy-red    { background: radial-gradient(circle at 50% 20%, #fecaca, #ef4444); border-color: #dc2626; color: #7f1d1d; text-shadow: 0 1px 1px rgba(255,255,255,0.5); }
+        .glossy-purple { background: radial-gradient(circle at 50% 20%, #e9d5ff, #a855f7); border-color: #9333ea; color: #4c1d95; text-shadow: 0 1px 1px rgba(255,255,255,0.5); }
+        .glossy-pink   { background: radial-gradient(circle at 50% 20%, #fbcfe8, #ec4899); border-color: #db2777; color: #831843; text-shadow: 0 1px 1px rgba(255,255,255,0.5); }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        
+        .chart-container { position: relative; height: 100%; width: 100%; min-height: 400px; }
+        
+        .tab-btn { transition: all 0.2s; font-weight: 800; border-radius: 0.5rem 0.5rem 0 0; margin-right: 4px; padding: 0.75rem 1rem; }
+        .tab-active { background-color: #ffffff; border-top: 3px solid #4f46e5; color: #1e293b; }
+        .tab-inactive { background-color: transparent; color: #64748b; }
+        .tab-inactive:hover { background-color: rgba(255,255,255,0.5); color: #1e293b; }
+
+        .tabs-scrollable { overflow-x: auto; overflow-y: hidden; flex-wrap: nowrap; scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+        .tabs-scrollable::-webkit-scrollbar { height: 4px; }
+        .tabs-scrollable::-webkit-scrollbar-track { background: transparent; }
+        .tabs-scrollable::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 10px; }
+
+        .leaflet-control-scale-line { font-weight: bold; border: 2px solid #333; border-top: none; color: #333; background: rgba(255,255,255,0.9); }
+        
+        /* Draggable elements cursor styling */
+        .cursor-move { cursor: move; cursor: grab; }
+        .cursor-move:active { cursor: grabbing; }
+
+        .gis-print-title { background: transparent; padding: 10px 20px; font-family: 'Arial', sans-serif; font-weight: 800; font-size: 1.25rem; color: #1e293b; text-align: center; border-radius: 6px; }
+
+        /* A4 Layout Frame fix */
+        .print-a4-landscape {
+            aspect-ratio: 297 / 210;
+            width: 100% !important;
+            height: auto !important;
+            max-width: calc(80vh * 1.414) !important; /* Constrain perfectly to screen height */
+            margin: auto;
+            border-radius: 0;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            border: 1px solid #cbd5e1;
+            background-color: #ffffff !important;
+        }
+
+        .method-bg { background-color: #f8fafc; }
+        .method-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 1rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+        .method-formula-box { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 1rem; margin-top: 0.5rem; margin-bottom: 0.5rem; font-family: monospace; font-size: 0.9rem; color: #334155; }
+
+        .dark-select { background-color: #0b0e14; color: #e2e8f0; border: 1px solid #3f4766; }
+        .dark-select:focus { border-color: #00b87c; outline: none; box-shadow: 0 0 0 1px #00b87c; }
+
+        input[type="color"] { -webkit-appearance: none; border: none; border-radius: 4px; padding: 0; overflow: hidden; }
+        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+        input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
+    </style>
+</head>
+<body class="min-h-screen font-sans flex flex-col h-screen overflow-hidden bg-[#0b0e14]">
+
+    <!-- Main App Layout -->
+    <main class="flex-grow flex flex-col md:flex-row p-4 gap-4 overflow-hidden h-full">
+        
+        <!-- Left Panel: Controls & Inputs (Dark Theme) -->
+        <aside class="w-full md:w-1/3 lg:w-1/4 flex flex-col gap-4 overflow-y-auto custom-scrollbar pr-2 pb-20 md:pb-0 shrink-0 dark-sidebar p-4">
+            
+            <div id="alertBox" class="hidden rounded-xl px-4 py-3 border-l-4 bg-[#1c212f]">
+                <div class="flex items-start">
+                    <i id="alertIcon" class="mt-1 mr-2"></i>
+                    <div>
+                        <h3 id="alertTitle" class="text-sm font-bold text-white"></h3>
+                        <p id="alertMessage" class="text-xs mt-1 text-slate-400"></p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dark-card p-5">
+                <h2 class="text-[10px] font-black mb-4 text-emerald-500 uppercase tracking-widest">1. Source Data</h2>
+                
+                <button id="templateBtn" class="btn-dark-action w-full text-sm py-3 font-bold mb-4 flex items-center justify-center shadow-sm">
+                    <i class="fas fa-download text-emerald-400 mr-2"></i> Data Template
+                </button>
+
+                <div class="relative mb-3 group">
+                    <label for="fileUpload" class="btn-orange-solid flex items-center justify-center w-full px-4 py-3 cursor-pointer">
+                        <i class="fas fa-file-excel mr-2 text-lg"></i>
+                        <span id="fileNameDisplay" class="text-sm truncate max-w-[200px]">Upload Excel</span>
+                        <input id="fileUpload" type="file" accept=".xlsx, .xls" class="hidden">
+                    </label>
+                </div>
+
+                <div class="relative mb-4 group">
+                    <label for="shpUpload" class="btn-yellow-solid flex items-center justify-center w-full px-4 py-3 cursor-pointer">
+                        <i class="fas fa-map mr-2 text-lg opacity-80"></i>
+                        <span id="shpNameDisplay" class="text-sm truncate max-w-[200px]">Upload Boundary (.zip)</span>
+                        <input id="shpUpload" type="file" accept=".zip" class="hidden">
+                    </label>
+                </div>
+
+                <button id="calcBtn" class="btn-green-solid w-full text-sm py-3 disabled:opacity-50 mt-1" disabled>
+                    <i class="fas fa-play mr-2"></i> Process & Map
+                </button>
+            </div>
+
+            <div id="filterPanel" class="dark-card p-5 hidden border-l-4 border-l-indigo-500">
+                <h2 class="text-[10px] font-black mb-4 text-indigo-400 uppercase tracking-widest flex justify-between items-center">
+                    2. Geographic & Temporal
+                    <span id="filterCountBadge" class="text-[9px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full"></span>
+                </h2>
+                <div class="space-y-3">
+                    <div>
+                        <select id="stateFilter" class="w-full dark-select rounded-md px-3 py-2 text-xs font-bold cursor-pointer shadow-sm">
+                            <option value="ALL">Upload file to unlock filters...</option>
+                        </select>
+                    </div>
+                    <div>
+                        <select id="districtFilter" class="w-full dark-select rounded-md px-3 py-2 text-xs font-bold cursor-pointer shadow-sm" disabled>
+                            <option value="ALL">All Districts</option>
+                        </select>
+                    </div>
+                    <div>
+                        <select id="blockFilter" class="w-full dark-select rounded-md px-3 py-2 text-xs font-bold cursor-pointer shadow-sm" disabled>
+                            <option value="ALL">All Blocks</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Parameter Isolation Panel -->
+            <div class="light-panel flex-grow flex flex-col min-h-[300px] border border-slate-200 mt-2">
+                <div class="p-3 border-b border-slate-200 flex justify-between items-center bg-slate-50 rounded-t-[1.25rem]">
+                    <div class="flex items-center gap-2">
+                        <div class="bg-blue-500 text-white rounded w-6 h-6 flex items-center justify-center font-black shadow-md text-xs">3.</div>
+                        <h2 class="text-[11px] font-black text-slate-700 uppercase tracking-widest">
+                            Parameter Isolation
+                        </h2>
+                    </div>
+                    <button onclick="toggleAllParams()" id="selectAllBtn" class="flex items-center gap-1 text-[9px] bg-blue-50 text-blue-600 border border-blue-200 px-2 py-1 rounded-full hover:bg-blue-100 font-bold tracking-wider transition-colors shadow-sm">
+                        <i class="fas fa-times-circle"></i> Deselect All
+                    </button>
+                </div>
+                
+                <div class="flex-grow overflow-y-auto p-3 custom-scrollbar bg-[#f8fafc]">
+                    <div id="paramGrid" class="grid grid-cols-4 md:grid-cols-5 lg:grid-cols-5 gap-2">
+                        <!-- Grid items populated by JS -->
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-slate-200">
+                        <label class="flex items-center text-[10px] uppercase font-bold text-slate-500 cursor-pointer hover:text-slate-800 transition">
+                            <input type="checkbox" id="strictDataToggle" class="mr-2 accent-blue-500 w-3.5 h-3.5"> Strict Data Mode
+                        </label>
+                        <p class="text-[9px] text-slate-400 mt-1 italic">Rules/standards map which parameters are included in compliance checks.</p>
+                    </div>
+                </div>
+                
+                <div class="p-3 border-t border-slate-200 bg-white rounded-b-[1.25rem] flex gap-2">
+                    <button onclick="openParamModal()" class="btn-orange-solid flex-1 py-2 text-xs flex justify-center items-center gap-1">
+                        <i class="fas fa-sliders-h opacity-90"></i> Limits
+                    </button>
+                    <button onclick="openClassModal()" class="btn-yellow-solid flex-1 py-2 text-xs flex justify-center items-center gap-1">
+                        <i class="fas fa-palette opacity-80"></i> Legend
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Right Panel: Tabs, Map & Charts (Light Theme) -->
+        <main class="w-full md:w-2/3 lg:w-3/4 light-panel flex flex-col overflow-hidden">
+            
+            <!-- Tabs -->
+            <div class="flex tabs-scrollable border-b border-slate-200 shrink-0 px-2 pt-2 bg-slate-50/80">
+                <button onclick="switchTab('mapTab')" id="btn-mapTab" class="tab-btn flex-shrink-0 min-w-[140px] tab-active"><i class="fas fa-map-marked-alt mr-2 text-emerald-500"></i>Spatial Map</button>
+                <button onclick="switchTab('analyticsTab')" id="btn-analyticsTab" class="tab-btn flex-shrink-0 min-w-[140px] tab-inactive"><i class="fas fa-chart-bar mr-2 text-indigo-500"></i>Analytics GUI</button>
+                <button onclick="switchTab('dataTab')" id="btn-dataTab" class="tab-btn flex-shrink-0 min-w-[140px] tab-inactive"><i class="fas fa-table mr-2 text-blue-500"></i>Data Table</button>
+                <button onclick="switchTab('methodologyTab')" id="btn-methodologyTab" class="tab-btn flex-shrink-0 min-w-[140px] tab-inactive"><i class="fas fa-project-diagram mr-2 text-purple-500"></i>Methodology</button>
+            </div>
+
+            <!-- Tab Content Area -->
+            <div class="relative flex-grow p-4 bg-white min-h-0 overflow-hidden">
+                
+                <!-- Map Tab -->
+                <div id="mapTab" class="h-full w-full flex flex-col relative rounded-xl overflow-hidden border border-slate-200 bg-slate-200">
+                    
+                    <!-- 3. Map Layers Panel (Kept outside Print Area so it doesn't get exported) -->
+                    <div id="mapLayersPanel" class="absolute top-4 right-4 z-[2001] light-panel p-3 rounded-xl flex flex-col gap-2 cursor-move shadow-md border border-slate-200 hover:border-emerald-300 transition-colors w-64">
+                        <div class="border-b border-slate-100 pb-1 mb-1 flex justify-between items-center cursor-move text-slate-400 hover:text-slate-600">
+                            <h4 class="text-[10px] font-black uppercase tracking-wider">Map Layers</h4>
+                            <i class="fas fa-arrows-alt"></i>
+                        </div>
+                        
+                        <div class="mb-1">
+                            <select id="baseMapSelector" class="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs outline-none text-slate-700 font-bold focus:ring-1 focus:ring-emerald-500 cursor-pointer">
+                                <option value="carto">Light Map (Default)</option>
+                                <option value="hybrid">Google Hybrid</option>
+                                <option value="satellite">Google Earth</option>
+                                <option value="osm">OpenStreetMap</option>
+                                <option value="topo">Topographic</option>
+                            </select>
+                        </div>
+                        <div class="border-t border-slate-100 my-1"></div>
+
+                        <label class="flex items-center text-xs font-bold text-slate-600 cursor-pointer hover:text-slate-900 transition-colors">
+                            <input type="checkbox" id="togglePoints" checked class="mr-2 accent-emerald-500 w-3.5 h-3.5"> Show Samples
+                        </label>
+                        <label class="flex items-center text-xs font-bold text-slate-600 cursor-pointer hover:text-slate-900 transition-colors">
+                            <input type="checkbox" id="toggleContours" checked class="mr-2 accent-emerald-500 w-3.5 h-3.5"> Show IDW Map
+                        </label>
+                        
+                        <!-- Toggle Empty Regions Feature -->
+                        <label class="flex items-center text-xs font-bold text-slate-600 cursor-pointer hover:text-slate-900 transition-colors ml-4">
+                            <input type="checkbox" id="toggleEmptyRegions" class="mr-2 accent-cyan-500 w-3 h-3"> Isolate Unsampled Regions
+                        </label>
+
+                        <label class="flex items-center text-xs font-bold text-slate-600 cursor-pointer hover:text-slate-900 transition-colors">
+                            <input type="checkbox" id="toggleShapefile" checked class="mr-2 accent-emerald-500 w-3.5 h-3.5"> Show Boundary
+                        </label>
+
+                        <!-- Map Title Customization inline in Layers Panel -->
+                        <div class="border-t border-slate-100 my-2"></div>
+                        <div class="text-[10px] font-black uppercase text-slate-500 mb-1 flex items-center justify-between">
+                            <span>Map Title Settings</span>
+                            <label class="flex items-center text-[9px] cursor-pointer hover:text-slate-800">
+                                <input type="checkbox" id="toggleMapTitle" checked class="mr-1 accent-emerald-500"> Show
+                            </label>
+                        </div>
+                        <input type="text" id="liveTitleInput" value="Spatial Distribution of WQI" class="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs font-bold text-slate-700 mb-1 outline-none focus:border-emerald-400">
+                        <div class="flex gap-1 mb-1">
+                            <select id="liveTitleFont" class="w-1/2 bg-slate-50 border border-slate-200 rounded p-1 text-[10px] text-slate-700 outline-none">
+                                <option value="Arial, sans-serif">Arial</option>
+                                <option value="'Times New Roman', Times, serif">Times New Roman</option>
+                                <option value="'Courier New', Courier, monospace">Courier New</option>
+                                <option value="Georgia, serif">Georgia</option>
+                                <option value="Tahoma, sans-serif">Tahoma</option>
+                            </select>
+                            <input type="color" id="liveTitleColor" value="#1e293b" class="w-1/4 h-6 rounded cursor-pointer border border-slate-200 p-0">
+                            <input type="number" id="liveTitleSize" value="20" min="10" max="60" class="w-1/4 bg-slate-50 border border-slate-200 rounded p-1 text-[10px] text-center outline-none" title="Font Size (px)">
+                        </div>
+                        <!-- End Map Title Live Editor -->
+
+                        <div class="border-t border-slate-100 my-1"></div>
+
+                        <div class="flex justify-between items-center mb-1 text-slate-600">
+                            <span class="text-[10px] font-bold uppercase">Map Zoom</span>
+                            <div class="flex gap-1">
+                                <button onclick="fineZoomMap(-0.1)" class="bg-slate-100 hover:bg-slate-200 border border-slate-200 px-2 py-0.5 rounded text-xs font-black shadow-sm" title="Zoom Out 10%"><i class="fas fa-minus"></i></button>
+                                <button onclick="fineZoomMap(0.1)" class="bg-slate-100 hover:bg-slate-200 border border-slate-200 px-2 py-0.5 rounded text-xs font-black shadow-sm" title="Zoom In 10%"><i class="fas fa-plus"></i></button>
+                            </div>
+                        </div>
+
+                        <div class="border-t border-slate-100 my-1"></div>
+                        <label class="flex items-center text-xs cursor-pointer text-slate-700 hover:text-black font-black">
+                            <input type="checkbox" id="togglePrintMode" class="mr-2 accent-slate-800 w-3.5 h-3.5"> <i class="fas fa-print mr-1 text-indigo-500"></i> A4 Print Mode
+                        </label>
+                        <div class="border-t border-slate-100 my-1"></div>
+                        <button onclick="toggleMapFullscreen()" id="fsToggleBtn" class="flex items-center text-xs cursor-pointer text-slate-700 hover:text-indigo-600 font-black w-full text-left mb-1">
+                            <i class="fas fa-expand w-4"></i> Fullscreen Map
+                        </button>
+                        <button onclick="openMapSettings()" class="flex items-center text-xs cursor-pointer text-slate-700 hover:text-emerald-600 font-black w-full text-left">
+                            <i class="fas fa-sliders-h w-4"></i> Map Preferences
+                        </button>
+                        
+                        <button id="downloadMapBtn" onclick="exportMapImage()" class="btn-green-solid w-full py-2 mt-2 hidden text-xs flex items-center justify-center gap-2 shadow-lg">
+                            <i class="fas fa-camera"></i> Save HD Map
+                        </button>
+                    </div>
+
+                    <!-- Wrapper for A4 alignment -->
+                    <div id="mapWrapper" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <!-- Capture Area -->
+                        <div id="mapPrintArea" class="relative w-full h-full bg-slate-200 transition-all duration-300 pointer-events-auto overflow-hidden">
+                            <!-- 1. Map Title -->
+                            <div id="mapTitleControl" class="absolute top-4 left-1/2 -translate-x-1/2 z-[2000] hidden gis-print-title cursor-move flex items-center gap-2 group bg-white/90 backdrop-blur-sm border border-slate-200 shadow-md">
+                                <i class="fas fa-grip-vertical text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity"></i>
+                                <span>Spatial Distribution of WQI</span>
+                            </div>
+
+                            <!-- 2. North Arrow -->
+                            <div id="northArrow" class="absolute bottom-6 left-4 z-[2000] cursor-move p-2 bg-white/80 rounded-lg shadow-sm border border-slate-200 hover:shadow-md transition-shadow group flex items-center justify-center hidden">
+                                <div class="flex flex-col items-center text-slate-800">
+                                    <i class="fas fa-caret-up text-4xl leading-none -mb-1"></i>
+                                    <span class="font-black text-xs uppercase tracking-widest">N</span>
+                                </div>
+                            </div>
+
+                            <!-- 4. Map Legend -->
+                            <div id="mapLegend" class="absolute bottom-6 right-4 z-[2000] light-panel p-4 pb-5 pr-5 rounded-xl text-slate-800 min-w-max cursor-move shadow-md border border-slate-200 hover:border-emerald-300 transition-colors bg-white/95 backdrop-blur-sm box-border w-max">
+                            </div>
+
+                            <!-- Leaflet Map Container -->
+                            <div id="map" class="absolute inset-0 w-full h-full bg-slate-200 z-[1]"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Analytics Tab -->
+                <div id="analyticsTab" class="hidden h-full w-full flex-col overflow-y-auto custom-scrollbar pr-2 pb-10">
+                    <div class="mb-4">
+                        <h2 class="text-xl font-black text-slate-800">Water Quality Distribution Analytics</h2>
+                        <p class="text-xs font-bold text-slate-400 uppercase">3D Visualization & Advanced Properties</p>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 mb-5 shrink-0" id="statsCards">
+                    </div>
+
+                    <div class="flex flex-col lg:flex-row gap-4 flex-grow min-h-0">
+                        <div class="w-full lg:w-[320px] space-y-4 overflow-y-auto custom-scrollbar pr-2 shrink-0 h-full max-h-[600px]">
+                            
+                            <div class="light-panel p-4 border-l-4 border-slate-800">
+                                <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">📝 Chart Title</h3>
+                                <input type="text" id="chartTitleInput" value="Overall WQI Distribution" oninput="renderDonutChart()" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm focus:ring-2 ring-indigo-500 outline-none font-bold text-slate-700">
+                            </div>
+
+                            <div class="light-panel p-4 border-l-4 border-amber-500">
+                                <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">👁️ Visibility Features</h3>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <label class="flex items-center gap-2 p-2 bg-slate-50 rounded cursor-pointer hover:bg-slate-100 transition-colors border border-slate-100">
+                                        <input type="checkbox" id="showTitle" checked onchange="renderDonutChart()" class="w-3 h-3 accent-amber-600">
+                                        <span class="text-[10px] font-bold text-slate-600 uppercase">Title</span>
+                                    </label>
+                                    <label class="flex items-center gap-2 p-2 bg-slate-50 rounded cursor-pointer hover:bg-slate-100 transition-colors border border-slate-100">
+                                        <input type="checkbox" id="showN" checked onchange="renderDonutChart()" class="w-3 h-3 accent-amber-600">
+                                        <span class="text-[10px] font-bold text-slate-600 uppercase">Total (N)</span>
+                                    </label>
+                                    <label class="flex items-center gap-2 p-2 bg-slate-50 rounded cursor-pointer hover:bg-slate-100 transition-colors border border-slate-100">
+                                        <input type="checkbox" id="showSmallN" checked onchange="renderDonutChart()" class="w-3 h-3 accent-amber-600">
+                                        <span class="text-[10px] font-bold text-slate-600 uppercase">Count (n)</span>
+                                    </label>
+                                    <label class="flex items-center gap-2 p-2 bg-slate-50 rounded cursor-pointer hover:bg-slate-100 transition-colors border border-slate-100">
+                                        <input type="checkbox" id="showLegend" checked onchange="renderDonutChart()" class="w-3 h-3 accent-amber-600">
+                                        <span class="text-[10px] font-bold text-slate-600 uppercase">Legends</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="light-panel p-4 border-l-4 border-indigo-500">
+                                <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">🖋️ Typography Elements</h3>
+                                <div class="space-y-3">
+                                    <div class="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label class="text-[10px] font-bold text-slate-400 uppercase">Title Size (px)</label>
+                                            <input type="number" id="dTitleSize" value="22" oninput="renderDonutChart()" class="w-full text-xs p-2 bg-slate-50 border border-slate-200 rounded-lg outline-none font-bold">
+                                        </div>
+                                        <div>
+                                            <label class="text-[10px] font-bold text-slate-400 uppercase">Label Size (px)</label>
+                                            <input type="number" id="dLabelSize" value="13" oninput="renderDonutChart()" class="w-full text-xs p-2 bg-slate-50 border border-slate-200 rounded-lg outline-none font-bold">
+                                        </div>
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label class="text-[10px] font-bold text-slate-400 uppercase block mb-1">Title Color</label>
+                                            <input type="color" id="dTitleColor" value="#1e293b" oninput="renderDonutChart()" class="h-8 w-full cursor-pointer bg-transparent border border-slate-200 rounded">
+                                        </div>
+                                        <div>
+                                            <label class="text-[10px] font-bold text-slate-400 uppercase block mb-1">Label Color</label>
+                                            <input type="color" id="dLabelColor" value="#334155" oninput="renderDonutChart()" class="h-8 w-full cursor-pointer bg-transparent border border-slate-200 rounded">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="light-panel p-4 border-l-4 border-emerald-500">
+                                <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">🎡 3D Spatial Layout</h3>
+                                <div class="space-y-3">
+                                    <div>
+                                        <div class="flex justify-between items-center mb-1">
+                                            <label class="text-[10px] uppercase font-bold text-slate-400">Tilt X (Alpha)</label>
+                                            <span id="txtDAlpha" class="text-[10px] font-black text-emerald-600">45°</span>
+                                        </div>
+                                        <input type="range" id="optDAlpha" min="0" max="90" value="45" oninput="renderDonutChart()" class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-500">
+                                    </div>
+                                    <div>
+                                        <div class="flex justify-between items-center mb-1">
+                                            <label class="text-[10px] uppercase font-bold text-slate-400">Rotation (Beta)</label>
+                                            <span id="txtDBeta" class="text-[10px] font-black text-emerald-600">0°</span>
+                                        </div>
+                                        <input type="range" id="optDBeta" min="0" max="360" value="0" oninput="renderDonutChart()" class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-500">
+                                    </div>
+                                    <div>
+                                        <div class="flex justify-between items-center mb-1">
+                                            <label class="text-[10px] uppercase font-bold text-slate-400">Extrusion Depth (Z)</label>
+                                            <span id="txtDDepth" class="text-[10px] font-black text-emerald-600">55px</span>
+                                        </div>
+                                        <input type="range" id="optDDepth" min="0" max="150" value="55" oninput="renderDonutChart()" class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-500">
+                                    </div>
+                                    <div>
+                                        <div class="flex justify-between items-center mb-1">
+                                            <label class="text-[10px] uppercase font-bold text-slate-400">Donut Hole Size</label>
+                                            <span id="txtDInner" class="text-[10px] font-black text-emerald-600">55%</span>
+                                        </div>
+                                        <input type="range" id="optDInner" min="0" max="85" value="55" oninput="renderDonutChart()" class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-500">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="light-panel p-4 bg-slate-50 border border-slate-200">
+                                <h3 class="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-3">📸 HD Engine Export</h3>
+                                <div class="mb-4 space-y-2">
+                                    <div>
+                                        <label class="text-[10px] font-bold text-slate-400 uppercase block mb-1">Background Canvas</label>
+                                        <div class="flex items-center gap-2" id="bgColorWrapper">
+                                            <input type="color" id="exportBgColor" value="#ffffff" class="h-8 w-12 cursor-pointer border border-slate-300 rounded">
+                                            <span class="text-xs text-slate-600 font-bold">Solid Fill</span>
+                                        </div>
+                                    </div>
+                                    <label class="flex items-center gap-2 p-2 bg-white border border-slate-200 rounded cursor-pointer hover:bg-slate-100 transition-colors">
+                                        <input type="checkbox" id="exportTransparent" onchange="toggleExportBg()" class="w-3 h-3 accent-slate-800">
+                                        <span class="text-[10px] font-bold text-slate-700 uppercase">Use Transparent BG (PNG)</span>
+                                    </label>
+                                </div>
+                                <button id="downloadChartBtn" onclick="downloadHighchart()" class="btn-red-solid w-full py-2.5 rounded-lg font-black text-sm transition-all flex items-center justify-center gap-2">
+                                    💾 Export 3D Render
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="w-full flex-grow light-panel flex items-center justify-center overflow-hidden min-h-[500px]">
+                            <div id="donut-container" class="w-full h-full text-slate-400 font-bold flex items-center justify-center">
+                                <span>Submit Data to Generate 3D Model</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Data Table Tab -->
+                <div id="dataTab" class="hidden h-full w-full flex-col">
+                    <div class="flex justify-between items-center mb-4 shrink-0">
+                        <div>
+                            <h2 class="text-xl font-black text-slate-800">Processed Results</h2>
+                            <p class="text-xs font-bold text-slate-400 uppercase">Calculated WQI and Classification</p>
+                        </div>
+                        <button id="downloadBtn" class="btn-red-solid px-4 py-2 text-sm hidden flex items-center">
+                            <i class="fas fa-file-export mr-2"></i>Export Excel
+                        </button>
+                    </div>
+                    <div class="flex-grow overflow-auto custom-scrollbar ui-panel rounded-xl relative min-h-0">
+                        <table class="w-full text-sm text-left whitespace-nowrap">
+                            <thead id="tableHead" class="text-xs uppercase bg-slate-50 text-slate-500 sticky top-0 z-10 border-b border-slate-200">
+                                <tr><th class="px-5 py-3 font-black">Upload data to view results</th></tr>
+                            </thead>
+                            <tbody id="tableBody" class="divide-y divide-slate-100">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Methodology Tab -->
+                <div id="methodologyTab" class="hidden h-full w-full flex-col overflow-y-auto custom-scrollbar method-bg rounded-2xl p-6">
+                    
+                    <div class="mb-8 text-center shrink-0">
+                        <h2 class="text-3xl font-black text-slate-800 tracking-tight">System Methodology</h2>
+                        <p class="text-sm font-bold text-slate-500 mt-2 uppercase tracking-widest">How the Water Quality Index is Calculated</p>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 shrink-0">
+                        <div class="lg:col-span-2 space-y-6">
+                            
+                            <div class="method-card">
+                                <h3 class="text-base font-bold text-teal-800 mb-4 flex items-center gap-2">
+                                    <i class="fas fa-calculator bg-blue-600 text-white p-1.5 rounded"></i> The WQI Formula (Brown et al., 1972)
+                                </h3>
+                                
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-2">
+                                    <div>
+                                        <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Step 1 — Selection of Parameters</p>
+                                        <p class="text-xs text-slate-600 leading-relaxed font-medium">
+                                            Choose relevant physico-chemical parameters (e.g., pH, TDS, Hardness, DO) for the spatial analysis.
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Step 2 — Calculate Unit Weight (w<sub>i</sub>)</p>
+                                        <div class="method-formula-box bg-white shadow-sm mb-2 text-center font-bold">
+                                            w<sub>i</sub> = k / S<sub>i</sub> <span class="text-slate-400 mx-2">|</span> k = 1 / &sum;(1 / S<sub>i</sub>)
+                                        </div>
+                                        <p class="text-xs text-slate-500 leading-relaxed">
+                                            Unit weights are inversely proportional to the recommended standards (<b>S<sub>i</sub></b>). <b>k</b> is the proportionality constant.
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Step 3 — Calculate Sub-Index (q<sub>i</sub>)</p>
+                                        <div class="method-formula-box bg-white shadow-sm mb-2 text-center font-bold">
+                                            q<sub>i</sub> = 100 &times; |V<sub>a</sub> &minus; V<sub>i</sub>| / |V<sub>s</sub> &minus; V<sub>i</sub>|
+                                        </div>
+                                        <p class="text-xs text-slate-500 leading-relaxed">
+                                            Calculates quality rating. <b>V<sub>a</sub></b> = actual measured value, <b>V<sub>i</sub></b> = ideal value (0 for most, 7.0 for pH), <b>V<sub>s</sub></b> = standard limit.
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Step 4 — Calculate Overall WQI</p>
+                                        <div class="method-formula-box bg-white shadow-sm mb-2 text-center font-bold text-lg text-indigo-700">
+                                            WQI = &sum;(w<sub>i</sub> &times; q<sub>i</sub>)
+                                        </div>
+                                        <p class="text-xs text-slate-500 leading-relaxed">
+                                            Sum the products of unit weights and sub-indices. <i>Note: Division by &sum;w<sub>i</sub> is omitted because our algorithm normalizes weights so &sum;w<sub>i</sub> = 1.</i>
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="method-card">
+                                <h3 class="text-base font-bold text-teal-800 mb-4 flex items-center gap-2">
+                                    <i class="fas fa-balance-scale text-teal-600"></i> Active Parameter Weights & Standards
+                                </h3>
+                                <p class="text-xs text-slate-500 mb-4">The calculation currently uses the following parameters.</p>
+                                <div class="overflow-x-auto rounded-lg border border-teal-100">
+                                    <table class="w-full text-xs text-left">
+                                        <thead class="bg-teal-50/50 text-teal-800 uppercase font-black border-b border-teal-100">
+                                            <tr>
+                                                <th class="px-4 py-3">Parameter</th>
+                                                <th class="px-4 py-3 text-center">Unit</th>
+                                                <th class="px-4 py-3 text-center">Ideal (V<sub>i</sub>)</th>
+                                                <th class="px-4 py-3 text-center">Standard (V<sub>s</sub>)</th>
+                                                <th class="px-4 py-3 text-center">Unit Weight (w<sub>i</sub>)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="methodologyTableBody" class="divide-y divide-teal-50">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                        </div>
+
+                        <div class="lg:col-span-1 space-y-6">
+                            
+                            <div class="method-card">
+                                <h3 class="text-base font-bold text-teal-800 mb-4 flex items-center gap-2">
+                                    <i class="fas fa-flask text-teal-600"></i> WQI Classification Scale
+                                </h3>
+                                <div id="methodologyScaleContainer" class="space-y-3">
+                                </div>
+                            </div>
+
+                            <div class="method-card">
+                                <h3 class="text-sm font-bold text-slate-700 mb-3"><i class="fas fa-book text-slate-400 mr-2"></i>References</h3>
+                                <ul class="text-xs text-slate-500 space-y-3 list-disc pl-4 leading-relaxed">
+                                    <li><b>Brown, R.M., McClelland, N.I., Deininger, R.A. and Tozer, R.G. (1972)</b>. "A Water Quality Index—Do We Dare?". <i>Water & Sewage Works</i>, 119, 339-343.</li>
+                                    <li><b>WHO (2011)</b>. Guidelines for Drinking-Water Quality, 4th Edition. World Health Organization, Geneva.</li>
+                                    <li><b>Bureau of Indian Standards (BIS)</b>. IS 10500:2012 — Drinking Water Specification.</li>
+                                </ul>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    <div class="method-card mt-6 shrink-0">
+                        <h3 class="text-lg font-black text-slate-800 mb-4 flex items-center gap-2">
+                            <i class="fas fa-clipboard-check text-indigo-500"></i> Sample Calculation Walkthrough
+                        </h3>
+                        <p class="text-sm text-slate-600 mb-6">Below is the exact calculation performed for the <b>first row</b> of your uploaded data, analyzing all selected parameters dynamically.</p>
+                        
+                        <div id="sampleCalculationContainer" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                            <!-- Default fallback if no data is uploaded yet -->
+                            <div class="bg-slate-50 border border-slate-200 p-4 rounded-xl">
+                                <h4 class="text-xs font-bold text-slate-500 uppercase mb-3">1. Scenario Data</h4>
+                                <ul class="text-sm space-y-2 text-slate-700 font-mono">
+                                    <li><b class="text-slate-900 font-sans">pH:</b> Measured (V<sub>a</sub>) = <span class="text-indigo-600">7.6</span></li>
+                                    <li class="pl-4 text-xs text-slate-500 font-sans">Ideal = 7.0, Standard = 8.5</li>
+                                    <li class="mt-4"><b class="text-slate-900 font-sans">TDS:</b> Measured (V<sub>a</sub>) = <span class="text-indigo-600">600</span></li>
+                                    <li class="pl-4 text-xs text-slate-500 font-sans">Ideal = 0, Standard = 2000</li>
+                                </ul>
+                            </div>
+
+                            <div class="bg-slate-50 border border-slate-200 p-4 rounded-xl">
+                                <h4 class="text-xs font-bold text-slate-500 uppercase mb-3">2. Calculate Weights (w<sub>i</sub>)</h4>
+                                <div class="text-xs space-y-2 text-slate-700 font-mono">
+                                    <div class="pb-2 border-b border-slate-200">
+                                        <span class="font-sans text-slate-500 text-[10px] uppercase">Find Constant (k)</span><br>
+                                        &sum;(1/S<sub>i</sub>) = (1/8.5) + (1/2000)<br>
+                                        = 0.1176 + 0.0005 = <b>0.1181</b><br>
+                                        k = 1 / 0.1181 = <b class="text-emerald-600">8.467</b>
+                                    </div>
+                                    <div class="pt-1">
+                                        <span class="font-sans text-slate-500 text-[10px] uppercase">Apply Weights</span><br>
+                                        w<sub>pH</sub> = 8.467 / 8.5 = <b>0.996</b><br>
+                                        w<sub>TDS</sub> = 8.467 / 2000 = <b>0.004</b>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="bg-slate-50 border border-slate-200 p-4 rounded-xl">
+                                <h4 class="text-xs font-bold text-slate-500 uppercase mb-3">3. Sub-Indices (q<sub>i</sub>)</h4>
+                                <div class="text-xs space-y-2 text-slate-700 font-mono">
+                                    <div class="pb-2 border-b border-slate-200">
+                                        <span class="font-sans text-slate-500 text-[10px] uppercase">pH Quality Rating</span><br>
+                                        q<sub>pH</sub> = 100 &times; |7.6 - 7.0| / |8.5 - 7.0|<br>
+                                        q<sub>pH</sub> = 100 &times; (0.6 / 1.5) = <b class="text-emerald-600">40.0</b>
+                                    </div>
+                                    <div class="pt-1">
+                                        <span class="font-sans text-slate-500 text-[10px] uppercase">TDS Quality Rating</span><br>
+                                        q<sub>TDS</sub> = 100 &times; |600 - 0| / |2000 - 0|<br>
+                                        q<sub>TDS</sub> = 100 &times; (600 / 2000) = <b class="text-emerald-600">30.0</b>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="bg-indigo-50 border border-indigo-200 p-4 rounded-xl shadow-inner">
+                                <h4 class="text-xs font-bold text-indigo-500 uppercase mb-3">4. Final WQI</h4>
+                                <div class="text-xs space-y-2 text-indigo-900 font-mono">
+                                    <div class="pb-2 border-b border-indigo-200">
+                                        WQI = &sum;(w<sub>i</sub> &times; q<sub>i</sub>)<br><br>
+                                        (0.996 &times; 40.0) + (0.004 &times; 30.0)<br>
+                                        = 39.84 + 0.12<br>
+                                    </div>
+                                    <div class="pt-1 text-center">
+                                        <span class="text-2xl font-black text-indigo-700">39.96</span><br>
+                                        <span class="font-sans text-xs font-bold text-emerald-600 px-2 py-0.5 bg-emerald-100 rounded mt-1 inline-block">Good Water</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </main>
+
+    <!-- Column Mapping Modal -->
+    <div id="mappingModal" class="fixed inset-0 z-[2000] hidden flex-col items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+        <div class="light-panel w-full max-w-3xl rounded-2xl p-6 flex flex-col max-h-[90vh]">
+            <h2 class="text-xl font-black text-slate-800 mb-1"><i class="fas fa-columns text-slate-400 mr-2"></i>Map Excel Columns</h2>
+            <p class="text-sm font-medium text-slate-500 mb-4 border-b border-slate-100 pb-4">Match the required parameters to the actual columns in your uploaded file.</p>
+            
+            <div class="grid grid-cols-2 gap-4 px-4 py-3 bg-slate-50 rounded-t-xl text-xs font-black text-slate-500 uppercase tracking-wider border border-slate-200 border-b-0">
+                <div>Required Parameter</div>
+                <div>Your Excel Column</div>
+            </div>
+            
+            <div class="flex-grow overflow-y-auto custom-scrollbar border border-slate-200 p-2" id="mappingContainer">
+            </div>
+            
+            <div id="mappingError" class="hidden mx-2 mt-4 text-sm font-bold text-red-600 bg-red-50 p-3 rounded-lg border border-red-200 flex items-center">
+                <i class="fas fa-exclamation-circle text-lg mr-2"></i>Please map all required chemical parameters (highlighted in red).
+            </div>
+
+            <div class="flex justify-end gap-3 mt-4 pt-4 border-t border-slate-100">
+                <button onclick="closeMappingModal()" class="btn-white px-5 py-2.5 text-sm">Cancel</button>
+                <button id="runCalcBtn" class="btn-green-solid px-6 py-2.5 text-sm flex items-center">
+                    <i class="fas fa-play mr-2"></i> Run Calculation
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Legend Customization Modal -->
+    <div id="classModal" class="fixed inset-0 z-[2000] hidden flex-col items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+        <div class="light-panel w-full max-w-2xl rounded-2xl p-6 flex flex-col max-h-[90vh]">
+            <div class="flex justify-between items-center border-b border-slate-100 pb-4 mb-4">
+                <div>
+                    <h2 class="text-xl font-black text-slate-800"><i class="fas fa-palette text-slate-400 mr-2"></i>Customize WQI Legend</h2>
+                    <p class="text-xs font-bold uppercase text-slate-400 mt-1">Define ranges, colors, and labels.</p>
+                </div>
+                <button onclick="closeClassModal()" class="text-slate-400 hover:text-slate-700 transition"><i class="fas fa-times text-lg"></i></button>
+            </div>
+            
+            <div class="grid grid-cols-12 gap-2 px-2 pb-2 text-xs font-black text-slate-500 uppercase tracking-wider">
+                <div class="col-span-2 text-center">Color</div>
+                <div class="col-span-4">Class Label</div>
+                <div class="col-span-5">Range</div>
+                <div class="col-span-1 text-center">Del</div>
+            </div>
+            
+            <div id="classEditorContainer" class="flex-grow overflow-y-auto custom-scrollbar space-y-2 mb-4 p-1 recessed-panel rounded-xl">
+            </div>
+            
+            <button onclick="addClassRow()" class="btn-yellow-solid w-full py-2.5 text-sm mb-4">
+                <i class="fas fa-plus opacity-80 mr-1"></i> Add New Class Range
+            </button>
+            
+            <div class="flex justify-end gap-3 pt-4 border-t border-slate-100">
+                <button onclick="closeClassModal()" class="btn-white px-5 py-2.5 text-sm">Cancel</button>
+                <button onclick="saveClasses()" class="btn-green-solid px-6 py-2.5 text-sm flex items-center">
+                    <i class="fas fa-check mr-2"></i> Save & Apply
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Param Limits & Weights Modal -->
+    <div id="paramModal" class="fixed inset-0 z-[2000] hidden flex-col items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+        <div class="light-panel w-full max-w-4xl rounded-2xl p-6 flex flex-col max-h-[90vh]">
+            <div class="flex justify-between items-center border-b border-slate-100 pb-4 mb-4">
+                <div>
+                    <h2 class="text-xl font-black text-slate-800"><i class="fas fa-sliders-h text-slate-400 mr-2"></i>Assign Limits & Weights</h2>
+                    <p class="text-xs font-bold uppercase text-slate-400 mt-1">Set ideal values and standard limits. Weights are auto-calculated (w<sub>i</sub> = k/S<sub>i</sub>).</p>
+                </div>
+                <button onclick="closeParamModal()" class="text-slate-400 hover:text-slate-700 transition"><i class="fas fa-times text-lg"></i></button>
+            </div>
+            
+            <div class="grid grid-cols-12 gap-4 px-4 py-3 bg-slate-50 rounded-t-xl text-xs font-black text-slate-500 uppercase tracking-wider border border-slate-200 border-b-0">
+                <div class="col-span-3">Parameter</div>
+                <div class="col-span-2">Unit</div>
+                <div class="col-span-2 text-center">Ideal (V<sub>i</sub>)</div>
+                <div class="col-span-3 text-center">Standard Limit (V<sub>s</sub>)</div>
+                <div class="col-span-2 text-center">Auto Weight (w<sub>i</sub>)</div>
+            </div>
+            
+            <div class="flex-grow overflow-y-auto custom-scrollbar border border-slate-200 p-2" id="paramEditorContainer">
+            </div>
+            
+            <div class="flex justify-end gap-3 mt-4 pt-4 border-t border-slate-100">
+                <button onclick="closeParamModal()" class="btn-green-solid px-8 py-2 text-sm flex items-center">
+                    <i class="fas fa-check mr-2"></i> Done
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Map Settings Modal -->
+    <div id="mapSettingsModal" class="fixed inset-0 z-[2000] hidden flex-col items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+        <div class="light-panel w-full max-w-lg rounded-2xl p-6 flex flex-col max-h-[90vh] overflow-y-auto custom-scrollbar">
+            <div class="flex justify-between items-center border-b border-slate-100 pb-4 mb-4">
+                <div>
+                    <h2 class="text-xl font-black text-slate-800"><i class="fas fa-map text-slate-400 mr-2"></i>Map Preferences</h2>
+                </div>
+                <button onclick="closeMapSettings()" class="text-slate-400 hover:text-slate-700 transition"><i class="fas fa-times text-lg"></i></button>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <h3 class="text-xs font-bold text-slate-500 uppercase mb-2">Unsampled Data Threshold</h3>
+                    <div class="grid grid-cols-1 gap-4 mb-3">
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-400 block mb-1">Data Reach Radius (px)</label>
+                            <input type="range" id="set_maxRadius" min="10" max="200" step="1" value="40" class="w-full accent-cyan-500">
+                            <p class="text-[9px] text-slate-400 mt-1 italic">Determines how far a sample point's data is allowed to stretch when "Isolate Unsampled Regions" is active.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="border-t border-slate-100 my-3"></div>
+
+                <div>
+                    <h3 class="text-xs font-bold text-slate-500 uppercase mb-2">UI Panel Scaling</h3>
+                    <div class="grid grid-cols-2 gap-4 mb-3">
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-400 block mb-1">Legend Scale</label>
+                            <input type="range" id="set_legendScale" min="0.5" max="1.5" step="0.1" value="1" class="w-full accent-cyan-500">
+                        </div>
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-400 block mb-1">Layers Panel Scale</label>
+                            <input type="range" id="set_layersScale" min="0.5" max="1.5" step="0.1" value="1" class="w-full accent-cyan-500">
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="text-xs font-bold text-slate-500 uppercase mb-2">Sample Points</h3>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-400 block mb-1">Point Radius (px)</label>
+                            <input type="range" id="set_pointSize" min="2" max="10" value="4" class="w-full accent-cyan-500">
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="text-xs font-bold text-slate-500 uppercase mb-2">Boundary / Shapefile</h3>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-400 block mb-1">Border Thickness</label>
+                            <input type="range" id="set_shpThickness" min="1" max="5" step="0.5" value="2" class="w-full accent-cyan-500">
+                        </div>
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-400 block mb-1">Border Color</label>
+                            <input type="color" id="set_shpColor" value="#0ea5e9" class="w-full h-8 rounded cursor-pointer border border-slate-200">
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="text-xs font-bold text-slate-500 uppercase mb-2">Elements</h3>
+                    <div class="flex gap-4">
+                        <label class="flex items-center text-xs font-bold text-slate-600 cursor-pointer">
+                            <input type="checkbox" id="set_showNorth" checked class="mr-2 accent-cyan-600 w-3.5 h-3.5"> North Arrow
+                        </label>
+                        <label class="flex items-center text-xs font-bold text-slate-600 cursor-pointer">
+                            <input type="checkbox" id="set_showScale" checked class="mr-2 accent-cyan-600 w-3.5 h-3.5"> Distance Line (Scale)
+                        </label>
+                    </div>
+                    <p class="text-[10px] text-slate-400 italic mt-2">Note: Map Title, Legend, North Arrow, and Layers Panel are freely draggable on the map!</p>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-100">
+                <button onclick="closeMapSettings()" class="btn-white px-5 py-2 text-sm">Cancel</button>
+                <button onclick="saveMapSettings()" class="btn-green-solid px-6 py-2 text-sm flex items-center">
+                    <i class="fas fa-check mr-2"></i> Apply Changes
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ===============================
+        // Draggable Helper Function
+        // ===============================
+        function makeDraggable(elmnt) {
+            var pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+            elmnt.onmousedown = dragMouseDown;
+            elmnt.ontouchstart = dragTouchStart;
+
+            function dragMouseDown(e) {
+                e = e || window.event;
+                // Allow interactions inside the draggable div (inputs, selects, contenteditable)
+                if (['INPUT', 'SELECT', 'BUTTON', 'LABEL'].includes(e.target.tagName) || e.target.isContentEditable) {
+                    return; 
+                }
+                e.preventDefault();
+                pos3 = e.clientX;
+                pos4 = e.clientY;
+                document.onmouseup = closeDragElement;
+                document.onmousemove = elementDrag;
+            }
+
+            function dragTouchStart(e) {
+                if (['INPUT', 'SELECT', 'BUTTON', 'LABEL'].includes(e.target.tagName) || e.target.isContentEditable) {
+                    return; 
+                }
+                var touch = e.touches[0];
+                pos3 = touch.clientX;
+                pos4 = touch.clientY;
+                document.ontouchend = closeDragElement;
+                document.ontouchmove = elementTouchDrag;
+            }
+
+            function elementDrag(e) {
+                e = e || window.event;
+                e.preventDefault();
+                pos1 = pos3 - e.clientX;
+                pos2 = pos4 - e.clientY;
+                pos3 = e.clientX;
+                pos4 = e.clientY;
+                updatePos();
+            }
+
+            function elementTouchDrag(e) {
+                var touch = e.touches[0];
+                pos1 = pos3 - touch.clientX;
+                pos2 = pos4 - touch.clientY;
+                pos3 = touch.clientX;
+                pos4 = touch.clientY;
+                updatePos();
+            }
+
+            function updatePos() {
+                // Clear positioning constraints (like right, bottom) so top/left work smoothly
+                elmnt.style.right = 'auto';
+                elmnt.style.bottom = 'auto';
+                // Note: We are no longer clearing elmnt.style.transform here! 
+                // This ensures scale() stays applied while dragging.
+                
+                elmnt.style.top = (elmnt.offsetTop - pos2) + "px";
+                elmnt.style.left = (elmnt.offsetLeft - pos1) + "px";
+            }
+
+            function closeDragElement() {
+                document.onmouseup = null;
+                document.onmousemove = null;
+                document.ontouchend = null;
+                document.ontouchmove = null;
+            }
+        }
+
+        // ===============================
+        // Map Logic (Leaflet + Turf)
+        // ===============================
+        function fuzzyMatchState(str1, str2) {
+            if (!str1 || !str2) return false;
+            let s1 = String(str1).toLowerCase().trim();
+            let s2 = String(str2).toLowerCase().trim();
+
+            const aliases = {
+                'orissa': 'odisha',
+                'puducherry': 'pondicherry',
+                'jammu & kashmir': 'jammu and kashmir',
+                'j&k': 'jammu and kashmir',
+                'telengana': 'telangana',
+                'chattisgarh': 'chhattisgarh',
+                'uttaranchal': 'uttarakhand',
+                'nct of delhi': 'delhi',
+                'new delhi': 'delhi',
+                'andaman & nicobar': 'andaman and nicobar',
+                'andaman and nicobar islands': 'andaman and nicobar'
+            };
+
+            const normalize = s => {
+                s = aliases[s] || s;
+                // Remove spaces, dashes, underscores, and convert & to and
+                return s.replace(/&/g, 'and').replace(/[^a-z0-9]/g, '');
+            };
+
+            const n1 = normalize(s1);
+            const n2 = normalize(s2);
+            
+            // Only do includes check if strings are somewhat long to prevent accidental tiny matches
+            if (n1 === n2) return true;
+            if (n1.length > 4 && n2.length > 4 && (n1.includes(n2) || n2.includes(n1))) return true;
+            return false;
+        }
+        
+        // ===============================
+        // State Configuration & Globals
+        // ===============================
+        const paramConfig = {
+            'pH': { ideal: 7.0, standard: 8.5, weight: 0, unit: 'pH units', name: 'pH Level', keywords: ['ph', 'pH'], selected: true },
+            'EC': { ideal: 0, standard: 3000, weight: 0, unit: 'µS/Cm', name: 'Electrical Conductivity', keywords: ['ec', 'EC (µS/Cm at 25° C)', 'conductivity'], selected: true },
+            'CO3': { ideal: 0, standard: 75, weight: 0, unit: 'mg/L', name: 'Carbonate', keywords: ['co3', 'CO3 (mg/L)'], selected: true },
+            'HCO3': { ideal: 0, standard: 200, weight: 0, unit: 'mg/L', name: 'Bicarbonate', keywords: ['hco3', 'HCO3 (mg/L)'], selected: true },
+            'Cl': { ideal: 0, standard: 1000, weight: 0, unit: 'mg/L', name: 'Chloride', keywords: ['cl', 'Cl (mg/L)', 'chloride'], selected: true },
+            'F': { ideal: 0, standard: 1.5, weight: 0, unit: 'mg/L', name: 'Fluoride', keywords: ['f', 'F (mg/L)', 'fluoride'], selected: true },
+            'SO4': { ideal: 0, standard: 400, weight: 0, unit: 'mg/L', name: 'Sulphate', keywords: ['so4', 'SO4 (mg/L)', 'sulphate', 'sulfate'], selected: true },
+            'NO3': { ideal: 0, standard: 45, weight: 0, unit: 'mg/L', name: 'Nitrate', keywords: ['no3', 'NO3 (mg/L)', 'nitrate'], selected: true },
+            'TH': { ideal: 0, standard: 600, weight: 0, unit: 'mg/L CaCO3', name: 'Total Hardness', keywords: ['th', 'TH (mg/L as CaCO3)', 'total hardness'], selected: true },
+            'Ca': { ideal: 0, standard: 200, weight: 0, unit: 'mg/L', name: 'Calcium', keywords: ['ca', 'Ca (mg/L)', 'calcium'], selected: true },
+            'Mg': { ideal: 0, standard: 100, weight: 0, unit: 'mg/L', name: 'Magnesium', keywords: ['mg', 'Mg (mg/L)', 'magnesium'], selected: true },
+            'Na': { ideal: 0, standard: 200, weight: 0, unit: 'mg/L', name: 'Sodium', keywords: ['na', 'Na (mg/L)', 'sodium'], selected: true },
+            'K': { ideal: 0, standard: 10, weight: 0, unit: 'mg/L', name: 'Potassium', keywords: ['k', 'K (mg/L)', 'potassium'], selected: true },
+            'SiO2': { ideal: 0, standard: 20, weight: 0, unit: 'mg/L', name: 'Silica', keywords: ['sio2', 'SiO2 (mg/L)'], selected: true },
+            'PO4': { ideal: 0, standard: 0.1, weight: 0, unit: 'mg/L', name: 'Phosphate', keywords: ['po4', 'PO4 (mg/L)'], selected: true },
+            'Li': { ideal: 0, standard: 0.05, weight: 0, unit: 'mg/L', name: 'Lithium', keywords: ['li', 'Li (mg/L)'], selected: true },
+            'B': { ideal: 0, standard: 2.4, weight: 0, unit: 'mg/L', name: 'Boron', keywords: ['b', 'B (mg/L)', 'boron'], selected: true },
+            'Al': { ideal: 0, standard: 0.2, weight: 0, unit: 'mg/L', name: 'Aluminium', keywords: ['al', 'Al (mg/L)', 'aluminium'], selected: true },
+            'Cr': { ideal: 0, standard: 0.05, weight: 0, unit: 'mg/L', name: 'Chromium', keywords: ['cr', 'Cr (mg/L)', 'chromium'], selected: true },
+            'Mn': { ideal: 0, standard: 0.3, weight: 0, unit: 'mg/L', name: 'Manganese', keywords: ['mn', 'Mn (mg/L)', 'manganese'], selected: true },
+            'Fe': { ideal: 0, standard: 1.0, weight: 0, unit: 'mg/L', name: 'Iron', keywords: ['fe', 'Fe (mg/L)', 'iron'], selected: true },
+            'Co': { ideal: 0, standard: 0.05, weight: 0, unit: 'mg/L', name: 'Cobalt', keywords: ['co', 'Co (mg/L)'], selected: true },
+            'Ni': { ideal: 0, standard: 0.02, weight: 0, unit: 'mg/L', name: 'Nickel', keywords: ['ni', 'Ni (mg/L)', 'nickel'], selected: true },
+            'Cu': { ideal: 0, standard: 1.5, weight: 0, unit: 'mg/L', name: 'Copper', keywords: ['cu', 'Cu (mg/L)', 'copper'], selected: true },
+            'Zn': { ideal: 0, standard: 15, weight: 0, unit: 'mg/L', name: 'Zinc', keywords: ['zn', 'Zn (mg/L)', 'zinc'], selected: true },
+            'Se': { ideal: 0, standard: 0.01, weight: 0, unit: 'mg/L', name: 'Selenium', keywords: ['se', 'Se (mg/L)', 'selenium'], selected: true },
+            'Sr': { ideal: 0, standard: 4.0, weight: 0, unit: 'mg/L', name: 'Strontium', keywords: ['sr', 'Sr (mg/L)'], selected: true },
+            'Cd': { ideal: 0, standard: 0.003, weight: 0, unit: 'mg/L', name: 'Cadmium', keywords: ['cd', 'Cd (mg/L)', 'cadmium'], selected: true },
+            'Ba': { ideal: 0, standard: 0.7, weight: 0, unit: 'mg/L', name: 'Barium', keywords: ['ba', 'Ba (mg/L)', 'barium'], selected: true },
+            'Hg': { ideal: 0, standard: 0.001, weight: 0, unit: 'mg/L', name: 'Mercury', keywords: ['hg', 'Hg (mg/L)', 'mercury'], selected: true },
+            'Pb': { ideal: 0, standard: 0.01, weight: 0, unit: 'mg/L', name: 'Lead', keywords: ['pb', 'Pb (mg/L)', 'lead'], selected: true },
+            'As': { ideal: 0, standard: 10, weight: 0, unit: 'ppb', name: 'Arsenic', keywords: ['as', 'As (ppb)', 'arsenic'], selected: true },
+            'U': { ideal: 0, standard: 30, weight: 0, unit: 'ppb', name: 'Uranium', keywords: ['u', 'U (ppb)', 'uranium'], selected: true }
+        };
+
+        // Updated Classification Scale based on Weighted Arithmetic Image
+        let wqiClasses = [
+            { max: 25, color: '#10b981', name: 'Excellent', comment: 'Pure, safe for drinking without treatment' },
+            { max: 50, color: '#34d399', name: 'Good', comment: 'Good quality, basic precautionary treatment recommended' },
+            { max: 75, color: '#facc15', name: 'Poor', comment: 'Polluted — treatment required before consumption' },
+            { max: 100, color: '#f97316', name: 'Very Poor', comment: 'Heavily polluted — extensive treatment required' },
+            { max: Infinity, color: '#ef4444', name: 'Unfit for Drinking', comment: 'Severely contaminated — not suitable for any use' }
+        ];
+        
+        let wqiClassesEditor = []; 
+
+        let selectedFile = null;
+        let processedData = []; 
+        let currentFilteredData = [];
+        let activeDonutChart = null; 
+        let currentAnalyticsData = [];
+        let totalAnalyticsSamples = 0;
+        let uploadedRawData = []; 
+        let uploadedHeaders = []; 
+        let currentMapping = {}; // Stores mapping logic for walkthroughs
+        
+        // GIS Globals
+        let map;
+        let baseLayer;
+        let baseLayersDict = {};
+        let pointsLayer, contourLayer, shapefileLayer, maskLayer;
+        let currentShapefileGeom = null; 
+        let scaleControl, northArrowControl;
+
+        let mapSettings = {
+            pointSize: 4,
+            titleSize: 20,
+            titleColor: '#1e293b',
+            shpColor: '#0ea5e9',
+            shpThickness: 2,
+            legendScale: 1,
+            layersScale: 1,
+            showNorth: true,
+            showScale: true,
+            maxRadius: 40 // Default pixel radius for isolating unsampled regions
+        };
+
+        // Icon Mapping Configuration
+        const iconConfig = {
+            'pH': { type: 'icon', icon: 'fas fa-tint', color: 'blue' },
+            'EC': { type: 'icon', icon: 'fas fa-bolt', color: 'blue' },
+            'CO3': { type: 'icon', icon: 'fas fa-circle-notch', color: 'teal' },
+            'HCO3': { type: 'icon', icon: 'fas fa-circle-notch', color: 'teal' },
+            'Cl': { type: 'icon', icon: 'fas fa-braille', color: 'green' },
+            'F': { type: 'icon', icon: 'fas fa-atom', color: 'green' },
+            'SO4': { type: 'icon', icon: 'fas fa-share-alt', color: 'amber' },
+            'NO3': { type: 'icon', icon: 'fas fa-project-diagram', color: 'red' },
+            'TH': { type: 'icon', icon: 'fas fa-tint', color: 'purple' },
+            'Ca': { type: 'text', text: 'Ca', color: 'purple' },
+            'Mg': { type: 'text', text: 'Mg', color: 'pink' },
+            'Na': { type: 'text', text: 'Na', color: 'pink' },
+            'K': { type: 'text', text: 'K', color: 'blue' },
+            'SiO2': { type: 'icon', icon: 'fas fa-gem', color: 'blue' },
+            'PO4': { type: 'icon', icon: 'fas fa-share-alt', color: 'amber' },
+            'Li': { type: 'text', text: 'Li', color: 'amber' },
+            'B': { type: 'text', text: 'B', color: 'blue' },
+            'Al': { type: 'text', text: 'Al', color: 'purple' },
+            'Cr': { type: 'text', text: 'Cr', color: 'teal' },
+            'Mn': { type: 'text', text: 'Mn', color: 'green' },
+            'Fe': { type: 'text', text: 'Fe', color: 'red' },
+            'Co': { type: 'text', text: 'Co', color: 'teal' },
+            'Ni': { type: 'text', text: 'Ni', color: 'green' },
+            'Cu': { type: 'text', text: 'Cu', color: 'amber' },
+            'Zn': { type: 'text', text: 'Zn', color: 'purple' },
+            'Se': { type: 'text', text: 'Se', color: 'pink' },
+            'Sr': { type: 'text', text: 'Sr', color: 'blue' },
+            'Cd': { type: 'text', text: 'Cd', color: 'amber' },
+            'Ba': { type: 'text', text: 'Ba', color: 'purple' },
+            'Hg': { type: 'text', text: 'Hg', color: 'teal' },
+            'Pb': { type: 'text', text: 'Pb', color: 'red' },
+            'As': { type: 'text', text: 'As', color: 'amber' },
+            'U': { type: 'text', text: 'U', color: 'green' }
+        };
+
+        // UI Elements
+        const fileUpload = document.getElementById('fileUpload');
+        const shpUpload = document.getElementById('shpUpload');
+        const calcBtn = document.getElementById('calcBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const mappingModal = document.getElementById('mappingModal');
+        const mappingContainer = document.getElementById('mappingContainer');
+        const classModal = document.getElementById('classModal');
+        const runCalcBtn = document.getElementById('runCalcBtn');
+
+        // ===============================
+        // Initialization & Dynamic Weights
+        // ===============================
+        function recalculateDynamicWeights() {
+            const activeParams = Object.keys(paramConfig).filter(p => paramConfig[p].selected);
+            let sumInverseStandard = 0;
+            
+            // Calculate sum of (1 / Si)
+            activeParams.forEach(p => {
+                if(paramConfig[p].standard > 0) {
+                    sumInverseStandard += (1 / paramConfig[p].standard);
+                }
+            });
+            
+            // Calculate proportionality constant k
+            const k = sumInverseStandard > 0 ? 1 / sumInverseStandard : 0;
+            
+            // Assign dynamic weights wi = k / Si
+            Object.keys(paramConfig).forEach(p => {
+                if (paramConfig[p].selected && paramConfig[p].standard > 0) {
+                    paramConfig[p].weight = k / paramConfig[p].standard;
+                } else {
+                    paramConfig[p].weight = 0;
+                }
+            });
+        }
+
+        function initApp() {
+            recalculateDynamicWeights();
+            renderParamGrid();
+            initMap();
+            updateLegendUI(); 
+            renderMethodologyData(); 
+            
+            // Map title event binding
+            document.getElementById('liveTitleInput').addEventListener('input', (e) => {
+                document.querySelector('#mapTitleControl span').innerText = e.target.value;
+            });
+            document.getElementById('liveTitleFont').addEventListener('change', (e) => {
+                document.getElementById('mapTitleControl').style.fontFamily = e.target.value;
+            });
+            document.getElementById('liveTitleColor').addEventListener('input', (e) => {
+                document.getElementById('mapTitleControl').style.color = e.target.value;
+            });
+            document.getElementById('liveTitleSize').addEventListener('input', (e) => {
+                document.getElementById('mapTitleControl').style.fontSize = e.target.value + 'px';
+            });
+            document.getElementById('toggleMapTitle').addEventListener('change', (e) => {
+                const titleCtrl = document.getElementById('mapTitleControl');
+                if (e.target.checked && document.getElementById('togglePrintMode').checked) {
+                    titleCtrl.classList.remove('hidden');
+                } else {
+                    titleCtrl.classList.add('hidden');
+                }
+            });
+            document.getElementById('toggleEmptyRegions').addEventListener('change', () => {
+                if(currentFilteredData.length > 0) plotMapData(currentFilteredData);
+                updateLegendUI();
+            });
+        }
+
+        function renderParamGrid() {
+            const grid = document.getElementById('paramGrid');
+            grid.innerHTML = '';
+            
+            Object.keys(paramConfig).forEach(param => {
+                const item = paramConfig[param];
+                const btn = document.createElement('button');
+                const isActive = item.selected;
+                
+                btn.className = isActive ? 'param-btn-3d' : 'param-btn-3d param-btn-3d-inactive';
+                btn.title = item.name;
+                
+                const iconData = iconConfig[param] || { type: 'text', text: param, color: 'blue' };
+
+                // Fix: Display ONLY the parameter text inside the glossy circle
+                btn.innerHTML = `
+                    <div class="glossy-icon-circle glossy-${iconData.color}">
+                        ${param}
+                    </div>
+                `;
+                
+                btn.onclick = () => {
+                    paramConfig[param].selected = !paramConfig[param].selected;
+                    recalculateDynamicWeights();
+                    renderParamGrid();
+                    renderMethodologyData();
+                };
+                
+                grid.appendChild(btn);
+            });
+
+            const allSelected = Object.values(paramConfig).every(p => p.selected);
+            const selectBtn = document.getElementById('selectAllBtn');
+            if(allSelected) {
+                selectBtn.innerHTML = `<i class="fas fa-times-circle"></i> Deselect All`;
+                selectBtn.className = "flex items-center gap-1 text-[9px] bg-blue-50 text-blue-600 border border-blue-200 px-2 py-1 rounded-full hover:bg-blue-100 font-bold tracking-wider transition-colors shadow-sm";
+            } else {
+                selectBtn.innerHTML = `<i class="fas fa-check-circle"></i> Select All`;
+                selectBtn.className = "flex items-center gap-1 text-[9px] bg-emerald-50 text-emerald-600 border border-emerald-200 px-2 py-1 rounded-full hover:bg-emerald-100 font-bold tracking-wider transition-colors shadow-sm";
+            }
+        }
+
+        function toggleAllParams() {
+            const allSelected = Object.values(paramConfig).every(p => p.selected);
+            Object.keys(paramConfig).forEach(p => paramConfig[p].selected = !allSelected);
+            recalculateDynamicWeights();
+            renderParamGrid();
+            renderMethodologyData();
+        }
+
+        function openParamModal() {
+            renderParamModalEditor();
+            document.getElementById('paramModal').classList.remove('hidden');
+            document.getElementById('paramModal').classList.add('flex');
+        }
+
+        function closeParamModal() {
+            document.getElementById('paramModal').classList.add('hidden');
+            document.getElementById('paramModal').classList.remove('flex');
+        }
+
+        function renderParamModalEditor() {
+            const container = document.getElementById('paramEditorContainer');
+            container.innerHTML = '';
+            
+            Object.keys(paramConfig).forEach(param => {
+                const item = paramConfig[param];
+                const row = document.createElement('div');
+                row.className = `grid grid-cols-12 gap-4 px-4 py-2 border-b border-slate-100 items-center hover:bg-slate-50 transition`;
+                row.innerHTML = `
+                    <div class="col-span-3">
+                        <span class="font-black text-sm text-slate-800">${param}</span>
+                        <div class="text-[10px] font-bold text-slate-400 truncate" title="${item.name}">${item.name}</div>
+                    </div>
+                    <div class="col-span-2 text-xs font-bold text-slate-500">${item.unit || '-'}</div>
+                    <div class="col-span-2">
+                        <input type="number" step="any" class="w-full bg-white border border-slate-200 rounded-md px-2 py-1 text-sm font-bold focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 text-slate-800 text-center" value="${item.ideal}" onchange="updateConfig('${param}', 'ideal', this.value)">
+                    </div>
+                    <div class="col-span-3">
+                        <input type="number" step="any" min="0" class="w-full bg-white border border-slate-200 rounded-md px-2 py-1 text-sm font-bold focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 text-slate-800 text-center" value="${item.standard}" onchange="updateConfig('${param}', 'standard', this.value)">
+                    </div>
+                    <div class="col-span-2">
+                        <input type="number" step="any" readonly class="w-full bg-slate-100 border border-slate-200 rounded-md px-2 py-1 text-sm font-bold text-slate-500 text-center cursor-not-allowed" value="${item.weight.toFixed(4)}" title="Auto-Calculated">
+                    </div>
+                `;
+                container.appendChild(row);
+            });
+        }
+
+        window.updateConfig = function(param, key, value) {
+            paramConfig[param][key] = Number(value);
+            if(key === 'standard') {
+                recalculateDynamicWeights();
+                renderParamModalEditor();
+            }
+            renderMethodologyData(); 
+        };
+
+        // ===============================
+        // Dynamic WQI Legend Class Editor
+        // ===============================
+        function openClassModal() {
+            wqiClassesEditor = JSON.parse(JSON.stringify(wqiClasses));
+            wqiClassesEditor.forEach((c, i) => { if(c.max === null) c.max = Infinity; });
+            
+            renderClassEditorRows();
+            classModal.classList.remove('hidden');
+            classModal.classList.add('flex');
+        }
+
+        function closeClassModal() {
+            classModal.classList.add('hidden');
+            classModal.classList.remove('flex');
+        }
+
+        function renderClassEditorRows() {
+            const container = document.getElementById('classEditorContainer');
+            container.innerHTML = '';
+            
+            wqiClassesEditor.sort((a,b) => a.max - b.max);
+
+            wqiClassesEditor.forEach((c, index) => {
+                const isLast = index === wqiClassesEditor.length - 1;
+                const prevMax = index > 0 ? wqiClassesEditor[index-1].max : 0;
+                
+                let boundsHTML = "";
+                if (!isLast) {
+                    const prefix = index === 0 ? "0 &ndash;" : `&gt; ${prevMax} &ndash;`;
+                    boundsHTML = `<span class="text-xs font-bold text-slate-500 whitespace-nowrap pr-2 w-14 text-right">${prefix}</span>
+                                  <input type="number" value="${c.max}" class="flex-1 w-full bg-white border border-slate-200 rounded-md px-2 py-1.5 text-sm font-black text-slate-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 focus:outline-none" onchange="updateEditorClass(${index}, 'max', this.value)">`;
+                } else {
+                    boundsHTML = `<span class="text-xs font-bold text-slate-400 px-2 py-1.5 bg-white rounded-md border border-slate-200 w-full inline-block text-center">&gt; ${prevMax} (Final)</span>`;
+                }
+
+                container.innerHTML += `
+                    <div class="grid grid-cols-12 gap-2 items-center bg-white p-2 rounded-lg border border-slate-200 shadow-sm">
+                        <div class="col-span-2 flex justify-center">
+                            <input type="color" value="${c.color}" class="w-8 h-8 rounded cursor-pointer bg-white border border-slate-200 p-0" onchange="updateEditorClass(${index}, 'color', this.value)">
+                        </div>
+                        <div class="col-span-4">
+                            <input type="text" value="${c.name}" class="w-full bg-white border border-slate-200 rounded-md px-2 py-1.5 text-sm font-black text-slate-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 focus:outline-none" placeholder="Label" onchange="updateEditorClass(${index}, 'name', this.value)">
+                        </div>
+                        <div class="col-span-5 flex items-center">
+                            ${boundsHTML}
+                        </div>
+                        <div class="col-span-1 flex justify-center">
+                            <button onclick="removeEditorClass(${index})" class="btn-3d btn-red px-2 py-1.5 rounded-md text-xs disabled:opacity-30 disabled:cursor-not-allowed" ${wqiClassesEditor.length <= 1 ? 'disabled' : ''}>
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        function updateEditorClass(index, field, value) {
+            if (field === 'max') value = Number(value);
+            wqiClassesEditor[index][field] = value;
+        }
+
+        function addClassRow() {
+            wqiClassesEditor.sort((a,b) => a.max - b.max);
+            const len = wqiClassesEditor.length;
+            const prevMax = len > 1 ? wqiClassesEditor[len-2].max : 0;
+            const newMax = prevMax + 25; // Adjusted to match new increment logic
+            
+            wqiClassesEditor.splice(len - 1, 0, { max: newMax, color: '#aaaaaa', name: 'New Class', comment: '' });
+            renderClassEditorRows();
+        }
+
+        function removeEditorClass(index) {
+            if (wqiClassesEditor.length <= 1) return;
+            
+            const isLast = index === wqiClassesEditor.length - 1;
+            wqiClassesEditor.splice(index, 1);
+            
+            if (isLast) {
+                wqiClassesEditor[wqiClassesEditor.length - 1].max = Infinity;
+            }
+            
+            renderClassEditorRows();
+        }
+
+        function saveClasses() {
+            wqiClassesEditor.sort((a,b) => a.max - b.max);
+            
+            if (wqiClassesEditor[wqiClassesEditor.length - 1].max !== Infinity) {
+                wqiClassesEditor[wqiClassesEditor.length - 1].max = Infinity;
+            }
+
+            wqiClasses = JSON.parse(JSON.stringify(wqiClassesEditor));
+            wqiClasses.forEach((c, i) => { if(c.max === null) c.max = Infinity; });
+
+            closeClassModal();
+            updateLegendUI();
+            renderMethodologyData();
+
+            if (processedData.length > 0) {
+                reapplyClassesAndRender();
+            }
+        }
+
+        function updateLegendUI() {
+            const legendContainer = document.getElementById('mapLegend');
+            let html = `<div class="border-b border-slate-200 pb-2 mb-2 flex justify-between items-center cursor-move text-slate-400 hover:text-slate-600 transition-colors">
+                            <h4 class="text-[10px] font-black uppercase tracking-wider">Map Legend</h4>
+                            <i class="fas fa-arrows-alt"></i>
+                        </div>
+                        <div class="flex items-center gap-2 mb-3 bg-slate-50 p-2 rounded border border-slate-100">
+                            <div class="w-5 h-3 border-2 border-slate-400 border-dashed bg-transparent rounded-sm"></div>
+                            <span class="text-[10px] font-bold text-slate-500 uppercase whitespace-nowrap">GIS Boundary</span>
+                        </div>
+                        <div class="text-[10px] font-black mb-1.5 text-slate-400 uppercase tracking-wider">WQI Classes</div>
+                        <div class="space-y-1.5">`;
+            
+            let prevMax = 0;
+            wqiClasses.forEach((c, idx) => {
+                let rangeText = "";
+                if (idx === 0) rangeText = `0 - ${c.max}`;
+                else if (c.max === Infinity) rangeText = `> ${prevMax}`;
+                else rangeText = `> ${prevMax} - ${c.max}`;
+                
+                html += `<div class="flex items-center gap-2 text-xs font-bold text-slate-700">
+                            <span class="w-4 h-4 rounded-sm shadow-inner border border-black/10 flex-shrink-0" style="background-color: ${c.color}"></span> 
+                            <span class="whitespace-nowrap pr-2">${c.name} <span class="opacity-60 ml-1">(${rangeText})</span></span>
+                         </div>`;
+                prevMax = c.max;
+            });
+            
+            const hideEmptyToggle = document.getElementById('toggleEmptyRegions');
+            if (hideEmptyToggle && hideEmptyToggle.checked) {
+                html += `<div class="flex items-center gap-2 text-xs font-bold text-slate-700 mt-2">
+                            <span class="w-4 h-4 rounded-sm shadow-sm border border-slate-300 flex-shrink-0" style="background-color: #ffffff"></span> 
+                            <span class="whitespace-nowrap pr-2">No Sample Done</span>
+                         </div>`;
+            }
+
+            html += `</div>`;
+            legendContainer.innerHTML = html;
+        }
+
+        // ===============================
+        // Classification Logic
+        // ===============================
+        function getColorForWQI(wqi) {
+            for (let c of wqiClasses) {
+                if (wqi <= c.max) return c.color;
+            }
+            return wqiClasses[wqiClasses.length-1].color;
+        }
+
+        function hexToRgb(hex) {
+            var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? {
+                r: parseInt(result[1], 16),
+                g: parseInt(result[2], 16),
+                b: parseInt(result[3], 16)
+            } : { r: 0, g: 0, b: 0 };
+        }
+
+        function classifyWQI(wqi) {
+            for (let c of wqiClasses) {
+                if (wqi <= c.max) return [c.name, c.comment || '', c.color];
+            }
+            let last = wqiClasses[wqiClasses.length-1];
+            return [last.name, last.comment || '', last.color];
+        }
+
+        function reapplyClassesAndRender() {
+            processedData = processedData.map(row => {
+                const [status, comment, color] = classifyWQI(row.WQI);
+                row["Water Quality Status"] = status;
+                row["Comment"] = comment;
+                row["_color"] = color; 
+                return row;
+            });
+
+            applyFilters();
+        }
+
+        // ===============================
+        // Methodology Rendering
+        // ===============================
+        function renderMethodologyData() {
+            // 1. Render Dynamic WQI Classification Scale
+            const scaleContainer = document.getElementById('methodologyScaleContainer');
+            scaleContainer.innerHTML = '';
+            
+            let prevMax = 0;
+            wqiClasses.forEach((c, idx) => {
+                let rangeText = "";
+                if (idx === 0) rangeText = `0 - ${c.max}`;
+                else if (c.max === Infinity) rangeText = `> ${prevMax}`;
+                else rangeText = `> ${prevMax} - ${c.max}`;
+                
+                scaleContainer.innerHTML += `
+                    <div class="flex items-center justify-between p-3 rounded-lg border shadow-sm" style="background-color: ${c.color}10; border-color: ${c.color}40;">
+                        <div class="flex items-start gap-3">
+                            <div class="w-3 h-3 rounded-full mt-1 flex-shrink-0" style="background-color: ${c.color}; box-shadow: 0 0 5px ${c.color};"></div>
+                            <div>
+                                <h4 class="font-bold text-sm" style="color: ${c.color}">${c.name}</h4>
+                                <p class="text-xs text-slate-500 font-medium">${c.comment}</p>
+                            </div>
+                        </div>
+                        <div class="text-xs font-mono font-bold text-slate-500 flex-shrink-0 ml-4">${rangeText}</div>
+                    </div>
+                `;
+                prevMax = c.max;
+            });
+
+            // 2. Render Active Parameters Table
+            const tbody = document.getElementById('methodologyTableBody');
+            tbody.innerHTML = '';
+            
+            const activeParams = Object.keys(paramConfig).filter(p => paramConfig[p].selected);
+
+            activeParams.forEach(p => {
+                const conf = paramConfig[p];
+                
+                tbody.innerHTML += `
+                    <tr class="hover:bg-white transition-colors">
+                        <td class="px-4 py-2 border-b border-teal-50">
+                            <span class="font-bold text-slate-700">${conf.name}</span> <span class="text-[10px] font-black text-slate-400 ml-1">(${p})</span>
+                        </td>
+                        <td class="px-4 py-2 border-b border-teal-50 text-center text-xs font-mono text-slate-500">${conf.unit || '-'}</td>
+                        <td class="px-4 py-2 border-b border-teal-50 text-center font-bold text-slate-700">${conf.ideal}</td>
+                        <td class="px-4 py-2 border-b border-teal-50 text-center font-bold text-slate-700">${conf.standard}</td>
+                        <td class="px-4 py-2 border-b border-teal-50 text-center font-bold text-teal-700 bg-teal-50/30">${conf.weight.toFixed(4)}</td>
+                    </tr>
+                `;
+            });
+
+            // Call to update the sample calculation
+            renderSampleCalculation();
+        }
+
+        // ===============================
+        // Dynamic Sample Calculation
+        // ===============================
+        function renderSampleCalculation() {
+            const container = document.getElementById('sampleCalculationContainer');
+            if (!container) return;
+
+            // Use hardcoded placeholder if no data is processed yet
+            if (!processedData || processedData.length === 0 || !window.currentMapping) {
+                container.innerHTML = `
+                    <div class="bg-slate-50 border border-slate-200 p-4 rounded-xl">
+                        <h4 class="text-xs font-bold text-slate-500 uppercase mb-3">1. Scenario Data</h4>
+                        <ul class="text-sm space-y-2 text-slate-700 font-mono">
+                            <li><b class="text-slate-900 font-sans">pH:</b> Measured (V<sub>a</sub>) = <span class="text-indigo-600">7.6</span></li>
+                            <li class="pl-4 text-xs text-slate-500 font-sans">Ideal = 7.0, Standard = 8.5</li>
+                            <li class="mt-4"><b class="text-slate-900 font-sans">TDS:</b> Measured (V<sub>a</sub>) = <span class="text-indigo-600">600</span></li>
+                            <li class="pl-4 text-xs text-slate-500 font-sans">Ideal = 0, Standard = 2000</li>
+                        </ul>
+                    </div>
+
+                    <div class="bg-slate-50 border border-slate-200 p-4 rounded-xl">
+                        <h4 class="text-xs font-bold text-slate-500 uppercase mb-3">2. Calculate Weights (w<sub>i</sub>)</h4>
+                        <div class="text-xs space-y-2 text-slate-700 font-mono">
+                            <div class="pb-2 border-b border-slate-200">
+                                <span class="font-sans text-slate-500 text-[10px] uppercase">Find Constant (k)</span><br>
+                                &sum;(1/S<sub>i</sub>) = (1/8.5) + (1/2000)<br>
+                                = 0.1176 + 0.0005 = <b>0.1181</b><br>
+                                k = 1 / 0.1181 = <b class="text-emerald-600">8.467</b>
+                            </div>
+                            <div class="pt-1">
+                                <span class="font-sans text-slate-500 text-[10px] uppercase">Apply Weights</span><br>
+                                w<sub>pH</sub> = 8.467 / 8.5 = <b>0.996</b><br>
+                                w<sub>TDS</sub> = 8.467 / 2000 = <b>0.004</b>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-50 border border-slate-200 p-4 rounded-xl">
+                        <h4 class="text-xs font-bold text-slate-500 uppercase mb-3">3. Sub-Indices (q<sub>i</sub>)</h4>
+                        <div class="text-xs space-y-2 text-slate-700 font-mono">
+                            <div class="pb-2 border-b border-slate-200">
+                                <span class="font-sans text-slate-500 text-[10px] uppercase">pH Quality Rating</span><br>
+                                q<sub>pH</sub> = 100 &times; |7.6 - 7.0| / |8.5 - 7.0|<br>
+                                q<sub>pH</sub> = 100 &times; (0.6 / 1.5) = <b class="text-emerald-600">40.0</b>
+                            </div>
+                            <div class="pt-1">
+                                <span class="font-sans text-slate-500 text-[10px] uppercase">TDS Quality Rating</span><br>
+                                q<sub>TDS</sub> = 100 &times; |600 - 0| / |2000 - 0|<br>
+                                q<sub>TDS</sub> = 100 &times; (600 / 2000) = <b class="text-emerald-600">30.0</b>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-indigo-50 border border-indigo-200 p-4 rounded-xl shadow-inner">
+                        <h4 class="text-xs font-bold text-indigo-500 uppercase mb-3">4. Final WQI</h4>
+                        <div class="text-xs space-y-2 text-indigo-900 font-mono">
+                            <div class="pb-2 border-b border-indigo-200">
+                                WQI = &sum;(w<sub>i</sub> &times; q<sub>i</sub>)<br><br>
+                                (0.996 &times; 40.0) + (0.004 &times; 30.0)<br>
+                                = 39.84 + 0.12<br>
+                            </div>
+                            <div class="pt-1 text-center">
+                                <span class="text-2xl font-black text-indigo-700">39.96</span><br>
+                                <span class="font-sans text-xs font-bold text-emerald-600 px-2 py-0.5 bg-emerald-100 rounded mt-1 inline-block">Good Water</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            const row = processedData[0]; // Take Row 1
+            const activeParams = Object.keys(paramConfig).filter(p => paramConfig[p].selected);
+            if (activeParams.length === 0) return;
+
+            // Use all selected parameters
+            const displayParams = activeParams;
+
+            let scenarioHtml = `<h4 class="text-xs font-bold text-slate-500 uppercase mb-3">1. Scenario Data (Row 1)</h4><div class="max-h-[320px] overflow-y-auto custom-scrollbar pr-2"><ul class="text-sm space-y-2 text-slate-700 font-mono">`;
+            let weightsHtml = `<h4 class="text-xs font-bold text-slate-500 uppercase mb-3">2. Calculate Weights (w<sub>i</sub>)</h4><div class="max-h-[320px] overflow-y-auto custom-scrollbar pr-2"><div class="text-xs space-y-2 text-slate-700 font-mono">`;
+            let subIndexHtml = `<h4 class="text-xs font-bold text-slate-500 uppercase mb-3">3. Sub-Indices (q<sub>i</sub>)</h4><div class="max-h-[320px] overflow-y-auto custom-scrollbar pr-2"><div class="text-xs space-y-2 text-slate-700 font-mono">`;
+
+            let sumInverseStandard = 0;
+            activeParams.forEach(p => { if(paramConfig[p].standard > 0) sumInverseStandard += (1 / paramConfig[p].standard); });
+            const k = sumInverseStandard > 0 ? 1 / sumInverseStandard : 0;
+
+            weightsHtml += `<div class="pb-2 mb-2 border-b border-slate-200"><span class="font-sans text-slate-500 text-[10px] uppercase">Find Constant (k)</span><br>k = 1 / &sum;(1/S<sub>i</sub>) = <br><b class="text-emerald-600">${k.toFixed(5)}</b></div><div class="pt-1"><span class="font-sans text-slate-500 text-[10px] uppercase">Apply Weights</span><br>`;
+
+            let finalSumString1 = [];
+            let finalSumString2 = [];
+
+            displayParams.forEach((p, index) => {
+                const conf = paramConfig[p];
+                const colName = window.currentMapping[p];
+                let Va = parseFloat(row[colName]);
+                if(isNaN(Va)) Va = 0;
+
+                scenarioHtml += `<li ${index > 0 ? 'class="mt-4"' : ''}><b class="text-slate-900 font-sans">${p}:</b> Measured (V<sub>a</sub>) = <span class="text-indigo-600">${Va}</span></li>
+                                 <li class="pl-4 text-[11px] text-slate-500 font-sans">Ideal = ${conf.ideal}, Standard = ${conf.standard}</li>`;
+
+                weightsHtml += `<div class="mb-1">w<sub>${p}</sub> = ${k.toFixed(4)} / ${conf.standard} = <b>${conf.weight.toFixed(4)}</b></div>`;
+
+                let denominator = Math.abs(conf.standard - conf.ideal);
+                let qi = denominator > 0 ? 100 * (Math.abs(Va - conf.ideal) / denominator) : 0;
+
+                subIndexHtml += `<div class="pb-2 mb-2 ${index < displayParams.length - 1 ? 'border-b border-slate-200' : ''}"><span class="font-sans text-slate-500 text-[10px] uppercase">${p} Quality Rating</span><br>
+                                 q<sub>${p}</sub> = 100 &times; |${Va} - ${conf.ideal}| / |${conf.standard} - ${conf.ideal}|<br>
+                                 q<sub>${p}</sub> = <b class="text-emerald-600">${qi.toFixed(2)}</b></div>`;
+
+                finalSumString1.push(`(${conf.weight.toFixed(4)} &times; ${qi.toFixed(2)})`);
+                finalSumString2.push(`${(conf.weight * qi).toFixed(2)}`);
+            });
+
+            scenarioHtml += `</ul></div>`;
+            weightsHtml += `</div></div>`;
+            subIndexHtml += `</div></div>`;
+
+            let finalHtml = `
+                <div class="bg-slate-50 border border-slate-200 p-4 rounded-xl shadow-sm flex flex-col">${scenarioHtml}</div>
+                <div class="bg-slate-50 border border-slate-200 p-4 rounded-xl shadow-sm flex flex-col">${weightsHtml}</div>
+                <div class="bg-slate-50 border border-slate-200 p-4 rounded-xl shadow-sm flex flex-col">${subIndexHtml}</div>
+                <div class="bg-indigo-50 border border-indigo-200 p-4 rounded-xl shadow-inner flex flex-col">
+                    <h4 class="text-xs font-bold text-indigo-500 uppercase mb-3">4. Final WQI</h4>
+                    <div class="text-xs space-y-2 text-indigo-900 font-mono flex-grow max-h-[320px] overflow-y-auto custom-scrollbar pr-2">
+                        <div class="pb-2 border-b border-indigo-200">
+                            <span class="font-sans font-bold">WQI = &sum;(w<sub>i</sub> &times; q<sub>i</sub>)</span><br><br>
+                            <span class="font-sans text-[10px] text-indigo-500 uppercase tracking-widest block mb-1 font-bold">Calculated For Parameters:</span>
+                            <span class="font-sans text-[10px] text-slate-600 block mb-3 leading-relaxed">${displayParams.join(', ')}</span>
+                            
+                            <div class="text-[10px] opacity-80 leading-relaxed mt-2 space-y-1">
+                                <div class="text-slate-500">WQI = ${finalSumString1.join(' + ')}</div>
+                                <div class="text-indigo-700 font-bold">WQI = ${finalSumString2.join(' + ')}</div>
+                            </div>
+                        </div>
+                        <div class="pt-2 text-center">
+                            <span class="text-3xl font-black text-indigo-700">${row.WQI}</span><br>
+                            <span class="font-sans text-xs font-bold px-3 py-1 rounded mt-2 inline-block shadow-sm" style="background-color: ${row._color}20; color: ${row._color}; border: 1px solid ${row._color}40">${row['Water Quality Status']}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            container.innerHTML = finalHtml;
+        }
+
+        // ===============================
+        // Export HD Map Image using html2canvas
+        // ===============================
+        async function exportMapImage() {
+            const btn = document.getElementById('downloadMapBtn');
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Rendering...';
+            btn.disabled = true;
+
+            // Target the wrapper holding the map and elements
+            const printArea = document.getElementById('mapPrintArea');
+            
+            try {
+                // Leaflet map tiles need to completely load before capturing
+                const canvas = await html2canvas(printArea, {
+                    useCORS: true,
+                    allowTaint: true,
+                    scale: 3, // Multiplier for High Def
+                    backgroundColor: '#ffffff'
+                });
+                
+                const link = document.createElement('a');
+                link.download = 'WQI_Spatial_Map_A4.png';
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+                showAlert('success', 'Export Successful', 'HD Map image downloaded.');
+            } catch(e) {
+                console.error("Map Export Error: ", e);
+                showAlert('error', 'Export Failed', 'Could not generate the map image.');
+            } finally {
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+            }
+        }
+
+        function initMap() {
+            map = L.map('map', {
+                preferCanvas: true,
+                zoomSnap: 0.1,    // Allows finely tuned 10% zoom increments
+                zoomDelta: 0.1
+            }).setView([22.5937, 78.9629], 5);
+            
+            map.createPane('maskPane');
+            map.getPane('maskPane').style.zIndex = 405;
+
+            baseLayersDict = {
+                'carto': L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { attribution: '&copy; CARTO', maxZoom: 19, crossOrigin: true }),
+                'satellite': L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { attribution: '&copy; Google', maxZoom: 20, crossOrigin: true }),
+                'hybrid': L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { attribution: '&copy; Google', maxZoom: 20, crossOrigin: true }),
+                'osm': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap', maxZoom: 19, crossOrigin: true }),
+                'topo': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenTopoMap', maxZoom: 17, crossOrigin: true })
+            };
+
+            baseLayer = baseLayersDict['carto'];
+            baseLayer.addTo(map);
+
+            maskLayer = L.layerGroup().addTo(map);      
+            contourLayer = L.layerGroup().addTo(map);   
+            shapefileLayer = L.layerGroup().addTo(map); 
+            pointsLayer = L.layerGroup().addTo(map);    
+
+            scaleControl = L.control.scale({position: 'bottomleft', imperial: false, maxWidth: 200});
+            scaleControl.addTo(map);
+
+            // Make floating elements Draggable over map
+            const layersPanel = document.getElementById('mapLayersPanel');
+            const titleCtrl = document.getElementById('mapTitleControl');
+            const legendCtrl = document.getElementById('mapLegend');
+            const nArrow = document.getElementById('northArrow');
+
+            [layersPanel, titleCtrl, legendCtrl, nArrow].forEach(el => {
+                if(el) {
+                    L.DomEvent.disableClickPropagation(el);
+                    L.DomEvent.disableScrollPropagation(el);
+                    makeDraggable(el);
+                }
+            });
+
+            setTimeout(() => { map.invalidateSize(); }, 300);
+        }
+
+        // Global zoom handler for buttons
+        window.fineZoomMap = function(delta) {
+            if (map) {
+                map.setZoom(map.getZoom() + delta);
+            }
+        };
+
+        function plotMapData(data) {
+            if (map.hasLayer(pointsLayer)) map.removeLayer(pointsLayer);
+            if (map.hasLayer(contourLayer)) map.removeLayer(contourLayer);
+            
+            pointsLayer.clearLayers();
+            contourLayer.clearLayers();
+
+            const stateVal = document.getElementById('stateFilter')?.value || 'ALL';
+            const isPrintMode = document.getElementById('togglePrintMode').checked;
+            const hideEmpty = document.getElementById('toggleEmptyRegions').checked;
+            const maxR2 = mapSettings.maxRadius * mapSettings.maxRadius;
+
+            const spatialData = data.filter(d => {
+                if (d.Latitude === undefined || d.Longitude === undefined || d.Latitude === null || d.Longitude === null) return false;
+                const lat = parseFloat(d.Latitude);
+                const lng = parseFloat(d.Longitude);
+                return !isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+            });
+
+            if(spatialData.length === 0) {
+                showAlert('warning', 'No Coordinates', 'Data processed, but map plotting skipped due to missing or invalid coordinates.');
+                return;
+            }
+
+            let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+            let activeGeoms = [];
+
+            if (currentShapefileGeom) {
+                function extractGeometries(geojson, filterName, geoms = []) {
+                    if (!geojson) return geoms;
+                    if (Array.isArray(geojson)) {
+                        geojson.forEach(item => extractGeometries(item, filterName, geoms));
+                        return geoms;
+                    }
+                    if (geojson.type === 'FeatureCollection') {
+                        geojson.features.forEach(f => extractGeometries(f, filterName, geoms));
+                        return geoms;
+                    }
+                    if (geojson.type === 'Feature') {
+                        let match = true;
+                        if (filterName && filterName !== 'ALL') {
+                            const props = Object.values(geojson.properties || {});
+                            match = props.some(v => fuzzyMatchState(v, filterName));
+                        }
+                        if (match && geojson.geometry && (geojson.geometry.type === 'Polygon' || geojson.geometry.type === 'MultiPolygon')) {
+                            geoms.push(geojson.geometry);
+                        }
+                        return geoms;
+                    }
+                    if (!filterName && (geojson.type === 'Polygon' || geojson.type === 'MultiPolygon')) {
+                        geoms.push(geojson);
+                    }
+                    return geoms;
+                }
+
+                activeGeoms = extractGeometries(currentShapefileGeom, stateVal);
+                if (activeGeoms.length === 0 && stateVal !== 'ALL') {
+                    activeGeoms = extractGeometries(currentShapefileGeom, null);
+                }
+
+                activeGeoms.forEach(geom => {
+                    const polys = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates;
+                    polys.forEach(polygon => {
+                        if (polygon[0]) {
+                            polygon[0].forEach(pt => {
+                                if (pt && pt.length >= 2 && !isNaN(pt[0]) && !isNaN(pt[1])) {
+                                    if (pt[1] < minLat) minLat = pt[1];
+                                    if (pt[1] > maxLat) maxLat = pt[1];
+                                    if (pt[0] < minLng) minLng = pt[0];
+                                    if (pt[0] > maxLng) maxLng = pt[0];
+                                }
+                            });
+                        }
+                    });
+                });
+                
+                shapefileLayer.clearLayers();
+                if (activeGeoms.length > 0) {
+                    activeGeoms.forEach(geom => {
+                        L.geoJSON(geom, {
+                            style: {
+                                color: mapSettings.shpColor,
+                                weight: mapSettings.shpThickness,
+                                fillOpacity: 0,
+                                dashArray: isPrintMode ? '' : '5, 5'
+                            }
+                        }).addTo(shapefileLayer);
+                    });
+                }
+            }
+
+            const idwPoints = [];
+            let pMinLat = Infinity, pMaxLat = -Infinity, pMinLng = Infinity, pMaxLng = -Infinity;
+
+            const contourStep = Math.max(1, Math.ceil(spatialData.length / 2500)); 
+            const radius = isPrintMode ? 0 : mapSettings.pointSize;
+
+            spatialData.forEach((row, index) => {
+                const lat = parseFloat(row.Latitude);
+                const lng = parseFloat(row.Longitude);
+                const wqi = row.WQI;
+                const color = row._color;
+                
+                const marker = L.circleMarker([lat, lng], {
+                    radius: radius,
+                    fillColor: color === 'gray' ? '#cbd5e1' : getColorForWQI(wqi),
+                    color: '#fff', weight: 1, opacity: 1, fillOpacity: 0.95
+                }).bindPopup(`<div class="font-sans text-xs"><b class="text-slate-800">Well ID:</b> ${row['Well ID'] || row.Sample_ID || 'Unknown'}<br><b class="text-slate-800">WQI:</b> ${wqi !== null ? wqi : 'N/A'}<br><b class="text-slate-800">Class:</b> ${row['Water Quality Status']}</div>`);
+                
+                pointsLayer.addLayer(marker);
+                
+                if (wqi !== null && !isNaN(wqi) && (index % contourStep === 0)) {
+                    idwPoints.push({lat: lat, lng: lng, wqi: wqi}); 
+                    if (lat < pMinLat) pMinLat = lat;
+                    if (lat > pMaxLat) pMaxLat = lat;
+                    if (lng < pMinLng) pMinLng = lng;
+                    if (lng > pMaxLng) pMaxLng = lng;
+                }
+            });
+
+            if (minLat === Infinity || isNaN(minLat)) {
+                minLat = pMinLat; maxLat = pMaxLat; minLng = pMinLng; maxLng = pMaxLng;
+            }
+
+            if (document.getElementById('togglePoints').checked && !isPrintMode) {
+                map.addLayer(pointsLayer);
+            }
+
+            let groupBounds = null;
+            if(pointsLayer.getLayers().length > 0 && activeGeoms.length === 0) {
+                const group = L.featureGroup(pointsLayer.getLayers());
+                groupBounds = group.getBounds();
+            } else if (shapefileLayer.getLayers().length > 0) {
+                const group = L.featureGroup(shapefileLayer.getLayers());
+                groupBounds = group.getBounds();
+            }
+
+            if (groupBounds && groupBounds.isValid()) {
+                map.flyToBounds(groupBounds, {padding: [50, 50]});
+            }
+
+            if (minLat === Infinity || isNaN(minLat) || minLng === Infinity || isNaN(minLng)) {
+                return; 
+            }
+
+            if(idwPoints.length > 2 && document.getElementById('toggleContours').checked) {
+                try {
+                    const latPad = (maxLat - minLat) * 0.05 || 0.1;
+                    const lngPad = (maxLng - minLng) * 0.05 || 0.1;
+                    const southWest = L.latLng(minLat - latPad, minLng - lngPad);
+                    const northEast = L.latLng(maxLat + latPad, maxLng + lngPad);
+                    const bounds = L.latLngBounds(southWest, northEast);
+                    
+                    const swM = L.CRS.EPSG3857.project(southWest);
+                    const neM = L.CRS.EPSG3857.project(northEast);
+                    const mWidth = neM.x - swM.x;
+                    const mHeight = neM.y - swM.y;
+                    
+                    let width = 300; 
+                    let height = Math.max(10, Math.floor(width * (mHeight / mWidth)));
+                    
+                    if (height > 300) {
+                        height = 300;
+                        width = Math.max(10, Math.floor(height * (mWidth / mHeight)));
+                    }
+                    
+                    const rawCanvas = document.createElement('canvas');
+                    rawCanvas.width = width;
+                    rawCanvas.height = height;
+                    const rawCtx = rawCanvas.getContext('2d'); 
+                    const imgData = rawCtx.createImageData(width, height);
+                    const pixelData = imgData.data;
+
+                    const pxPoints = idwPoints.map(p => {
+                        const ptM = L.CRS.EPSG3857.project(L.latLng(p.lat, p.lng));
+                        return {
+                            x: ((ptM.x - swM.x) / mWidth) * width,
+                            y: height - (((ptM.y - swM.y) / mHeight) * height),
+                            val: p.wqi
+                        };
+                    });
+
+                    const alpha = isPrintMode ? 255 : 180;
+
+                    for (let y = 0; y < height; y++) {
+                        for (let x = 0; x < width; x++) {
+                            let sumWeight = 0;
+                            let sumValue = 0;
+                            let exactMatch = false;
+                            let exactVal = 0;
+                            let minD2 = Infinity;
+
+                            for (let i = 0; i < pxPoints.length; i++) {
+                                const pt = pxPoints[i];
+                                const dx = x - pt.x;
+                                const dy = y - pt.y;
+                                const d2 = dx*dx + dy*dy;
+
+                                if (d2 < minD2) minD2 = d2;
+
+                                if (d2 < 0.5) {
+                                    exactMatch = true;
+                                    exactVal = pt.val;
+                                    break;
+                                }
+
+                                const weight = 1.0 / d2;
+                                sumWeight += weight;
+                                sumValue += weight * pt.val;
+                            }
+
+                            const finalVal = exactMatch ? exactVal : (sumValue / sumWeight);
+                            const idx = (y * width + x) * 4;
+
+                            if (hideEmpty && minD2 > maxR2) {
+                                // Render as white if beyond the allowed unsampled radius
+                                pixelData[idx] = 255;
+                                pixelData[idx+1] = 255;
+                                pixelData[idx+2] = 255;
+                                pixelData[idx+3] = alpha; 
+                            } else {
+                                const hexColor = getColorForWQI(finalVal);
+                                const rgb = hexToRgb(hexColor);
+                                pixelData[idx] = rgb.r;
+                                pixelData[idx+1] = rgb.g;
+                                pixelData[idx+2] = rgb.b;
+                                pixelData[idx+3] = alpha;
+                            }
+                        }
+                    }
+                    
+                    rawCtx.putImageData(imgData, 0, 0);
+                    
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    
+                    if (activeGeoms.length > 0) {
+                        try {
+                            ctx.save();
+                            ctx.beginPath();
+                            activeGeoms.forEach(geom => {
+                                const polys = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates;
+                                polys.forEach(polygon => {
+                                    polygon.forEach(ring => {
+                                        if (!ring || ring.length < 3) return;
+                                        ring.forEach((pt, i) => {
+                                            if (!pt || pt.length < 2 || isNaN(pt[0]) || isNaN(pt[1])) return;
+                                            const ptM = L.CRS.EPSG3857.project(L.latLng(pt[1], pt[0]));
+                                            const pxX = ((ptM.x - swM.x) / mWidth) * width;
+                                            const pxY = height - (((ptM.y - swM.y) / mHeight) * height);
+                                            if (i === 0) ctx.moveTo(pxX, pxY);
+                                            else ctx.lineTo(pxX, pxY);
+                                        });
+                                        ctx.closePath();
+                                    });
+                                });
+                            });
+                            ctx.clip("evenodd");
+                        } catch(e) {
+                            console.warn("Shapefile clipping failed, falling back to unclipped IDW", e);
+                        }
+                    }
+
+                    // Draw the IDW map, bounded strictly by the clip region
+                    ctx.drawImage(rawCanvas, 0, 0);
+
+                    if (activeGeoms.length > 0) ctx.restore(); 
+                    
+                    const overlay = L.imageOverlay(canvas.toDataURL(), bounds, {
+                        opacity: isPrintMode ? 1.0 : 0.85,
+                        interactive: false,
+                        zIndex: 1
+                    });
+                    
+                    contourLayer.addLayer(overlay);
+                    map.addLayer(contourLayer);
+
+                } catch(err) {
+                    console.error("IDW Canvas Interpolation failed:", err);
+                }
+            }
+        }
+
+        function applyMask() {
+            maskLayer.clearLayers();
+            const isPrintMode = document.getElementById('togglePrintMode').checked;
+            const stateVal = document.getElementById('stateFilter')?.value || 'ALL';
+            
+            if (isPrintMode && currentShapefileGeom) {
+                try {
+                    function extractGeoms(geojson, filterName, geoms = []) {
+                        if (!geojson) return geoms;
+                        if (Array.isArray(geojson)) {
+                            geojson.forEach(item => extractGeoms(item, filterName, geoms));
+                            return geoms;
+                        }
+                        if (geojson.type === 'FeatureCollection') {
+                            geojson.features.forEach(f => extractGeoms(f, filterName, geoms));
+                            return geoms;
+                        }
+                        if (geojson.type === 'Feature') {
+                            let match = true;
+                            if (filterName && filterName !== 'ALL') {
+                                const props = Object.values(geojson.properties || {});
+                                match = props.some(v => fuzzyMatchState(v, filterName));
+                            }
+                            if (match && geojson.geometry && (geojson.geometry.type === 'Polygon' || geojson.geometry.type === 'MultiPolygon')) {
+                                geoms.push(geojson.geometry);
+                            }
+                            return geoms;
+                        }
+                        if (!filterName && (geojson.type === 'Polygon' || geojson.type === 'MultiPolygon')) {
+                            geoms.push(geojson);
+                        }
+                        return geoms;
+                    }
+
+                    let activeGeoms = extractGeoms(currentShapefileGeom, stateVal);
+                    if (activeGeoms.length === 0 && stateVal !== 'ALL') {
+                        activeGeoms = extractGeoms(currentShapefileGeom, null);
+                    }
+
+                    if (activeGeoms.length === 0) throw new Error("No valid polygon boundary found in shapefile.");
+
+                    const worldBox = [
+                        [-180, -90],
+                        [180, -90],
+                        [180, 90],
+                        [-180, 90],
+                        [-180, -90]
+                    ];
+
+                    let maskCoordinates = [worldBox];
+
+                    activeGeoms.forEach(geom => {
+                        const polys = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates;
+                        polys.forEach(polygon => {
+                            if (polygon[0]) {
+                                const validRing = polygon[0].filter(pt => pt && pt.length >= 2 && !isNaN(pt[0]) && !isNaN(pt[1]));
+                                if (validRing.length >= 3) {
+                                    maskCoordinates.push(validRing);
+                                }
+                            }
+                        });
+                    });
+
+                    const mask = {
+                        type: "Feature",
+                        properties: {},
+                        geometry: {
+                            type: "Polygon",
+                            coordinates: maskCoordinates
+                        }
+                    };
+                    
+                    L.geoJSON(mask, {
+                        pane: 'maskPane', 
+                        style: {
+                            fillColor: '#ffffff', 
+                            fillOpacity: 1.0,
+                            color: 'transparent',
+                            weight: 0
+                        }
+                    }).addTo(maskLayer);
+                } catch(e) {
+                    console.error("Mask creation failed:", e);
+                    showAlert('error', 'Masking Error', 'Could not apply boundary mask for Print Mode.');
+                }
+            }
+        }
+
+        document.getElementById('baseMapSelector').addEventListener('change', (e) => {
+            const selected = e.target.value;
+            map.removeLayer(baseLayer);
+            baseLayer = baseLayersDict[selected];
+            if (!document.getElementById('togglePrintMode').checked) {
+                map.addLayer(baseLayer);
+            }
+        });
+
+        document.getElementById('togglePoints').addEventListener('change', (e) => {
+            e.target.checked ? map.addLayer(pointsLayer) : map.removeLayer(pointsLayer);
+        });
+        document.getElementById('toggleContours').addEventListener('change', (e) => {
+            e.target.checked ? map.addLayer(contourLayer) : map.removeLayer(contourLayer);
+        });
+        document.getElementById('toggleShapefile').addEventListener('change', (e) => {
+            e.target.checked ? map.addLayer(shapefileLayer) : map.removeLayer(shapefileLayer);
+        });
+
+        document.getElementById('togglePrintMode').addEventListener('change', (e) => {
+            const isPrint = e.target.checked;
+            const printArea = document.getElementById('mapPrintArea');
+            
+            // Fix: Reset draggable element positions to prevent them from getting lost off-screen during resize
+            ['mapLayersPanel', 'mapTitleControl', 'mapLegend', 'northArrow'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.style.top = '';
+                    el.style.left = '';
+                    el.style.right = '';
+                    el.style.bottom = '';
+                }
+            });
+            
+            document.getElementById('map').style.backgroundColor = isPrint ? '#ffffff' : '#e2e8f0';
+            isPrint ? map.removeLayer(baseLayer) : map.addLayer(baseLayer);
+            
+            const titleCtrl = document.getElementById('mapTitleControl');
+            
+            if(isPrint) {
+                // A4 Landscape constraint
+                printArea.classList.remove('w-full', 'h-full');
+                printArea.classList.add('print-a4-landscape');
+                
+                if (document.getElementById('toggleMapTitle').checked) {
+                    titleCtrl.classList.remove('hidden');
+                }
+                
+                document.getElementById('togglePoints').checked = false; 
+                document.getElementById('downloadMapBtn').classList.remove('hidden');
+                map.removeLayer(pointsLayer);
+            } else {
+                // Return to normal fill size
+                printArea.classList.add('w-full', 'h-full');
+                printArea.classList.remove('print-a4-landscape');
+                
+                titleCtrl.classList.add('hidden');
+                document.getElementById('togglePoints').checked = true;
+                document.getElementById('downloadMapBtn').classList.add('hidden');
+                map.addLayer(pointsLayer);
+            }
+
+            if (shapefileLayer.getLayers().length > 0) {
+                shapefileLayer.eachLayer(layer => {
+                    layer.setStyle({
+                        color: mapSettings.shpColor,
+                        weight: mapSettings.shpThickness,
+                        fillOpacity: 0,
+                        dashArray: isPrint ? '' : '5, 5'
+                    });
+                });
+            }
+
+            setTimeout(() => { 
+                map.invalidateSize(); 
+                if(currentFilteredData.length > 0) plotMapData(currentFilteredData);
+                applyMask();
+            }, 350);
+        });
+
+        // ===============================
+        // Shapefile Handling
+        // ===============================
+        shpUpload.addEventListener('change', function(e){
+            const file = e.target.files[0];
+            if(!file) return;
+            
+            document.getElementById('shpNameDisplay').innerHTML = `<i class="fas fa-check text-slate-800 mr-1"></i> ${file.name}`;
+            
+            const reader = new FileReader();
+            reader.onload = function(e){
+                try {
+                    shp(e.target.result).then(function(geojson){
+                        shapefileLayer.clearLayers();
+                        currentShapefileGeom = geojson; 
+                        
+                        const isPrintMode = document.getElementById('togglePrintMode').checked;
+                        
+                        L.geoJSON(geojson, {
+                            style: {
+                                color: mapSettings.shpColor,
+                                weight: mapSettings.shpThickness,
+                                fillOpacity: 0,
+                                dashArray: isPrintMode ? '' : '5, 5'
+                            }
+                        }).addTo(shapefileLayer);
+                        
+                        applyMask();
+
+                        const group = L.featureGroup(shapefileLayer.getLayers());
+                        if (group.getBounds().isValid()) {
+                            map.flyToBounds(group.getBounds(), {padding: [20, 20]});
+                        }
+                        
+                    }).catch(err => {
+                        showAlert('error', 'Shapefile Error', 'Could not parse the shapefile.');
+                    });
+                } catch (err) {
+                     showAlert('error', 'Shapefile Error', err.message);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        // ===============================
+        // File Upload & Processing Logic
+        // ===============================
+        fileUpload.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                selectedFile = e.target.files[0];
+                document.getElementById('fileNameDisplay').innerHTML = `<i class="fas fa-check text-white mr-1"></i> ${selectedFile.name}`;
+                calcBtn.disabled = false;
+                hideAlert();
+            } else {
+                selectedFile = null;
+                document.getElementById('fileNameDisplay').textContent = `Upload Excel`;
+                calcBtn.disabled = true;
+            }
+        });
+
+        function attemptAutoMap(targetKey, headers) {
+            const config = paramConfig[targetKey];
+            let aliases = config && config.keywords ? [...config.keywords] : [targetKey.toLowerCase()];
+            
+            if(targetKey === 'Latitude') aliases = ['lat', 'latitude', 'y', 'lat_y', 'Latitude (Degree-Decimal)'];
+            if(targetKey === 'Longitude') aliases = ['lon', 'lng', 'longitude', 'long', 'x', 'lon_x', 'Longitude (Degree-Decimal)'];
+            if(targetKey === 'State') aliases = ['state', 'province', 'region', 'state_name'];
+            if(targetKey === 'District') aliases = ['district', 'dist', 'county'];
+            if(targetKey === 'Block') aliases = ['block', 'tehsil', 'taluka', 'sub-district'];
+
+            for(let alias of aliases) {
+                let match = headers.find(h => h.trim().toLowerCase() === alias.toLowerCase());
+                if(match) return match;
+            }
+            return "";
+        }
+
+        calcBtn.addEventListener('click', () => {
+            if (!selectedFile) return;
+
+            const activeParams = Object.keys(paramConfig).filter(p => paramConfig[p].selected);
+            if (activeParams.length === 0) {
+                showAlert('error', 'Config Error', 'Select at least one parameter.');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+                    
+                    const headerRow = XLSX.utils.sheet_to_json(worksheet, {header: 1})[0] || [];
+                    uploadedHeaders = headerRow.filter(h => h !== undefined && h !== null && h !== '');
+                    uploadedRawData = XLSX.utils.sheet_to_json(worksheet, {defval: ""});
+
+                    if (uploadedRawData.length === 0) throw new Error("Excel file is empty.");
+                    
+                    buildAndShowMappingModal(activeParams);
+
+                } catch (error) {
+                    console.error(error);
+                    showAlert('error', 'Data Error', error.message);
+                }
+            };
+            reader.readAsArrayBuffer(selectedFile);
+        });
+
+        function buildAndShowMappingModal(activeParams) {
+            mappingContainer.innerHTML = '';
+            document.getElementById('mappingError').classList.add('hidden');
+            
+            const fieldsToMap = [
+                { key: 'Latitude', type: 'Geospatial (Optional)' },
+                { key: 'Longitude', type: 'Geospatial (Optional)' },
+                { key: 'State', type: 'Analytics (Optional)' },
+                { key: 'District', type: 'Analytics (Optional)' },
+                { key: 'Block', type: 'Analytics (Optional)' },
+                ...activeParams.map(p => ({ key: p, type: 'Chemical (Required)' }))
+            ];
+
+            const optionsHTML = `<option value="">-- Ignore / Not Present --</option>` + 
+                uploadedHeaders.map(h => `<option value="${h}">${h}</option>`).join('');
+
+            fieldsToMap.forEach(field => {
+                const autoMatch = attemptAutoMap(field.key, uploadedHeaders);
+                const isRequired = field.type.includes('Required');
+                
+                const row = document.createElement('div');
+                row.className = `grid grid-cols-2 gap-4 px-4 py-2 border-b border-slate-100 items-center ${isRequired ? '' : 'opacity-70 bg-slate-50'}`;
+                
+                row.innerHTML = `
+                    <div class="flex flex-col">
+                        <span class="font-bold text-xs text-slate-800">${field.key} ${isRequired ? '<span class="text-red-500">*</span>' : ''}</span>
+                    </div>
+                    <div>
+                        <select id="map_${field.key}" class="w-full bg-white border ${autoMatch ? 'border-green-400 focus:border-green-500' : 'border-slate-300 focus:border-cyan-500'} rounded-md px-2 py-1.5 text-xs focus:outline-none focus:ring-1">
+                            ${optionsHTML}
+                        </select>
+                    </div>
+                `;
+                
+                mappingContainer.appendChild(row);
+                
+                if (autoMatch) {
+                    document.getElementById(`map_${field.key}`).value = autoMatch;
+                }
+            });
+
+            mappingModal.classList.remove('hidden');
+            mappingModal.classList.add('flex');
+        }
+
+        function closeMappingModal() {
+            mappingModal.classList.add('hidden');
+            mappingModal.classList.remove('flex');
+        }
+
+        runCalcBtn.addEventListener('click', () => {
+            const activeParams = Object.keys(paramConfig).filter(p => paramConfig[p].selected);
+            const mapping = {};
+            let missingRequired = false;
+
+            const errorDiv = document.getElementById('mappingError');
+            errorDiv.classList.add('hidden'); 
+
+            ['Latitude', 'Longitude', 'State', 'District', 'Block', ...activeParams].forEach(key => {
+                const selectEl = document.getElementById(`map_${key}`);
+                if (!selectEl) return;
+                
+                mapping[key] = selectEl.value;
+                
+                if (activeParams.includes(key)) {
+                    if (!mapping[key]) {
+                        missingRequired = true;
+                        selectEl.classList.remove('border-slate-300', 'border-green-400');
+                        selectEl.classList.add('border-red-500', 'bg-red-50');
+                    } else {
+                        selectEl.classList.remove('border-red-500', 'bg-red-50');
+                    }
+                }
+            });
+
+            if (missingRequired) {
+                errorDiv.classList.remove('hidden');
+                return;
+            }
+
+            window.currentMapping = mapping;
+
+            const originalBtnHtml = runCalcBtn.innerHTML;
+            runCalcBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Processing...';
+            runCalcBtn.disabled = true;
+
+            setTimeout(() => {
+                try {
+                    // Ensure dynamic weights are perfectly synchronized before processing
+                    recalculateDynamicWeights();
+                    const isStrict = document.getElementById('strictDataToggle').checked;
+
+                    // Extract 'ideal' parameter and dynamically computed 'weight' (wi)
+                    const paramConfigsResolved = activeParams.map(p => ({
+                        excelCol: mapping[p],
+                        Si: paramConfig[p].standard,
+                        ideal: paramConfig[p].ideal || 0,
+                        Wi: paramConfig[p].weight // Unit weight wi already normalized to sum to 1
+                    }));
+
+                    const latCol = mapping['Latitude'];
+                    const lonCol = mapping['Longitude'];
+                    const stateCol = mapping['State'];
+                    const distCol = mapping['District'];
+                    const blockCol = mapping['Block'];
+
+                    for (let i = 0; i < uploadedRawData.length; i++) {
+                        let row = uploadedRawData[i];
+                        let SI_sum = 0;
+                        let missingData = false;
+                        
+                        if (latCol && row[latCol] !== undefined) row.Latitude = row[latCol];
+                        if (lonCol && row[lonCol] !== undefined) row.Longitude = row[lonCol];
+                        if (stateCol && row[stateCol] !== undefined) row.State = row[stateCol];
+                        if (distCol && row[distCol] !== undefined) row.District = row[distCol];
+                        if (blockCol && row[blockCol] !== undefined) row.Block = row[blockCol];
+
+                        for (let j = 0; j < paramConfigsResolved.length; j++) {
+                            const pConf = paramConfigsResolved[j];
+                            const rawVal = row[pConf.excelCol];
+                            let Ci = parseFloat(rawVal); // Measured Value (Va)
+                            
+                            if (isNaN(Ci)) {
+                                missingData = true;
+                                Ci = 0;
+                            }
+
+                            // CORE CALCULATION ENGINE UPGRADE - Brown et al. (1972)
+                            // qi = 100 * |Va - V_ideal| / |Vs - V_ideal|
+                            let denominator = Math.abs(pConf.Si - pConf.ideal);
+                            let qi = denominator > 0 ? 100 * (Math.abs(Ci - pConf.ideal) / denominator) : 0;
+                            
+                            // Composite WQI = Sum(wi * qi) / Sum(wi) 
+                            // Note: Sum(wi) equals 1 because of k scaling.
+                            SI_sum += pConf.Wi * qi;
+                        }
+                        
+                        if (isStrict && missingData) {
+                            row.WQI = null;
+                            row["Water Quality Status"] = "No Data";
+                            row.Comment = "Missing required parameters";
+                            row._color = "gray"; 
+                        } else {
+                            row.WQI = Math.round(SI_sum * 100) / 100;
+                            
+                            let classified = false;
+                            for (let k = 0; k < wqiClasses.length; k++) {
+                                if (SI_sum <= wqiClasses[k].max) {
+                                    row["Water Quality Status"] = wqiClasses[k].name;
+                                    row.Comment = wqiClasses[k].comment || '';
+                                    row._color = wqiClasses[k].color;
+                                    classified = true;
+                                    break;
+                                }
+                            }
+                            if (!classified) {
+                                let last = wqiClasses[wqiClasses.length - 1];
+                                row["Water Quality Status"] = last.name;
+                                row.Comment = last.comment || '';
+                                row._color = last.color;
+                            }
+                        }
+                    }
+
+                    processedData = uploadedRawData;
+
+                    closeMappingModal();
+                    initFilters(); 
+                    downloadBtn.classList.remove('hidden');
+
+                    showAlert('success', 'Success', `Processed WQI for ${processedData.length} samples.`);
+                    
+                    switchTab('dataTab');
+                    setTimeout(() => { if (map) map.invalidateSize(); }, 300);
+
+                } catch (error) {
+                    console.error(error);
+                    showAlert('error', 'Calculation Error', error.message);
+                } finally {
+                    runCalcBtn.innerHTML = originalBtnHtml;
+                    runCalcBtn.disabled = false;
+                    closeMappingModal();
+                }
+            }, 50); 
+        });
+
+        // ===============================
+        // Cascading Filters Logic
+        // ===============================
+        function initFilters() {
+            document.getElementById('filterPanel').classList.remove('hidden');
+            
+            const stateSet = new Set();
+            processedData.forEach(d => { if(d.State && String(d.State).trim() !== '') stateSet.add(d.State); });
+            
+            const stateSelect = document.getElementById('stateFilter');
+            stateSelect.innerHTML = `<option value="ALL">All States (${stateSet.size})</option>`;
+            Array.from(stateSet).sort().forEach(state => {
+                stateSelect.innerHTML += `<option value="${state}">${state}</option>`;
+            });
+            
+            document.getElementById('districtFilter').innerHTML = '<option value="ALL">All Districts</option>';
+            document.getElementById('districtFilter').disabled = true;
+            document.getElementById('blockFilter').innerHTML = '<option value="ALL">All Blocks</option>';
+            document.getElementById('blockFilter').disabled = true;
+            
+            applyFilters();
+        }
+
+        document.getElementById('stateFilter').addEventListener('change', (e) => {
+            const state = e.target.value;
+            const distSelect = document.getElementById('districtFilter');
+            const blockSelect = document.getElementById('blockFilter');
+            
+            blockSelect.innerHTML = '<option value="ALL">All Blocks</option>';
+            blockSelect.disabled = true;
+            
+            if(state === 'ALL') {
+                distSelect.innerHTML = '<option value="ALL">All Districts</option>';
+                distSelect.disabled = true;
+            } else {
+                const distSet = new Set();
+                processedData.filter(d => d.State === state && d.District && String(d.District).trim() !== '')
+                             .forEach(d => distSet.add(d.District));
+                
+                distSelect.innerHTML = `<option value="ALL">All Districts (${distSet.size})</option>`;
+                Array.from(distSet).sort().forEach(dist => {
+                    distSelect.innerHTML += `<option value="${dist}">${dist}</option>`;
+                });
+                distSelect.disabled = false;
+            }
+            applyFilters();
+        });
+
+        document.getElementById('districtFilter').addEventListener('change', (e) => {
+            const state = document.getElementById('stateFilter').value;
+            const dist = e.target.value;
+            const blockSelect = document.getElementById('blockFilter');
+            
+            if(dist === 'ALL') {
+                blockSelect.innerHTML = '<option value="ALL">All Blocks</option>';
+                blockSelect.disabled = true;
+            } else {
+                const blockSet = new Set();
+                processedData.filter(d => d.State === state && d.District === dist && d.Block && String(d.Block).trim() !== '')
+                             .forEach(d => blockSet.add(d.Block));
+                
+                blockSelect.innerHTML = `<option value="ALL">All Blocks (${blockSet.size})</option>`;
+                Array.from(blockSet).sort().forEach(block => {
+                    blockSelect.innerHTML += `<option value="${block}">${block}</option>`;
+                });
+                blockSelect.disabled = false;
+            }
+            applyFilters();
+        });
+
+        document.getElementById('blockFilter').addEventListener('change', applyFilters);
+
+        function applyFilters() {
+            const state = document.getElementById('stateFilter').value;
+            const dist = document.getElementById('districtFilter').value;
+            const block = document.getElementById('blockFilter').value;
+            
+            currentFilteredData = processedData.filter(d => {
+                let match = true;
+                if(state !== 'ALL' && d.State !== state) match = false;
+                if(dist !== 'ALL' && d.District !== dist) match = false;
+                if(block !== 'ALL' && d.Block !== block) match = false;
+                return match;
+            });
+            
+            document.getElementById('filterCountBadge').textContent = `${currentFilteredData.length} records`;
+            updateViews(currentFilteredData);
+        }
+
+        function updateViews(data) {
+            plotMapData(data);
+            if(document.getElementById('togglePrintMode').checked) applyMask();
+            generateAnalytics(data);
+            renderDataTable(data);
+            // Updating view re-triggers methodology dynamically
+            renderMethodologyData();
+        }
+
+        // ===============================
+        // Map Settings Customization
+        // ===============================
+        function openMapSettings() {
+            document.getElementById('set_maxRadius').value = mapSettings.maxRadius;
+            document.getElementById('set_pointSize').value = mapSettings.pointSize;
+            document.getElementById('set_shpColor').value = mapSettings.shpColor;
+            document.getElementById('set_shpThickness').value = mapSettings.shpThickness;
+            document.getElementById('set_legendScale').value = mapSettings.legendScale;
+            document.getElementById('set_layersScale').value = mapSettings.layersScale;
+            document.getElementById('set_showNorth').checked = mapSettings.showNorth;
+            document.getElementById('set_showScale').checked = mapSettings.showScale;
+            
+            document.getElementById('mapSettingsModal').classList.remove('hidden');
+            document.getElementById('mapSettingsModal').classList.add('flex');
+        }
+
+        function closeMapSettings() {
+            document.getElementById('mapSettingsModal').classList.add('hidden');
+            document.getElementById('mapSettingsModal').classList.remove('flex');
+        }
+
+        function saveMapSettings() {
+            mapSettings.maxRadius = parseInt(document.getElementById('set_maxRadius').value);
+            mapSettings.pointSize = parseInt(document.getElementById('set_pointSize').value);
+            mapSettings.shpColor = document.getElementById('set_shpColor').value;
+            mapSettings.shpThickness = parseFloat(document.getElementById('set_shpThickness').value);
+            mapSettings.legendScale = parseFloat(document.getElementById('set_legendScale').value);
+            mapSettings.layersScale = parseFloat(document.getElementById('set_layersScale').value);
+            mapSettings.showNorth = document.getElementById('set_showNorth').checked;
+            mapSettings.showScale = document.getElementById('set_showScale').checked;
+
+            const legendCtrl = document.getElementById('mapLegend');
+            if (legendCtrl) {
+                legendCtrl.style.transformOrigin = 'center';
+                legendCtrl.style.transform = `scale(${mapSettings.legendScale})`;
+            }
+
+            const layersCtrl = document.getElementById('mapLayersPanel');
+            if (layersCtrl) {
+                layersCtrl.style.transformOrigin = 'top right';
+                layersCtrl.style.transform = `scale(${mapSettings.layersScale})`;
+            }
+
+            if(mapSettings.showNorth) {
+                document.getElementById('northArrow').classList.remove('hidden');
+            } else {
+                document.getElementById('northArrow').classList.add('hidden');
+            }
+
+            if(mapSettings.showScale) {
+                if(!scaleControl._map) map.addControl(scaleControl);
+            } else {
+                if(scaleControl._map) map.removeControl(scaleControl);
+            }
+
+            const isPrint = document.getElementById('togglePrintMode').checked;
+            if (shapefileLayer.getLayers().length > 0) {
+                shapefileLayer.eachLayer(layer => {
+                    layer.setStyle({
+                        color: mapSettings.shpColor,
+                        weight: mapSettings.shpThickness,
+                        fillOpacity: 0,
+                        dashArray: isPrint ? '' : '5, 5'
+                    });
+                });
+            }
+
+            if(currentFilteredData.length > 0) {
+                plotMapData(currentFilteredData);
+            }
+
+            closeMapSettings();
+        }
+
+        // ===============================
+        // Analytics & Charts (Highcharts)
+        // ===============================
+        function generateAnalytics(data) {
+            const statsCards = document.getElementById('statsCards');
+
+            const totals = {};
+            wqiClasses.forEach(c => totals[c.name] = 0);
+            
+            data.forEach(d => {
+                if(totals[d["Water Quality Status"]] !== undefined) {
+                    totals[d["Water Quality Status"]]++;
+                }
+            });
+
+            statsCards.innerHTML = wqiClasses.map(c => `
+                <div class="ui-panel rounded-xl p-4 text-center border-t-4" style="border-top-color: ${c.color}">
+                    <div class="text-2xl font-black" style="color: ${c.color}">${totals[c.name]}</div>
+                    <div class="text-xs font-bold text-slate-500 uppercase mt-1 truncate">${c.name}</div>
+                </div>
+            `).join('');
+
+            window.currentChartTotals = totals;
+            window.currentChartTotalSamples = data.length;
+            
+            renderDonutChart();
+        }
+
+        function renderDonutChart() {
+            if (!window.currentChartTotals) return;
+            
+            const totals = window.currentChartTotals;
+            const N = window.currentChartTotalSamples;
+
+            const seriesData = [];
+            wqiClasses.forEach(c => {
+                if (totals[c.name] > 0) {
+                    seriesData.push({
+                        name: c.name,
+                        y: totals[c.name],
+                        color: c.color,
+                        count: totals[c.name]
+                    });
+                }
+            });
+
+            const alphaVal = parseInt(document.getElementById('optDAlpha').value);
+            const betaVal = parseInt(document.getElementById('optDBeta').value);
+            const depthVal = parseInt(document.getElementById('optDDepth').value);
+            const innerVal = parseInt(document.getElementById('optDInner').value);
+
+            document.getElementById('txtDAlpha').innerText = alphaVal + '°';
+            document.getElementById('txtDBeta').innerText = betaVal + '°';
+            document.getElementById('txtDDepth').innerText = depthVal + 'px';
+            document.getElementById('txtDInner').innerText = innerVal + '%';
+            
+            const titleColor = document.getElementById('dTitleColor').value;
+            const labelColor = document.getElementById('dLabelColor').value;
+            const titleSize = document.getElementById('dTitleSize').value + 'px';
+            const labelSize = document.getElementById('dLabelSize').value + 'px';
+            const showLegend = document.getElementById('showLegend').checked;
+            const showSmallN = document.getElementById('showSmallN').checked;
+
+            if (activeDonutChart) activeDonutChart.destroy();
+
+            activeDonutChart = Highcharts.chart('donut-container', {
+                chart: { 
+                    type: 'pie', 
+                    options3d: { enabled: true, alpha: alphaVal, beta: betaVal }, 
+                    backgroundColor: 'transparent',
+                    animation: false
+                },
+                title: {
+                    text: document.getElementById('showTitle').checked 
+                          ? document.getElementById('chartTitleInput').value + (document.getElementById('showN').checked && N > 0 ? ` (N=${N})` : '') 
+                          : null,
+                    style: { fontSize: titleSize, fontWeight: 'bold', color: titleColor, fontFamily: 'sans-serif' }
+                },
+                tooltip: { 
+                    pointFormat: 'Percentage: <b>{point.percentage:.2f}%</b><br/>Samples: <b>{point.count}</b>' 
+                },
+                plotOptions: {
+                    pie: {
+                        innerSize: innerVal + '%', 
+                        depth: depthVal,
+                        dataLabels: {
+                            enabled: true,
+                            format: showSmallN ? '<b>{point.name}</b><br>{point.percentage:.1f}% (n={point.count})' : '<b>{point.name}</b><br>{point.percentage:.1f}%',
+                            style: { 
+                                fontSize: labelSize, 
+                                fontWeight: 'bold', 
+                                color: labelColor, 
+                                textOutline: 'none' 
+                            },
+                            connectorWidth: 1.5, 
+                            distance: 25
+                        },
+                        showInLegend: showLegend
+                    }
+                },
+                legend: { 
+                    enabled: showLegend,
+                    itemStyle: { fontWeight: 'bold', color: '#475569' }
+                },
+                series: [{ name: 'Samples', data: seriesData }],
+                credits: { enabled: false }, 
+                exporting: { enabled: false }
+            });
+        }
+
+        function toggleExportBg() {
+            const isTransparent = document.getElementById('exportTransparent').checked;
+            const colorInput = document.getElementById('exportBgColor');
+            const wrapper = document.getElementById('bgColorWrapper');
+            
+            colorInput.disabled = isTransparent;
+            wrapper.style.opacity = isTransparent ? '0.4' : '1';
+            wrapper.style.pointerEvents = isTransparent ? 'none' : 'auto';
+        }
+
+        function downloadHighchart() {
+            if (!activeDonutChart) return;
+
+            const btn = document.getElementById('downloadChartBtn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '⌛ Rendering...';
+            btn.disabled = true;
+
+            const isTransparent = document.getElementById('exportTransparent').checked;
+            const exportFormat = isTransparent ? 'image/png' : 'image/jpeg';
+            const bgColor = isTransparent ? 'rgba(0,0,0,0)' : document.getElementById('exportBgColor').value;
+
+            activeDonutChart.exportChartLocal({
+                type: exportFormat,
+                filename: 'WQI_3D_Distribution',
+                sourceWidth: 1200, 
+                sourceHeight: 800,
+                scale: 2
+            }, {
+                chart: { backgroundColor: bgColor }
+            });
+
+            setTimeout(() => {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }, 2000);
+        }
+
+        // ===============================
+        // Data Table & Downloads
+        // ===============================
+        function renderDataTable(data) {
+            if(data.length === 0) {
+                document.getElementById('tableHead').innerHTML = `<tr><th class="px-5 py-3 font-black">No records found for selected filters.</th></tr>`;
+                document.getElementById('tableBody').innerHTML = ``;
+                return;
+            }
+            const thead = document.getElementById('tableHead');
+            const tbody = document.getElementById('tableBody');
+            
+            const headers = Object.keys(data[0]).filter(k => k !== '_color');
+            thead.innerHTML = `<tr>${headers.map(h => `<th class="px-4 py-3 border-b border-slate-200">${h}</th>`).join('')}</tr>`;
+            
+            const displayData = data.slice(0, 100);
+            tbody.innerHTML = displayData.map(row => {
+                const rowColor = row._color;
+                
+                return `<tr class="hover:bg-slate-50 border-b border-slate-100 bg-white transition-colors">
+                    ${headers.map(h => {
+                        let val = row[h];
+                        if (h === 'Water Quality Status') {
+                            if (val === 'No Data') {
+                                return `<td class="px-4 py-2"><span class="px-2 py-0.5 text-[10px] rounded font-bold bg-slate-100 text-slate-500 border border-slate-200 shadow-sm">${val}</span></td>`;
+                            }
+                            return `<td class="px-4 py-2">
+                                <span class="px-2 py-0.5 text-[10px] rounded font-bold shadow-sm" style="background-color: ${rowColor}15; color: ${rowColor}; border: 1px solid ${rowColor}40;">${val}</span>
+                            </td>`;
+                        }
+                        return `<td class="px-4 py-2 truncate max-w-[150px] text-slate-600 font-medium">${val !== null ? val : '-'}</td>`;
+                    }).join('')}
+                </tr>`;
+            }).join('');
+            
+            if(data.length > 100) {
+                tbody.innerHTML += `<tr><td colspan="${headers.length}" class="text-center py-4 text-indigo-600 font-bold text-xs bg-slate-50">Showing top 100 rows.</td></tr>`;
+            }
+        }
+
+        downloadBtn.addEventListener('click', async () => {
+            if(currentFilteredData.length === 0) return;
+            
+            const btn = document.getElementById('downloadBtn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Exporting...';
+            btn.disabled = true;
+
+            try {
+                // Initialize ExcelJS Workbook
+                const wb = new ExcelJS.Workbook();
+                const ws = wb.addWorksheet("WQI_GeoResults");
+
+                // Extract headers (ignoring internal system variables)
+                const headers = Object.keys(currentFilteredData[0]).filter(k => k !== '_color');
+                
+                // FIX: Column-based formatting to prevent OOM errors for 24,000+ rows
+                ws.columns = headers.map(h => {
+                    return {
+                        header: h,
+                        key: h,
+                        width: 18,
+                        style: {
+                            font: { name: 'Times New Roman', size: 12 },
+                            alignment: { wrapText: true, vertical: 'middle' },
+                            border: {
+                                top: { style: 'thin' }, left: { style: 'thin' }, 
+                                bottom: { style: 'thin' }, right: { style: 'thin' }
+                            }
+                        }
+                    };
+                });
+
+                // Style Header Row (Black fill, White Bold Text, Times New Roman 12)
+                const headerRow = ws.getRow(1);
+                headerRow.eachCell((cell) => {
+                    cell.font = { name: 'Times New Roman', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF000000' } };
+                    cell.alignment = { wrapText: true, vertical: 'middle', horizontal: 'center' };
+                });
+
+                // Add Data Rows efficiently
+                for (let i = 0; i < currentFilteredData.length; i++) {
+                    const rowData = currentFilteredData[i];
+                    const addedRow = ws.addRow(rowData);
+                    
+                    let hexCode = rowData._color ? 'FF' + rowData._color.replace('#', '').toUpperCase() : 'FFFFFFFF';
+
+                    // Apply fill efficiently
+                    addedRow.eachCell({ includeEmpty: false }, (cell) => {
+                        cell.fill = {
+                            type: 'pattern',
+                            pattern: 'solid',
+                            fgColor: { argb: hexCode }
+                        };
+                    });
+                }
+
+                // Generate Buffer and Trigger Download
+                const buffer = await wb.xlsx.writeBuffer();
+                const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'WQI_Spatial_Formatted_Results.xlsx';
+                a.click();
+                window.URL.revokeObjectURL(url);
+
+            } catch (err) {
+                console.error("Export Error:", err);
+                showAlert('error', 'Export Failed', 'An error occurred while generating the Excel file.');
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        });
+
+        document.getElementById('templateBtn').addEventListener('click', () => {
+            const activeParams = Object.keys(paramConfig).filter(p => paramConfig[p].selected);
+            
+            const userColumns = [
+                "CHQ Sl. No.", "S. No.", "Well ID", "State", "District", "Block", "Gram Panchayat", 
+                "Village Name", "Location", "Location_Details", "Latitude (Degree-Decimal)", 
+                "Longitude (Degree-Decimal)", "Well_Type (Dug Well/Bore Well/Tube Well/Dug-cum-Bore Well/Spring)", 
+                "Well_Sub_Type (If Well type is Dug Well or Spring, then left Blank otherwise Piezometer/Exploratory)", 
+                "Well_Utilisation (Irrigation/Drinking/Irrigation+Drinking)", "Depth_of_Well (in meter)", 
+                "Aquifer Tapped", "Well Use (WQ Monitoring/Both WL + WQ Monitoring)", 
+                "Water level (mbgl) at the time of sample collection, if available", 
+                "Date of Sample Collection (DD/MM/YYYY)", "Date of Sample Analysis (DD/MM/YYYY)"
+            ];
+
+            const chemicalColumns = Object.keys(paramConfig).map(p => paramConfig[p].keywords[1] || p);
+
+            const templateData = [
+                { 
+                    "CHQ Sl. No.": 1, "S. No.": 1, "Well ID": "W-01", "State": "Karnataka", "District": "Bangalore", 
+                    "Block": "North", "Gram Panchayat": "GP1", "Village Name": "Village A", "Location": "Loc A", 
+                    "Location_Details": "Near school", "Latitude (Degree-Decimal)": 12.9716, "Longitude (Degree-Decimal)": 77.5946, 
+                    "Well_Type (Dug Well/Bore Well/Tube Well/Dug-cum-Bore Well/Spring)": "Dug Well",
+                    "Well_Sub_Type (If Well type is Dug Well or Spring, then left Blank otherwise Piezometer/Exploratory)": "",
+                    "Well_Utilisation (Irrigation/Drinking/Irrigation+Drinking)": "Drinking",
+                    "Depth_of_Well (in meter)": 15.5, "Aquifer Tapped": "Phreatic", "Well Use (WQ Monitoring/Both WL + WQ Monitoring)": "Both",
+                    "Water level (mbgl) at the time of sample collection, if available": 5.2,
+                    "Date of Sample Collection (DD/MM/YYYY)": "15/05/2026", "Date of Sample Analysis (DD/MM/YYYY)": "17/05/2026"
+                },
+                { 
+                    "CHQ Sl. No.": 2, "S. No.": 2, "Well ID": "W-02", "State": "Maharashtra", "District": "Pune", 
+                    "Block": "Haveli", "Gram Panchayat": "GP2", "Village Name": "Village B", "Location": "Loc B", 
+                    "Location_Details": "Near hospital", "Latitude (Degree-Decimal)": 18.5204, "Longitude (Degree-Decimal)": 73.8567, 
+                    "Well_Type (Dug Well/Bore Well/Tube Well/Dug-cum-Bore Well/Spring)": "Bore Well",
+                    "Well_Sub_Type (If Well type is Dug Well or Spring, then left Blank otherwise Piezometer/Exploratory)": "Piezometer",
+                    "Well_Utilisation (Irrigation/Drinking/Irrigation+Drinking)": "Irrigation+Drinking",
+                    "Depth_of_Well (in meter)": 60.0, "Aquifer Tapped": "Fractured", "Well Use (WQ Monitoring/Both WL + WQ Monitoring)": "WQ Monitoring",
+                    "Water level (mbgl) at the time of sample collection, if available": 12.8,
+                    "Date of Sample Collection (DD/MM/YYYY)": "16/05/2026", "Date of Sample Analysis (DD/MM/YYYY)": "18/05/2026"
+                }
+            ];
+
+            templateData.forEach((row, index) => {
+                Object.keys(paramConfig).forEach(p => {
+                    const colName = paramConfig[p].keywords[1] || p;
+                    let val;
+                    if (p === 'pH') {
+                        val = index === 0 ? 7.2 : 8.1;
+                    } else {
+                        val = parseFloat((paramConfig[p].standard * (index === 0 ? 0.8 : 1.2)).toFixed(3));
+                    }
+                    row[colName] = val;
+                });
+            });
+
+            const allHeaders = [...userColumns, ...chemicalColumns];
+            
+            const ws = XLSX.utils.json_to_sheet(templateData, { header: allHeaders });
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Template");
+            XLSX.writeFile(wb, "CGWB_WQI_Template.xlsx");
+        });
+
+        // UI Helpers
+        function switchTab(tabId) {
+            ['mapTab', 'analyticsTab', 'dataTab', 'methodologyTab'].forEach(id => {
+                let el = document.getElementById(id);
+                if (el) el.classList.add('hidden');
+            });
+            ['btn-mapTab', 'btn-analyticsTab', 'btn-dataTab', 'btn-methodologyTab'].forEach(id => {
+                let el = document.getElementById(id);
+                if (el) {
+                    el.classList.remove('tab-active');
+                    el.classList.add('tab-inactive');
+                }
+            });
+            
+            let targetContent = document.getElementById(tabId);
+            if (targetContent) {
+                targetContent.classList.remove('hidden');
+                if (tabId === 'analyticsTab' || tabId === 'dataTab' || tabId === 'methodologyTab') {
+                    targetContent.classList.add('flex');
+                }
+            }
+            
+            let targetBtn = document.getElementById('btn-' + tabId);
+            if (targetBtn) {
+                targetBtn.classList.add('tab-active');
+                targetBtn.classList.remove('tab-inactive');
+            }
+            
+            if(tabId === 'mapTab' && map) setTimeout(() => map.invalidateSize(), 100);
+            if(tabId === 'analyticsTab' && activeDonutChart) setTimeout(() => activeDonutChart.reflow(), 100);
+        }
+
+        function showAlert(type, title, message) {
+            const box = document.getElementById('alertBox');
+            const icon = document.getElementById('alertIcon');
+            box.classList.remove('border-red-500', 'border-emerald-500', 'border-amber-500', 'hidden');
+            
+            if(type==='error'){ box.classList.add('border-red-500'); icon.className='fas fa-times-circle text-red-500 mt-0.5 mr-2 text-sm'; document.getElementById('alertTitle').className="text-xs font-bold text-red-400";}
+            if(type==='success'){ box.classList.add('border-emerald-500'); icon.className='fas fa-check-circle text-emerald-500 mt-0.5 mr-2 text-sm'; document.getElementById('alertTitle').className="text-xs font-bold text-emerald-400";}
+            if(type==='warning'){ box.classList.add('border-amber-500'); icon.className='fas fa-exclamation-triangle text-amber-500 mt-0.5 mr-2 text-sm'; document.getElementById('alertTitle').className="text-xs font-bold text-amber-400";}
+
+            document.getElementById('alertTitle').textContent = title;
+            document.getElementById('alertMessage').textContent = message;
+            box.classList.remove('hidden');
+            
+            if(type === 'success') setTimeout(() => box.classList.add('hidden'), 5000);
+        }
+
+        function toggleMapFullscreen() {
+            const mapTab = document.getElementById('mapTab');
+            if (!document.fullscreenElement) {
+                if (mapTab.requestFullscreen) {
+                    mapTab.requestFullscreen().catch(err => {
+                        showAlert('error', 'Fullscreen Error', 'Cannot enable fullscreen mode.');
+                    });
+                } else if (mapTab.webkitRequestFullscreen) { /* Safari */
+                    mapTab.webkitRequestFullscreen();
+                } else if (mapTab.msRequestFullscreen) { /* IE11 */
+                    mapTab.msRequestFullscreen();
+                }
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                } else if (document.webkitExitFullscreen) { /* Safari */
+                    document.webkitExitFullscreen();
+                } else if (document.msExitFullscreen) { /* IE11 */
+                    document.msExitFullscreen();
+                }
+            }
+        }
+
+        document.addEventListener('fullscreenchange', (event) => {
+            const btn = document.getElementById('fsToggleBtn');
+            if (document.fullscreenElement) {
+                if (btn) btn.innerHTML = '<i class="fas fa-compress w-4"></i> Exit Fullscreen';
+            } else {
+                if (btn) btn.innerHTML = '<i class="fas fa-expand w-4"></i> Fullscreen Map';
+            }
+            if (map) {
+                setTimeout(() => { map.invalidateSize(); }, 300);
+            }
+        });
+
+        function hideAlert() { document.getElementById('alertBox').classList.add('hidden'); }
+
+        // Boot
+        initApp();
+    </script>
+</body>
+</html>

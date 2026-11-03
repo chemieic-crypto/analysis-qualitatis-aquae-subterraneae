@@ -382,10 +382,15 @@ export function CombinationAnalysisView({
     if (!L || !mapRef.current) return;
 
     if (mapInstanceRef.current) {
-      mapInstanceRef.current.remove();
+      try {
+        mapInstanceRef.current.remove();
+      } catch {}
       mapInstanceRef.current = null;
     }
 
+    if ((mapRef.current as any)._leaflet_id) {
+      delete (mapRef.current as any)._leaflet_id;
+    }
     mapRef.current.innerHTML = "";
 
     const map = L.map(mapRef.current, {
@@ -398,7 +403,9 @@ export function CombinationAnalysisView({
 
     return () => {
       if (mapInstanceRef.current) {
-        mapInstanceRef.current.remove();
+        try {
+          mapInstanceRef.current.remove();
+        } catch {}
         mapInstanceRef.current = null;
       }
     };

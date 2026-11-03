@@ -1,7 +1,26 @@
-import React, { useState, useMemo, useRef } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import { ProcessedSample } from "../utils/usslMath";
 import UsslLabelsEditor, { LabelConfig } from "./UsslLabelsEditor";
-import { sanitizeColorsForHtml2canvas, safeHtml2canvas } from "../utils/colorSanitizer";
+import LegendBoxEditor, { LegendConfig, DEFAULT_USSL_LEGEND_CONFIG } from "./LegendBoxEditor";
+import {
+  PointSymbol,
+  PointSymbolShape,
+  PointSymbolIcon,
+} from "./PointSymbol";
+import PointSymbolsEditor from "./PointSymbolsEditor";
+import {
+  DIAGRAM_LINE_TEMPLATES,
+  DiagramLineTheme,
+  DEFAULT_DIAGRAM_TEMPLATE,
+  TitleFormattingConfig,
+  DEFAULT_TITLE_CONFIG,
+  DiagramPageOrientation,
+  PAGE_ORIENTATION_CONFIGS
+} from "../types/diagramTemplates";
+import { exportDiagram, CropBoxDimensions } from "../utils/diagramExport";
+import { DiagramToolbarStudio, SimpleTitleEditorModal } from "./DiagramToolbarStudio";
+import DiagramBorderEditor, { DiagramBorderConfig, DEFAULT_PIPER_BORDER_CONFIG, DiagramBorderFrame } from "./DiagramBorderEditor";
+import { Move } from "lucide-react";
 
 function darkenColor(hex: string, percent = 30): string {
   if (!hex || hex.length < 6) return "#1e293b";
@@ -29,9 +48,15 @@ interface UsslDiagramProps {
   stateHeader: string;
   is3d?: boolean;
   bubbleSizeMultiplier?: number;
+  onBubbleSizeMultiplierChange?: (size: number) => void;
   customTitle?: string;
   showLocationLabels?: boolean;
   showAllPoints?: boolean;
+  pointSymbols?: Record<string, PointSymbol>;
+  onPointSymbolsChange?: (symbols: Record<string, PointSymbol>) => void;
+  defaultSymbol?: PointSymbol;
+  onDefaultSymbolChange?: (sym: PointSymbol) => void;
+  activeSpatialText?: string;
 }
 
 export const UsslDiagram = React.memo(({
@@ -41,15 +66,55 @@ export const UsslDiagram = React.memo(({
   getPointKey,
   stateHeader,
   is3d = true,
-  bubbleSizeMultiplier = 1,
+  bubbleSizeMultiplier = 1.3,
+  onBubbleSizeMultiplierChange,
   customTitle,
   showLocationLabels = false,
   showAllPoints = true,
+  pointSymbols,
+  onPointSymbolsChange,
+  defaultSymbol = "circle",
+  onDefaultSymbolChange,
+  activeSpatialText,
 }: UsslDiagramProps) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const margin = { top: 50, right: 30, bottom: 50, left: 60 };
   const width = 500;
   const height = 400;
+
+  // 7 Base Line Color Templates (Monochrome, Cobalt, Indigo, Emerald, Crimson, Bronze, Slate)
+  const [currentTheme, setCurrentTheme] = useState<DiagramLineTheme>(DEFAULT_DIAGRAM_TEMPLATE);
+
+  // Formattable Simple Title (Crisp, flat typography without emboss/deboss)
+  const [isTitleModalOpen, setIsTitleModalOpen] = useState(false);
+  const [titleConfig, setTitleConfig] = useState<TitleFormattingConfig>({
+    text: customTitle || "USSL Classification Matrix",
+    size: 13.5,
+    color: "#0f172a",
+    isBold: true,
+    isItalic: false,
+    fontFamily: "'Inter', system-ui, sans-serif",
+    alignment: "center"
+  });
+
+  useEffect(() => {
+    if (customTitle) {
+      setTitleConfig((p) => ({ ...p, text: customTitle }));
+    }
+  }, [customTitle]);
+
+  // Symbol management states
+  const [localPointSymbols, setLocalPointSymbols] = useState<Record<string, PointSymbol>>({});
+  const [localDefaultSymbol, setLocalDefaultSymbol] = useState<PointSymbol>(defaultSymbol);
+  const [editingSymbols, setEditingSymbols] = useState(false);
+
+  useEffect(() => {
+    if (defaultSymbol) setLocalDefaultSymbol(defaultSymbol);
+  }, [defaultSymbol]);
+
+  useEffect(() => {
+    if (pointSymbols) setLocalPointSymbols(pointSymbols);
+  }, [pointSymbols]);
 
   const [labelsConfig, setLabelsConfig] = useState<Record<string, LabelConfig>>({
     title: { text: customTitle || "USSL Classification Matrix", size: 14, color: "#1e293b", isBold: true, isItalic: false },
@@ -57,16 +122,119 @@ export const UsslDiagram = React.memo(({
     yAxis: { text: "SAR", size: 12, color: "#475569", isBold: true, isItalic: false },
   });
 
-  React.useEffect(() => {
-    if (customTitle) {
-      setLabelsConfig(prev => ({
-        ...prev,
-        title: { ...prev.title, text: customTitle }
-      }));
-    }
-  }, [customTitle]);
   const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [title3dEffect, setTitle3dEffect] = useState<"none" | "emboss" | "deboss">("emboss");
+
+  const [localPointSize, setLocalPointSize] = useState<number>(bubbleSizeMultiplier ?? 1.3);
+  React.useEffect(() => {
+    if (bubbleSizeMultiplier !== undefined) {
+      setLocalPointSize(bubbleSizeMultiplier);
+    }
+  }, [bubbleSizeMultiplier]);
+
+  const handlePointSizeChange = (val: number) => {
+    const clamped = Math.max(0.1, Math.min(3, Number(val.toFixed(1))));
+    setLocalPointSize(clamped);
+    onBubbleSizeMultiplierChange?.(clamped);
+  };
+
+  const DEFAULT_TITLE_POS = { x: width / 2, y: 25 };
+  const [titlePos, setTitlePos] = useState<{ x: number; y: number }>(DEFAULT_TITLE_POS);
+  const [isDraggingTitle, setIsDraggingTitle] = useState(false);
+  const [titleDragOffset, setTitleDragOffset] = useState({ x: 0, y: 0 });
+  const titleDragStartPos = useRef<{ x: number; y: number } | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const fullscreenSvgRef = useRef<SVGSVGElement>(null);
+
+  // Legend Box Config (1, 2, 3, 4 cols, outer boundary color/thickness, no boundary, fonts)
+  const [legendConfig, setLegendConfig] = useState<LegendConfig>(DEFAULT_USSL_LEGEND_CONFIG);
+  const [editingLegend, setEditingLegend] = useState(false);
+  const [diagramPadding, setDiagramPadding] = useState<number>(20);
+  const [outerLineWidth, setOuterLineWidth] = useState<number>(1.8);
+  const [borderConfig, setBorderConfig] = useState<DiagramBorderConfig>(DEFAULT_PIPER_BORDER_CONFIG);
+  const [editingBorder, setEditingBorder] = useState<boolean>(false);
+  const [isAdjustingBorder, setIsAdjustingBorder] = useState<boolean>(false); // 10: Normal, 25: Spacious, 50: Wide, 80: Max
+  const DEFAULT_LEGEND_POS = { x: 250, y: 48 };
+  const [legendPos, setLegendPos] = useState<{ x: number; y: number }>(DEFAULT_LEGEND_POS);
+  const [isDraggingLegend, setIsDraggingLegend] = useState(false);
+
+  const handleLegendPointerDown = (e: React.PointerEvent<any>, targetSvg: SVGSVGElement | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!targetSvg) return;
+
+    const startClientX = e.clientX;
+    const startClientY = e.clientY;
+    const startLegendX = legendPos.x;
+    const startLegendY = legendPos.y;
+
+    const onPointerMove = (moveEv: PointerEvent) => {
+      moveEv.preventDefault();
+      const dx = moveEv.clientX - startClientX;
+      const dy = moveEv.clientY - startClientY;
+      const ctm = targetSvg.getScreenCTM();
+      if (!ctm) return;
+      const svgDx = dx / ctm.a;
+      const svgDy = dy / ctm.d;
+
+      setLegendPos({
+        x: Math.round(startLegendX + svgDx),
+        y: Math.round(startLegendY + svgDy),
+      });
+    };
+
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      setIsDraggingLegend(false);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    setIsDraggingLegend(true);
+  };
+
+  const handleTitlePointerDown = (e: React.PointerEvent<any>, targetSvg: SVGSVGElement | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!targetSvg) return;
+
+    const startClientX = e.clientX;
+    const startClientY = e.clientY;
+    const startTitleX = titlePos.x;
+    const startTitleY = titlePos.y;
+    let hasMoved = false;
+
+    const onPointerMove = (moveEv: PointerEvent) => {
+      moveEv.preventDefault();
+      const dx = moveEv.clientX - startClientX;
+      const dy = moveEv.clientY - startClientY;
+      if (Math.hypot(dx, dy) > 3) {
+        hasMoved = true;
+      }
+      const ctm = targetSvg.getScreenCTM();
+      if (!ctm) return;
+      const svgDx = dx / ctm.a;
+      const svgDy = dy / ctm.d;
+
+      setTitlePos({
+        x: Math.round(startTitleX + svgDx),
+        y: Math.round(startTitleY + svgDy),
+      });
+    };
+
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      setIsDraggingTitle(false);
+      if (!hasMoved) {
+        setEditingKey("title");
+      }
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    setIsDraggingTitle(true);
+  };
 
   // Downsampling logic (allows plotting up to 50,000 points without dropping locations)
   const maxSafePoints = showAllPoints ? 50000 : 25000;
@@ -217,68 +385,61 @@ export const UsslDiagram = React.memo(({
     document.addEventListener("touchend", onEnd);
   };
 
-  const downloadChartHD = async (elementId: string, filename: string) => {
-    const el = document.getElementById(elementId);
-    if (!el) return;
-    try {
-      const canvas = await safeHtml2canvas(el, {
-        scale: 3,
-        backgroundColor: "#ffffff",
-        logging: false,
-        useCORS: true,
-        onclone: (clonedDoc) => {
-          sanitizeColorsForHtml2canvas(clonedDoc);
-          const cropOverlay = clonedDoc.getElementById("draggable-crop-box");
-          if (cropOverlay) {
-            cropOverlay.remove();
-          }
-        },
-      });
+  // A4 Page Orientation (fit | a4_portrait | a4_landscape)
+  const [pageOrientation, setPageOrientation] = useState<DiagramPageOrientation>("fit");
+  const [showLegendTile, setShowLegendTile] = useState<boolean>(true);
 
-      let finalCanvas = canvas;
-      if (isCropActive) {
-        const rect = el.getBoundingClientRect();
-        const scaleX = canvas.width / (rect.width || el.offsetWidth || 1);
-        const scaleY = canvas.height / (rect.height || el.offsetHeight || 1);
-
-        const cropCanvas = document.createElement("canvas");
-        cropCanvas.width = cropBox.width * scaleX;
-        cropCanvas.height = cropBox.height * scaleY;
-        const cropCtx = cropCanvas.getContext("2d");
-        if (cropCtx) {
-          cropCtx.drawImage(
-            canvas,
-            cropBox.x * scaleX,
-            cropBox.y * scaleY,
-            cropBox.width * scaleX,
-            cropBox.height * scaleY,
-            0,
-            0,
-            cropBox.width * scaleX,
-            cropBox.height * scaleY
-          );
-          finalCanvas = cropCanvas;
-        }
-      }
-
-      const link = document.createElement("a");
-      link.download = `${filename}_${Date.now()}.jpeg`;
-      link.href = finalCanvas.toDataURL("image/jpeg", 1.0);
-      link.click();
-    } catch (err) {
-      console.error("HD Download failed", err);
-    }
+  const handleExport = (format: "jpeg" | "png" | "svg", transparent: boolean, elementId = "ussl-chart-export") => {
+    exportDiagram({
+      elementId,
+      filename: "USSL_Classification_Matrix",
+      format,
+      transparent,
+      scale: 3,
+      isCropActive,
+      cropBox,
+      orientation: pageOrientation,
+      svgElement: elementId.includes("fs") ? fullscreenSvgRef.current : svgRef.current
+    });
   };
 
+  // Active Legend Items computed strictly from the filtered data samples!
+  // This guarantees only states, districts, blocks, and locations present in the active filter are shown.
+  const activeLegendItems = useMemo(() => {
+    const keysInFilteredData = new Set<string>();
+    data.forEach((d) => {
+      const k = getPointKey(d);
+      if (k && k !== "Unknown" && k.trim() !== "") {
+        keysInFilteredData.add(k);
+      }
+    });
+
+    const keys = keysInFilteredData.size > 0
+      ? Array.from(keysInFilteredData).sort()
+      : Object.keys(pointColors || {});
+
+    const curSymbols = pointSymbols || localPointSymbols;
+    const curDefSym = defaultSymbol || localDefaultSymbol;
+
+    return keys.map((key) => ({
+      key,
+      label: key, // Full name without any truncation!
+      color: pointColors[key] || "#3b82f6",
+      symbol: curSymbols[key] || curDefSym,
+    }));
+  }, [data, getPointKey, pointColors, pointSymbols, localPointSymbols, defaultSymbol, localDefaultSymbol]);
+
   const renderedPoints = useMemo(() => {
+    const curSymbols = pointSymbols || localPointSymbols;
+    const curDefSym = defaultSymbol || localDefaultSymbol;
+
     return displayData.map((d, i) => {
       if (d._calc.ussl === "Unknown" || !d._calc.hasUSSL) return null;
       const key = getPointKey(d);
       const color = pointColors[key] || "#3b82f6";
-      let radius = pointSizes ? pointSizes[key] || 1.3 : 1.3;
-      if (is3d) {
-        radius *= bubbleSizeMultiplier;
-      }
+      const sym = curSymbols[key] || curDefSym;
+      const baseMult = pointSizes && pointSizes[key] ? (pointSizes[key] / 1.3) : 1;
+      const radius = Math.max(0.1, Math.min(6, Number((localPointSize * baseMult).toFixed(2))));
       const stateStr = stateHeader ? d[stateHeader] : d.State || d.STATE;
       const locNameStr = d._calc?.locName || d.Location || d.LOCATION || d.Site || `Loc #${i + 1}`;
       const bubbleId = `bubble-${String(color).replace(/#/g, "")}`;
@@ -290,18 +451,19 @@ export const UsslDiagram = React.memo(({
 
       return (
         <g key={i} className="cursor-pointer">
-          <circle
+          <PointSymbolShape
             cx={cx}
             cy={cy}
             r={radius}
+            symbol={sym}
             fill={fillValue}
-            fillOpacity="0.92"
             stroke={strokeVal}
             strokeWidth={strokeW}
+            opacity={0.92}
+            is3d={is3d}
             className="transition-all duration-300 hover:opacity-100 cursor-pointer"
-          >
-            <title>{`${locNameStr}\nEC: ${d._calc.ecVal}\nSAR: ${d._calc.sar.toFixed(2)}` + (stateStr ? `\nState: ${stateStr}` : "")}</title>
-          </circle>
+            title={`${locNameStr}\nEC: ${d._calc.ecVal}\nSAR: ${d._calc.sar.toFixed(2)}` + (stateStr ? `\nState: ${stateStr}` : "")}
+          />
           {showLocationLabels && (
             <text
               x={cx + radius + 1.2}
@@ -318,55 +480,227 @@ export const UsslDiagram = React.memo(({
         </g>
       );
     });
-  }, [displayData, pointColors, pointSizes, getPointKey, stateHeader, is3d, bubbleSizeMultiplier, showLocationLabels]);
+  }, [displayData, pointColors, pointSizes, getPointKey, stateHeader, is3d, localPointSize, showLocationLabels, pointSymbols, localPointSymbols, defaultSymbol, localDefaultSymbol]);
+
+  // Render In-Chart Legend Box (1, 2, 3, 4 columns, outer boundary color/thickness, no boundary, fonts, and full names without truncation)
+  const renderInChartLegend = (targetSvg: SVGSVGElement | null) => {
+    if (!legendConfig.show || legendConfig.style !== "in-chart" || activeLegendItems.length === 0) return null;
+    const cols = legendConfig.columns || 1;
+    
+    // Dynamic column width calculation to display FULL names without truncation
+    const maxTextLen = Math.max(...activeLegendItems.map((it) => it.label.length), 6);
+    const charWidth = legendConfig.fontSize * 0.58;
+    const symbolSpace = Math.max(7, legendConfig.fontSize * 1.5) + 3;
+    const neededColWidth = Math.ceil(maxTextLen * charWidth + symbolSpace + 5);
+    const minColWidth = cols === 1 ? 84 : cols === 2 ? 62 : cols === 3 ? 50 : 42;
+    const colWidth = Math.max(minColWidth, neededColWidth);
+    const itemHeight = Math.max(8.5, legendConfig.fontSize * 1.6);
+    const numRows = Math.ceil(activeLegendItems.length / cols);
+    const padX = 6;
+    const padY = 5;
+    const boxWidth = padX * 2 + cols * colWidth;
+    const boxHeight = padY * 2 + numRows * itemHeight;
+
+    return (
+      <g
+        transform={`translate(${legendPos.x}, ${legendPos.y})`}
+        style={{
+          cursor: isDraggingLegend ? "grabbing" : "grab",
+          userSelect: "none",
+        }}
+        onPointerDown={(e) => handleLegendPointerDown(e, targetSvg)}
+      >
+        <rect
+          x={0}
+          y={0}
+          width={boxWidth}
+          height={boxHeight}
+          fill={legendConfig.backgroundColor}
+          fillOpacity={legendConfig.backgroundOpacity}
+          stroke={legendConfig.showBorder ? legendConfig.borderColor : "none"}
+          strokeWidth={legendConfig.showBorder ? legendConfig.borderThickness : 0}
+          strokeDasharray={
+            legendConfig.showBorder && legendConfig.borderStyle === "dashed"
+              ? "3 1.5"
+              : legendConfig.showBorder && legendConfig.borderStyle === "dotted"
+              ? "1 1"
+              : undefined
+          }
+          rx={legendConfig.borderRadius}
+        />
+        {activeLegendItems.map((it, idx) => {
+          const colIdx = idx % cols;
+          const rowIdx = Math.floor(idx / cols);
+          const itemX = padX + colIdx * colWidth;
+          const itemY = padY + rowIdx * itemHeight + itemHeight * 0.65;
+          const displayLabel = it.label; // Full name, no dots!
+          const bubbleId = `bubble-${String(it.color).replace(/#/g, "")}`;
+          const fillVal = is3d ? `url(#${bubbleId})` : it.color;
+
+          return (
+            <g key={it.key}>
+              <PointSymbolShape
+                cx={itemX + 3.5}
+                cy={itemY - itemHeight * 0.28}
+                r={Math.max(1.8, legendConfig.fontSize * 0.42)}
+                symbol={it.symbol}
+                fill={fillVal}
+                stroke={is3d ? "rgba(255,255,255,0.7)" : "#ffffff"}
+                strokeWidth={0.4}
+                is3d={is3d}
+              />
+              <text
+                x={itemX + symbolSpace}
+                y={itemY}
+                fontSize={legendConfig.fontSize}
+                fontWeight={legendConfig.isBold ? "bold" : "normal"}
+                fontStyle={legendConfig.isItalic ? "italic" : "normal"}
+                fontFamily={legendConfig.fontFamily}
+                fill={legendConfig.textColor}
+              >
+                {displayLabel}
+              </text>
+            </g>
+          );
+        })}
+      </g>
+    );
+  };
 
   return (
     <div className="bg-transparent p-6 flex flex-col items-center w-full transition-colors duration-300 relative group">
-      <div className="absolute top-4 right-4 opacity-80 group-hover:opacity-100 transition-opacity z-10 flex gap-2">
-        <button
-          onClick={() => setIsCropActive(!isCropActive)}
-          className={`p-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition-all border-b-4 active:border-b-0 active:translate-y-1 ${
-            isCropActive
-              ? "bg-amber-500 text-white border-amber-600 hover:bg-amber-600"
-              : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-amber-100 hover:text-amber-800 hover:border-amber-300"
-          }`}
-          title="Select Crop Area for JPEG export"
+      {/* Legend & Display Toolbar Bar */}
+      <div className="w-full max-w-[720px] mb-3 relative z-30">
+        <DiagramToolbarStudio
+          currentTheme={currentTheme}
+          onThemeChange={setCurrentTheme}
+          onExport={handleExport}
+          isCropActive={isCropActive}
+          onToggleCrop={() => setIsCropActive(!isCropActive)}
+          titleConfig={titleConfig}
+          onOpenTitleEditor={() => setIsTitleModalOpen(true)}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={() => setIsFullscreen(true)}
+          activeSpatialText={activeSpatialText}
+          pointSize={localPointSize}
+          onPointSizeChange={handlePointSizeChange}
+          orientation={pageOrientation}
+          onOrientationChange={setPageOrientation}
+          showLegendTile={showLegendTile}
+          onToggleLegendTile={() => setShowLegendTile(!showLegendTile)}
+          outerLineWidth={outerLineWidth}
+          onOuterLineWidthChange={setOuterLineWidth}
+          borderConfig={borderConfig}
+          onBorderConfigChange={setBorderConfig}
+          onOpenBorderEditor={() => setEditingBorder(true)}
+          isAdjustingBorder={isAdjustingBorder}
+          onToggleAdjustBorder={() => setIsAdjustingBorder((p) => !p)}
         >
-          <i className="ph ph-crop text-lg"></i>
-          <span className="text-[10px] font-bold uppercase tracking-wider">{isCropActive ? "Deactivate" : "Crop"}</span>
-        </button>
-        <div className="flex items-center gap-1.5 bg-slate-100 rounded-xl px-2 py-1.5 border border-slate-200 shadow-sm">
-          <span className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-1">Title 3D:</span>
-          <select
-            value={title3dEffect}
-            onChange={(e) => setTitle3dEffect(e.target.value as any)}
-            className="text-[10px] font-bold bg-white text-slate-700 border border-slate-200 rounded-lg px-2 py-0.5 focus:outline-none cursor-pointer"
+          {/* Format Legend Studio */}
+          <button
+            onClick={() => setEditingLegend(true)}
+            className="bg-white hover:bg-slate-50 text-slate-700 px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-black flex items-center gap-1 shadow-2xs transition-all"
+            title="Format Legend Box (Border, Fonts, Columns)"
           >
-            <option value="none">None</option>
-            <option value="emboss">Bevel & Emboss</option>
-            <option value="deboss">Deboss</option>
-          </select>
-        </div>
-        <button
-          onClick={() => downloadChartHD("ussl-chart-export", "USSL_Diagram")}
-          className="bg-slate-100 text-slate-600 hover:bg-slate-600 hover:text-white p-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition-all border-b-4 border-slate-200 hover:border-slate-800 active:border-b-0 active:translate-y-1"
-          title="Download HD JPEG"
-        >
-          <i className="ph ph-camera text-lg"></i>
-        </button>
-        <button
-          onClick={() => setIsFullscreen(true)}
-          className="bg-slate-100 text-slate-600 hover:bg-indigo-600 hover:text-white p-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition-all border-b-4 border-slate-200 hover:border-indigo-800 active:border-b-0 active:translate-y-1"
-          title="Full Screen View"
-        >
-          <i className="ph ph-corners-out text-lg"></i>
-        </button>
+            <span>Legend Box</span>
+          </button>
+
+          {/* Toggle Legend Position */}
+          <button
+            onClick={() =>
+              setLegendConfig((prev) => ({
+                ...prev,
+                style: prev.style === "in-chart" ? "bottom" : prev.style === "bottom" ? "none" : "in-chart",
+                show: prev.style === "none" ? true : prev.show,
+              }))
+            }
+            className="bg-white hover:bg-slate-50 text-slate-700 px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-bold shadow-2xs"
+          >
+            {legendConfig.style === "in-chart" ? "In-Chart" : legendConfig.style === "bottom" ? "Bottom" : "Legend Off"}
+          </button>
+
+          {/* Point Symbols Button */}
+          <button
+            onClick={() => setEditingSymbols(true)}
+            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 transition-all shadow-2xs"
+            title="Point Symbols & Shapes Formatting"
+          >
+            <PointSymbolIcon
+              symbol={defaultSymbol || localDefaultSymbol}
+              color="#4f46e5"
+              size={12}
+              stroke="#ffffff"
+            />
+            <span>Symbols</span>
+          </button>
+
+          {/* Diagram Area Margin */}
+          <div className="flex items-center gap-1 bg-white px-2 py-1 rounded-xl border border-slate-200 shadow-2xs" title="Adjust Chart Margin Space">
+            <span className="text-[9px] font-black uppercase text-slate-400">Pad:</span>
+            {[
+              { label: "Normal", pad: 15 },
+              { label: "Spacious", pad: 30 },
+              { label: "Wide", pad: 55 }
+            ].map((opt) => (
+              <button
+                key={opt.pad}
+                onClick={() => setDiagramPadding(opt.pad)}
+                className={`px-1.5 py-0.5 rounded-lg text-[9.5px] font-bold transition-all ${
+                  diagramPadding === opt.pad
+                    ? "bg-indigo-600 text-white shadow-2xs"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </DiagramToolbarStudio>
       </div>
 
-      <div className="absolute top-4 left-6 z-10 flex items-center gap-2 bg-slate-50 text-slate-600 px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm opacity-80 hover:opacity-100 transition-opacity">
-        <i className="ph ph-hand-grabbing"></i>
-        <span className="text-[9px] font-bold uppercase tracking-wider">Click titles or axes to edit</span>
+      <div className="flex items-center gap-2 bg-emerald-50 text-emerald-800 px-3 py-1 rounded-xl border border-emerald-200 text-[10px] font-extrabold mb-1">
+        <i className="ph ph-hand-grabbing text-sm"></i>
+        <span>Mouse Drag Active: Click & drag Title or Legend box anywhere on the USSL diagram</span>
       </div>
+
+      {/* Legend Box Formatting Studio Modal */}
+      {editingLegend && (
+        <LegendBoxEditor
+          config={legendConfig}
+          onChange={setLegendConfig}
+          onClose={() => setEditingLegend(false)}
+          sampleItems={activeLegendItems.map((it) => ({
+            label: it.label,
+            color: it.color,
+            symbol: it.symbol,
+          }))}
+          title="USSL Legend Box Formatting Studio"
+        />
+      )}
+
+      {/* Point Symbols Studio Modal */}
+      {editingSymbols && (
+        <PointSymbolsEditor
+          items={activeLegendItems.map((it) => ({
+            key: it.key,
+            label: it.label,
+            color: it.color,
+          }))}
+          pointSymbols={pointSymbols || localPointSymbols}
+          onChangeSymbols={(syms) => {
+            setLocalPointSymbols(syms);
+            if (onPointSymbolsChange) onPointSymbolsChange(syms);
+          }}
+          defaultSymbol={defaultSymbol || localDefaultSymbol}
+          onChangeDefaultSymbol={(sym) => {
+            setLocalDefaultSymbol(sym);
+            if (onDefaultSymbolChange) onDefaultSymbolChange(sym);
+          }}
+          onClose={() => setEditingSymbols(false)}
+          title="USSL Point Symbol & Marker Studio"
+          subtitle="Configure distinct shapes for locations, districts, or categories for the selected filter"
+        />
+      )}
 
       {editingKey && labelsConfig[editingKey] && (
         <UsslLabelsEditor
@@ -376,7 +710,41 @@ export const UsslDiagram = React.memo(({
         />
       )}
 
-      <div id="ussl-chart-export" className="flex flex-col items-center justify-center p-0 w-full bg-transparent rounded-2xl relative">
+      {/* Border Frame Studio Modal */}
+      {editingBorder && (
+        <DiagramBorderEditor
+          config={borderConfig}
+          onChange={setBorderConfig}
+          onClose={() => setEditingBorder(false)}
+          title="USSL Diagram Border Frame Studio"
+          onStartInteractiveAdjust={() => setIsAdjustingBorder(true)}
+        />
+      )}
+
+      {/* Move & Fit Border Mode Floating Banner */}
+      {isAdjustingBorder && (
+        <div className="w-full max-w-[1240px] mb-2 bg-amber-500 text-slate-950 px-4 py-2.5 rounded-2xl flex items-center justify-between text-xs font-bold shadow-md animate-in slide-in-from-top-2 border border-amber-600 z-30">
+          <div className="flex items-center gap-2">
+            <Move className="w-4 h-4 animate-bounce" />
+            <span>
+              <strong>Move &amp; Fit Border Active:</strong> Drag handles or the frame directly on the diagram to fit content.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsAdjustingBorder(false)}
+            className="bg-slate-900 text-white px-3 py-1 rounded-xl text-xs font-black shadow-xs hover:bg-black transition"
+          >
+            ✓ Done
+          </button>
+        </div>
+      )}
+
+      {/* Tile 2: Main Chart Tile (Pure white background, clean publication frame) */}
+      <div
+        id="ussl-chart-export"
+        className={`flex flex-col items-center justify-center p-3 sm:p-5 w-full bg-white rounded-3xl relative z-10 border border-slate-200/80 shadow-xs transition-all ${PAGE_ORIENTATION_CONFIGS[pageOrientation].className}`}
+      >
         {/* Draggable/Resizable Crop Box overlay */}
         {isCropActive && (
           <div
@@ -421,32 +789,40 @@ export const UsslDiagram = React.memo(({
         )}
         <div className="flex flex-col items-center justify-center p-4 w-full">
         <svg
-          viewBox={`0 0 ${width} ${height}`}
+          ref={svgRef}
+          viewBox={`${-diagramPadding} ${-diagramPadding} ${width + diagramPadding * 2} ${height + diagramPadding * 2}`}
           className="w-full h-auto max-w-full overflow-visible"
-          style={{ fontFamily: "'Inter', sans-serif" }}
-          onClick={() => setEditingKey(null)}
+          style={{ fontFamily: "'Inter', sans-serif", touchAction: "none" }}
+          onClick={() => {
+            if (!isDraggingTitle) setEditingKey(null);
+          }}
         >
-          <defs>
-            <filter id="3d-emboss" x="-20%" y="-20%" width="140%" height="140%">
-              <feGaussianBlur in="SourceAlpha" stdDeviation="0.6" result="blur" />
-              <feSpecularLighting in="blur" surfaceScale="2" specularConstant="1.2" specularExponent="16" lightingColor="#ffffff" result="spec">
-                <feDistantLight azimuth="225" elevation="45" />
-              </feSpecularLighting>
-              <feComposite in="spec" in2="SourceAlpha" operator="in" result="specOut" />
-              <feComposite in="SourceGraphic" in2="specOut" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="lit" />
-            </filter>
-            <filter id="3d-deboss" x="-20%" y="-20%" width="140%" height="140%">
-              <feOffset dx="0.5" dy="0.5" />
-              <feGaussianBlur stdDeviation="0.5" result="offset-blur" />
-              <feComposite operator="out" in="SourceGraphic" in2="offset-blur" result="inverse" />
-              <feFlood floodColor="#000000" floodOpacity="0.7" result="color" />
-              <feComposite operator="in" in="color" in2="inverse" result="shadow" />
-              <feComposite operator="over" in="shadow" in2="SourceGraphic" />
-            </filter>
+          {/* Pure White Background */}
+          <rect
+            id="diagram-base-canvas-bg"
+            x={-diagramPadding}
+            y={-diagramPadding}
+            width={width + diagramPadding * 2}
+            height={height + diagramPadding * 2}
+            fill="#ffffff"
+          />
 
+          {/* Moveable & Customisable Outer Frame Border */}
+          <DiagramBorderFrame
+            baseX={-diagramPadding}
+            baseY={-diagramPadding}
+            baseWidth={width + diagramPadding * 2}
+            baseHeight={height + diagramPadding * 2}
+            config={borderConfig}
+            isInteractive={isAdjustingBorder}
+            onConfigChange={setBorderConfig}
+            svgRef={svgRef}
+            idPrefix="ussl"
+          />
+          <defs>
             {is3d && (
               <>
-                {Array.from(new Set(Object.values(pointColors || {})))
+                {Array.from(new Set([...Object.values(pointColors || {}), ...activeLegendItems.map((it) => it.color), "#2563eb", "#3b82f6", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6", "#06b6d4", "#ec4899", "#64748b"]))
                   .filter((c): c is string => typeof c === "string" && !!c)
                   .map((color) => {
                     const id = `bubble-${color.replace(/#/g, "")}`;
@@ -464,47 +840,71 @@ export const UsslDiagram = React.memo(({
             )}
           </defs>
 
-          {/* Clean Light-effect background for the plot area */}
+          {/* Pure White Background for the plot area */}
           <rect
+            className="diagram-bg-rect"
+            data-bg="true"
             x={margin.left}
             y={margin.top}
             width={width - margin.left - margin.right}
             height={height - margin.top - margin.bottom}
-            rx="12"
+            rx="8"
             fill="#ffffff"
-            stroke="#cbd5e1"
-            strokeWidth="1.5"
+            stroke={currentTheme.primaryLine}
+            strokeWidth={outerLineWidth}
           />
 
+          {/* Simple, Crisp, Formattable Title (NO emboss / NO deboss) */}
           <text
-            x={width / 2}
-            y={25}
-            textAnchor="middle"
-            fontSize={labelsConfig.title.size}
-            fill={labelsConfig.title.color}
-            fontWeight={labelsConfig.title.isBold ? "900" : "400"}
-            fontStyle={labelsConfig.title.isItalic ? "italic" : "normal"}
-            fontFamily={labelsConfig.title.fontFamily || "sans-serif"}
-            style={{ cursor: "pointer", letterSpacing: "0.1em" }}
-            filter={title3dEffect === "emboss" ? "url(#3d-emboss)" : title3dEffect === "deboss" ? "url(#3d-deboss)" : undefined}
+            x={titlePos.x}
+            y={titlePos.y}
+            textAnchor={titleConfig.alignment === "left" ? "start" : titleConfig.alignment === "right" ? "end" : "middle"}
+            fontSize={titleConfig.size}
+            fill={titleConfig.color}
+            fontWeight={titleConfig.isBold ? 900 : 500}
+            fontStyle={titleConfig.isItalic ? "italic" : "normal"}
+            fontFamily={titleConfig.fontFamily}
+            style={{
+              cursor: isDraggingTitle ? "grabbing" : "grab",
+              letterSpacing: "0.03em",
+              userSelect: "none",
+              touchAction: "none"
+            }}
+            onPointerDown={(e) => handleTitlePointerDown(e, svgRef.current)}
             onClick={(e) => {
+              if (!isDraggingTitle) {
+                e.stopPropagation();
+                setIsTitleModalOpen(true);
+              }
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
               e.stopPropagation();
-              setEditingKey("title");
+              setIsTitleModalOpen(true);
             }}
           >
-            {labelsConfig.title.text}
+            {(titleConfig.text || "USSL Classification Matrix").split("\n").map((line, idx) => (
+              <tspan key={idx} x={titlePos.x} dy={idx === 0 ? 0 : titleConfig.size * 1.3}>
+                {line}
+              </tspan>
+            ))}
           </text>
 
           <text
             transform={`translate(20, ${height / 2}) rotate(-90)`}
             textAnchor="middle"
             fontSize={labelsConfig.yAxis.size}
-            fill={labelsConfig.yAxis.color}
+            fill={currentTheme.axisColor}
             fontWeight={labelsConfig.yAxis.isBold ? "900" : "400"}
             fontStyle={labelsConfig.yAxis.isItalic ? "italic" : "normal"}
             fontFamily={labelsConfig.yAxis.fontFamily || "sans-serif"}
             style={{ cursor: "pointer", letterSpacing: "0.1em" }}
             onClick={(e) => {
+              e.stopPropagation();
+              setEditingKey("yAxis");
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
               e.stopPropagation();
               setEditingKey("yAxis");
             }}
@@ -517,7 +917,7 @@ export const UsslDiagram = React.memo(({
             y={height - 10}
             textAnchor="middle"
             fontSize={labelsConfig.xAxis.size}
-            fill={labelsConfig.xAxis.color}
+            fill={currentTheme.axisColor}
             fontWeight={labelsConfig.xAxis.isBold ? "900" : "400"}
             fontStyle={labelsConfig.xAxis.isItalic ? "italic" : "normal"}
             fontFamily={labelsConfig.xAxis.fontFamily || "sans-serif"}
@@ -526,71 +926,128 @@ export const UsslDiagram = React.memo(({
               e.stopPropagation();
               setEditingKey("xAxis");
             }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setEditingKey("xAxis");
+            }}
           >
             {labelsConfig.xAxis.text}
           </text>
 
-          <line x1={getX(250)} y1={margin.top} x2={getX(250)} y2={height - margin.bottom} stroke={gridLineColor} strokeDasharray="4" />
-          <line x1={getX(750)} y1={margin.top} x2={getX(750)} y2={height - margin.bottom} stroke={gridLineColor} strokeDasharray="4" />
-          <line x1={getX(2250)} y1={margin.top} x2={getX(2250)} y2={height - margin.bottom} stroke={gridLineColor} strokeDasharray="4" />
+          {/* Vertical Division Lines for C1, C2, C3, C4 */}
+          <line x1={getX(250)} y1={margin.top} x2={getX(250)} y2={height - margin.bottom} stroke={currentTheme.secondaryLine} strokeWidth="1.2" strokeDasharray={currentTheme.gridDash} />
+          <line x1={getX(750)} y1={margin.top} x2={getX(750)} y2={height - margin.bottom} stroke={currentTheme.secondaryLine} strokeWidth="1.2" strokeDasharray={currentTheme.gridDash} />
+          <line x1={getX(2250)} y1={margin.top} x2={getX(2250)} y2={height - margin.bottom} stroke={currentTheme.secondaryLine} strokeWidth="1.2" strokeDasharray={currentTheme.gridDash} />
 
-          <path d={ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s1s2(ec))}`).join(" ")} fill="none" stroke={axisPathColor} strokeWidth="2.0" />
-          <path d={ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s2s3(ec))}`).join(" ")} fill="none" stroke={axisPathColor} strokeWidth="2.0" />
-          <path d={ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s3s4(ec))}`).join(" ")} fill="none" stroke={axisPathColor} strokeWidth="2.0" />
+          {/* S1, S2, S3 Division Curves */}
+          <path d={ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s1s2(ec))}`).join(" ")} fill="none" stroke={currentTheme.primaryLine} strokeWidth={Math.max(1.2, +(outerLineWidth * 1.1).toFixed(2))} />
+          <path d={ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s2s3(ec))}`).join(" ")} fill="none" stroke={currentTheme.primaryLine} strokeWidth={Math.max(1.2, +(outerLineWidth * 1.1).toFixed(2))} />
+          <path d={ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s3s4(ec))}`).join(" ")} fill="none" stroke={currentTheme.primaryLine} strokeWidth={Math.max(1.2, +(outerLineWidth * 1.1).toFixed(2))} />
 
+          {/* Zone Centroid Text */}
           {xCentroids.map((xC) => (
-            <g key={xC.id} opacity="0.9">
-              <text x={getX(xC.val)} y={getY(s1s2(xC.val) / 2)} textAnchor="middle" fontSize="8.5" fill="#0284c7" fontWeight="bold">
+            <g key={xC.id} opacity="0.95">
+              <text x={getX(xC.val)} y={getY(s1s2(xC.val) / 2)} textAnchor="middle" fontSize="8.5" fill={currentTheme.zoneTextColor} fontWeight="bold">
                 {xC.id}-S1
               </text>
-              <text x={getX(xC.val)} y={getY((s1s2(xC.val) + s2s3(xC.val)) / 2)} textAnchor="middle" fontSize="8.5" fill="#0284c7" fontWeight="bold">
+              <text x={getX(xC.val)} y={getY((s1s2(xC.val) + s2s3(xC.val)) / 2)} textAnchor="middle" fontSize="8.5" fill={currentTheme.zoneTextColor} fontWeight="bold">
                 {xC.id}-S2
               </text>
-              <text x={getX(xC.val)} y={getY((s2s3(xC.val) + s3s4(xC.val)) / 2)} textAnchor="middle" fontSize="8.5" fill="#0284c7" fontWeight="bold">
+              <text x={getX(xC.val)} y={getY((s2s3(xC.val) + s3s4(xC.val)) / 2)} textAnchor="middle" fontSize="8.5" fill={currentTheme.zoneTextColor} fontWeight="bold">
                 {xC.id}-S3
               </text>
-              <text x={getX(xC.val)} y={getY((s3s4(xC.val) + 32) / 2)} textAnchor="middle" fontSize="8.5" fill="#be123c" fontWeight="bold">
+              <text x={getX(xC.val)} y={getY((s3s4(xC.val) + 32) / 2)} textAnchor="middle" fontSize="8.5" fill={currentTheme.primaryLine} fontWeight="900">
                 {xC.id}-S4
               </text>
             </g>
           ))}
 
-          <line x1={margin.left} y1={height - margin.bottom} x2={width - margin.right} y2={height - margin.bottom} stroke={axisColor} strokeWidth="1.5" />
-          <line x1={margin.left} y1={margin.top} x2={margin.left} y2={height - margin.bottom} stroke={axisColor} strokeWidth="1.5" />
+          {/* Plot Axes */}
+          <line x1={margin.left} y1={height - margin.bottom} x2={width - margin.right} y2={height - margin.bottom} stroke={currentTheme.primaryLine} strokeWidth={outerLineWidth} />
+          <line x1={margin.left} y1={margin.top} x2={margin.left} y2={height - margin.bottom} stroke={currentTheme.primaryLine} strokeWidth={outerLineWidth} />
 
           {[100, 250, 750, 2250, 5000, 10000].map((v) => (
             <g key={v}>
-              <line x1={getX(v)} y1={height - margin.bottom} x2={getX(v)} y2={height - margin.bottom + 5} stroke={axisColor} />
-              <text x={getX(v)} y={height - margin.bottom + 15} textAnchor="middle" fontSize="8" fill="#475569" fontWeight="bold">
+              <line x1={getX(v)} y1={height - margin.bottom} x2={getX(v)} y2={height - margin.bottom + 5} stroke={currentTheme.primaryLine} />
+              <text x={getX(v)} y={height - margin.bottom + 15} textAnchor="middle" fontSize="8" fill={currentTheme.axisColor} fontWeight="bold">
                 {v}
               </text>
             </g>
           ))}
           {[0, 10, 20, 30].map((v) => (
             <g key={v}>
-              <line x1={margin.left - 5} y1={getY(v)} x2={margin.left} y2={getY(v)} stroke={axisColor} />
-              <text x={margin.left - 10} y={getY(v) + 3} textAnchor="end" fontSize="8" fill="#475569" fontWeight="bold">
+              <line x1={margin.left - 5} y1={getY(v)} x2={margin.left} y2={getY(v)} stroke={currentTheme.primaryLine} />
+              <text x={margin.left - 10} y={getY(v) + 3} textAnchor="end" fontSize="8" fill={currentTheme.axisColor} fontWeight="bold">
                 {v}
               </text>
             </g>
           ))}
 
           {renderedPoints}
+          {renderInChartLegend(svgRef.current)}
         </svg>
         </div>
+      </div>
 
-        {/* Dynamic Point Color Legend */}
-        {pointColors && Object.keys(pointColors).length > 0 && (
-          <div className="flex flex-wrap items-center justify-center gap-2 mt-2 pt-3 border-t border-slate-200/80 max-w-[650px] w-full px-4">
-            {Object.entries(pointColors).map(([key, color]) => (
-              <div key={key} className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 text-[10px] font-bold shadow-xs">
-                <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs" style={{ backgroundColor: color }} />
-                <span className="truncate max-w-[150px]">{key}</span>
+      {/* Simple Title Editor Modal */}
+      <SimpleTitleEditorModal
+        isOpen={isTitleModalOpen}
+        onClose={() => setIsTitleModalOpen(false)}
+        config={titleConfig}
+        onChange={setTitleConfig}
+        diagramName="USSL Diagram"
+      />
+
+      {/* Tile 3: Dedicated Publication Legend Tile (if legend is selected) */}
+      {showLegendTile && activeLegendItems.length > 0 && (
+        <div
+          className="w-full max-w-[720px] mt-3.5 bg-white border border-slate-200/80 shadow-xs rounded-2xl p-4 transition-all"
+        >
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-3">
+            <div className="flex items-center gap-1.5">
+              <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+              <span className="text-xs font-black uppercase tracking-wider text-slate-800">
+                USSL Active Variables Legend
+              </span>
+            </div>
+            <span className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+              {activeLegendItems.length} {activeLegendItems.length === 1 ? "variable" : "variables"}
+            </span>
+          </div>
+          <div
+            className="grid gap-x-3 gap-y-2"
+            style={{
+              gridTemplateColumns: `repeat(${legendConfig.columns || (activeLegendItems.length > 6 ? 3 : 2)}, minmax(0, 1fr))`,
+            }}
+          >
+            {activeLegendItems.map((it) => (
+              <div key={it.key} className="flex items-center gap-2 min-w-0 px-2.5 py-1.5 rounded-xl bg-slate-50 border border-slate-200/70 shadow-2xs hover:bg-slate-100 transition-all">
+                <PointSymbolIcon
+                  symbol={it.symbol}
+                  color={it.color}
+                  size={13}
+                  stroke="#ffffff"
+                  is3d={is3d}
+                />
+                <span
+                  style={{
+                    fontFamily: legendConfig.fontFamily,
+                    color: legendConfig.textColor,
+                    fontWeight: legendConfig.isBold ? 700 : 500,
+                    fontStyle: legendConfig.isItalic ? "italic" : "normal",
+                    fontSize: "11px",
+                  }}
+                  className="truncate"
+                  title={it.label}
+                >
+                  {it.label}
+                </span>
               </div>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Full Screen Modal View */}
       {isFullscreen && (
@@ -607,17 +1064,47 @@ export const UsslDiagram = React.memo(({
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                <button
-                  onClick={() => downloadChartHD("ussl-chart-export-fs", "USSL_Diagram_HD")}
-                  className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all border-b-4 border-indigo-200 hover:border-indigo-800 active:border-b-0 active:translate-y-1"
-                  title="Download HD JPEG"
-                >
-                  <i className="ph ph-camera text-lg"></i>
-                  <span>Export HD</span>
-                </button>
+                <div className="flex items-center gap-1.5 bg-slate-100 rounded-xl px-2.5 py-1.5 border border-slate-200 shadow-sm" title="Point Size (0.1 to 3.0)">
+                  <span className="text-[10px] font-extrabold text-slate-600 uppercase tracking-wider pl-1">Point Size:</span>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="3"
+                    step="0.1"
+                    value={localPointSize}
+                    onChange={(e) => handlePointSizeChange(parseFloat(e.target.value))}
+                    className="w-20 h-1.5 bg-slate-300 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                  />
+                  <span className="text-xs font-mono font-bold text-slate-800 w-7 text-center">
+                    {localPointSize.toFixed(1)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => handleExport("jpeg", false, "ussl-chart-export-fs")}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs"
+                    title="Download with Pure White Background"
+                  >
+                    JPEG (White Bg)
+                  </button>
+                  <button
+                    onClick={() => handleExport("png", true, "ussl-chart-export-fs")}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs"
+                    title="Download without Background (Transparent)"
+                  >
+                    PNG (Transparent)
+                  </button>
+                  <button
+                    onClick={() => handleExport("svg", false, "ussl-chart-export-fs")}
+                    className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs"
+                    title="Download Vector SVG"
+                  >
+                    SVG
+                  </button>
+                </div>
                 <button
                   onClick={() => setIsFullscreen(false)}
-                  className="bg-slate-100 text-slate-600 hover:bg-rose-600 hover:text-white p-2 rounded-xl text-xs font-bold transition-all border-b-4 border-slate-200 hover:border-rose-800 active:border-b-0 active:translate-y-1"
+                  className="bg-slate-100 text-slate-600 hover:bg-rose-600 hover:text-white p-2 rounded-xl text-xs font-bold transition-all border border-slate-200"
                   title="Close Full Screen"
                 >
                   <i className="ph ph-x text-lg font-bold"></i>
@@ -626,30 +1113,17 @@ export const UsslDiagram = React.memo(({
             </div>
 
             <div className="flex-1 overflow-auto flex items-center justify-center p-4 min-h-[400px]">
-              <div id="ussl-chart-export-fs" className="flex flex-col items-center justify-center p-6 w-full max-w-[650px] bg-transparent rounded-2xl relative">
+              <div id="ussl-chart-export-fs" className="flex flex-col items-center justify-center p-6 w-full max-w-[650px] bg-white rounded-2xl relative">
                 <svg
+                  ref={fullscreenSvgRef}
                   viewBox={`0 0 ${width} ${height}`}
                   className="w-full h-auto max-h-[60vh] overflow-visible"
-                  style={{ fontFamily: "'Inter', sans-serif" }}
+                  style={{ fontFamily: "'Inter', sans-serif", touchAction: "none" }}
+                  onClick={() => {
+                    if (!isDraggingTitle) setEditingKey(null);
+                  }}
                 >
                   <defs>
-                    <filter id="3d-emboss-fs" x="-20%" y="-20%" width="140%" height="140%">
-                      <feGaussianBlur in="SourceAlpha" stdDeviation="0.6" result="blur" />
-                      <feSpecularLighting in="blur" surfaceScale="2" specularConstant="1.2" specularExponent="16" lightingColor="#ffffff" result="spec">
-                        <feDistantLight azimuth="225" elevation="45" />
-                      </feSpecularLighting>
-                      <feComposite in="spec" in2="SourceAlpha" operator="in" result="specOut" />
-                      <feComposite in="SourceGraphic" in2="specOut" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="lit" />
-                    </filter>
-                    <filter id="3d-deboss-fs" x="-20%" y="-20%" width="140%" height="140%">
-                      <feOffset dx="0.5" dy="0.5" />
-                      <feGaussianBlur stdDeviation="0.5" result="offset-blur" />
-                      <feComposite operator="out" in="SourceGraphic" in2="offset-blur" result="inverse" />
-                      <feFlood floodColor="#000000" floodOpacity="0.7" result="color" />
-                      <feComposite operator="in" in="color" in2="inverse" result="shadow" />
-                      <feComposite operator="over" in="shadow" in2="SourceGraphic" />
-                    </filter>
-
                     {is3d && (
                       <>
                         {Array.from(new Set(Object.values(pointColors || {})))
@@ -670,30 +1144,43 @@ export const UsslDiagram = React.memo(({
                     )}
                   </defs>
 
-                  {/* Clean Light-effect background for the plot area */}
+                  {/* Pure White background for the plot area */}
                   <rect
+                    className="diagram-bg-rect"
+                    data-bg="true"
                     x={margin.left}
                     y={margin.top}
                     width={width - margin.left - margin.right}
                     height={height - margin.top - margin.bottom}
-                    rx="12"
+                    rx="8"
                     fill="#ffffff"
-                    stroke="#cbd5e1"
-                    strokeWidth="1.5"
+                    stroke={currentTheme.primaryLine}
+                    strokeWidth={outerLineWidth}
                   />
 
+                  {/* Simple Flat Title (NO emboss / NO deboss) */}
                   <text
-                    x={width / 2}
-                    y={margin.top - 20}
-                    textAnchor="middle"
-                    fontSize={labelsConfig.title.size}
-                    fill="#1e293b"
-                    fontWeight={labelsConfig.title.isBold ? "900" : "400"}
-                    fontStyle={labelsConfig.title.isItalic ? "italic" : "normal"}
-                    fontFamily={labelsConfig.title.fontFamily || "sans-serif"}
-                    filter={title3dEffect === "emboss" ? "url(#3d-emboss-fs)" : title3dEffect === "deboss" ? "url(#3d-deboss-fs)" : undefined}
+                    x={titlePos.x}
+                    y={titlePos.y}
+                    textAnchor={titleConfig.alignment === "left" ? "start" : titleConfig.alignment === "right" ? "end" : "middle"}
+                    fontSize={titleConfig.size}
+                    fill={titleConfig.color}
+                    fontWeight={titleConfig.isBold ? 900 : 500}
+                    fontStyle={titleConfig.isItalic ? "italic" : "normal"}
+                    fontFamily={titleConfig.fontFamily}
+                    style={{
+                      cursor: isDraggingTitle ? "grabbing" : "grab",
+                      letterSpacing: "0.03em",
+                      userSelect: "none",
+                      touchAction: "none"
+                    }}
+                    onPointerDown={(e) => handleTitlePointerDown(e, fullscreenSvgRef.current)}
                   >
-                    {labelsConfig.title.text}
+                    {(titleConfig.text || "USSL Classification Matrix").split("\n").map((line, idx) => (
+                      <tspan key={idx} x={titlePos.x} dy={idx === 0 ? 0 : titleConfig.size * 1.3}>
+                        {line}
+                      </tspan>
+                    ))}
                   </text>
 
                   <text
@@ -701,7 +1188,7 @@ export const UsslDiagram = React.memo(({
                     y={height - margin.bottom + 35}
                     textAnchor="middle"
                     fontSize={labelsConfig.xAxis.size}
-                    fill="#475569"
+                    fill={currentTheme.axisColor}
                     fontWeight={labelsConfig.xAxis.isBold ? "900" : "400"}
                     fontStyle={labelsConfig.xAxis.isItalic ? "italic" : "normal"}
                     fontFamily={labelsConfig.xAxis.fontFamily || "sans-serif"}
@@ -709,44 +1196,48 @@ export const UsslDiagram = React.memo(({
                     {labelsConfig.xAxis.text}
                   </text>
 
-                  <line x1={getX(250)} y1={margin.top} x2={getX(250)} y2={height - margin.bottom} stroke={gridLineColor} strokeDasharray="4" />
-                  <line x1={getX(750)} y1={margin.top} x2={getX(750)} y2={height - margin.bottom} stroke={gridLineColor} strokeDasharray="4" />
-                  <line x1={getX(2250)} y1={margin.top} x2={getX(2250)} y2={height - margin.bottom} stroke={gridLineColor} strokeDasharray="4" />
+                  {/* Grid Lines */}
+                  <line x1={getX(250)} y1={margin.top} x2={getX(250)} y2={height - margin.bottom} stroke={currentTheme.secondaryLine} strokeWidth="1.2" strokeDasharray={currentTheme.gridDash} />
+                  <line x1={getX(750)} y1={margin.top} x2={getX(750)} y2={height - margin.bottom} stroke={currentTheme.secondaryLine} strokeWidth="1.2" strokeDasharray={currentTheme.gridDash} />
+                  <line x1={getX(2250)} y1={margin.top} x2={getX(2250)} y2={height - margin.bottom} stroke={currentTheme.secondaryLine} strokeWidth="1.2" strokeDasharray={currentTheme.gridDash} />
 
-                  <path d={ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s1s2(ec))}`).join(" ")} fill="none" stroke={axisPathColor} strokeWidth="2.0" />
-                  <path d={ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s2s3(ec))}`).join(" ")} fill="none" stroke={axisPathColor} strokeWidth="2.0" />
-                  <path d={ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s3s4(ec))}`).join(" ")} fill="none" stroke={axisPathColor} strokeWidth="2.0" />                   {xCentroids.map((xC) => (
-                    <g key={xC.id} opacity="0.9">
-                      <text x={getX(xC.val)} y={getY(s1s2(xC.val) / 2)} textAnchor="middle" fontSize="8.5" fill="#0284c7" fontWeight="bold">
+                  {/* S1, S2, S3 Curves */}
+                  <path d={ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s1s2(ec))}`).join(" ")} fill="none" stroke={currentTheme.primaryLine} strokeWidth={Math.max(1.2, +(outerLineWidth * 1.1).toFixed(2))} />
+                  <path d={ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s2s3(ec))}`).join(" ")} fill="none" stroke={currentTheme.primaryLine} strokeWidth={Math.max(1.2, +(outerLineWidth * 1.1).toFixed(2))} />
+                  <path d={ecs.map((ec, i) => `${i === 0 ? "M" : "L"} ${getX(ec)} ${getY(s3s4(ec))}`).join(" ")} fill="none" stroke={currentTheme.primaryLine} strokeWidth={Math.max(1.2, +(outerLineWidth * 1.1).toFixed(2))} />
+
+                  {xCentroids.map((xC) => (
+                    <g key={xC.id} opacity="0.95">
+                      <text x={getX(xC.val)} y={getY(s1s2(xC.val) / 2)} textAnchor="middle" fontSize="8.5" fill={currentTheme.zoneTextColor} fontWeight="bold">
                         {xC.id}-S1
                       </text>
-                      <text x={getX(xC.val)} y={getY((s1s2(xC.val) + s2s3(xC.val)) / 2)} textAnchor="middle" fontSize="8.5" fill="#0284c7" fontWeight="bold">
+                      <text x={getX(xC.val)} y={getY((s1s2(xC.val) + s2s3(xC.val)) / 2)} textAnchor="middle" fontSize="8.5" fill={currentTheme.zoneTextColor} fontWeight="bold">
                         {xC.id}-S2
                       </text>
-                      <text x={getX(xC.val)} y={getY((s2s3(xC.val) + s3s4(xC.val)) / 2)} textAnchor="middle" fontSize="8.5" fill="#0284c7" fontWeight="bold">
+                      <text x={getX(xC.val)} y={getY((s2s3(xC.val) + s3s4(xC.val)) / 2)} textAnchor="middle" fontSize="8.5" fill={currentTheme.zoneTextColor} fontWeight="bold">
                         {xC.id}-S3
                       </text>
-                      <text x={getX(xC.val)} y={getY((s3s4(xC.val) + 32) / 2)} textAnchor="middle" fontSize="8.5" fill="#be123c" fontWeight="bold">
+                      <text x={getX(xC.val)} y={getY((s3s4(xC.val) + 32) / 2)} textAnchor="middle" fontSize="8.5" fill={currentTheme.primaryLine} fontWeight="900">
                         {xC.id}-S4
                       </text>
                     </g>
                   ))}
 
-                  <line x1={margin.left} y1={height - margin.bottom} x2={width - margin.right} y2={height - margin.bottom} stroke={axisColor} strokeWidth="1.5" />
-                  <line x1={margin.left} y1={margin.top} x2={margin.left} y2={height - margin.bottom} stroke={axisColor} strokeWidth="1.5" />
+                  <line x1={margin.left} y1={height - margin.bottom} x2={width - margin.right} y2={height - margin.bottom} stroke={currentTheme.primaryLine} strokeWidth={outerLineWidth} />
+                  <line x1={margin.left} y1={margin.top} x2={margin.left} y2={height - margin.bottom} stroke={currentTheme.primaryLine} strokeWidth={outerLineWidth} />
 
                   {[100, 250, 750, 2250, 5000, 10000].map((v) => (
                     <g key={v}>
-                      <line x1={getX(v)} y1={height - margin.bottom} x2={getX(v)} y2={height - margin.bottom + 5} stroke={axisColor} />
-                      <text x={getX(v)} y={height - margin.bottom + 15} textAnchor="middle" fontSize="8" fill="#475569" fontWeight="bold">
+                      <line x1={getX(v)} y1={height - margin.bottom} x2={getX(v)} y2={height - margin.bottom + 5} stroke={currentTheme.primaryLine} />
+                      <text x={getX(v)} y={height - margin.bottom + 15} textAnchor="middle" fontSize="8" fill={currentTheme.axisColor} fontWeight="bold">
                         {v}
                       </text>
                     </g>
                   ))}
                   {[0, 10, 20, 30].map((v) => (
                     <g key={v}>
-                      <line x1={margin.left - 5} y1={getY(v)} x2={margin.left} y2={getY(v)} stroke={axisColor} />
-                      <text x={margin.left - 10} y={getY(v) + 3} textAnchor="end" fontSize="8" fill="#475569" fontWeight="bold">
+                      <line x1={margin.left - 5} y1={getY(v)} x2={margin.left} y2={getY(v)} stroke={currentTheme.primaryLine} />
+                      <text x={margin.left - 10} y={getY(v) + 3} textAnchor="end" fontSize="8" fill={currentTheme.axisColor} fontWeight="bold">
                         {v}
                       </text>
                     </g>
@@ -759,6 +1250,7 @@ export const UsslDiagram = React.memo(({
                     }
                     return p;
                   })}
+                  {renderInChartLegend(fullscreenSvgRef.current)}
                 </svg>
               </div>
             </div>
