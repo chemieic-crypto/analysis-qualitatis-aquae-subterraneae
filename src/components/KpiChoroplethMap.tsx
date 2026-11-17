@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
-import { safeHtml2canvas } from "../utils/colorSanitizer";
+import { captureGlossyCanvas } from "../utils/colorSanitizer";
 import { DataHeaders, ShapefileLayer } from "../types";
 import { norm, buildDistrictStateMap, isStateAll, isDistrictAll, featureMatchesSelection, toProperCase } from "../utils/shapefileFilter";
 import { PARAM_CONFIG } from "../data/config";
@@ -291,15 +291,11 @@ export default function KpiChoroplethMap({
     try {
       let canvas: HTMLCanvasElement | null = null;
 
-      // 1. Primary html2canvas capture attempt with safeHtml2canvas (scale 6 = 600 DPI)
+      // 1. Primary capture via captureGlossyCanvas (native glossy rendering, zero text clipping)
       try {
-        canvas = await safeHtml2canvas(mapExportContainerRef.current, {
-          scale: 6,
-          useCORS: true,
-          allowTaint: false,
+        canvas = await captureGlossyCanvas(mapExportContainerRef.current, {
+          scale: 4,
           backgroundColor: "#ffffff",
-          logging: false,
-          ignoreElements: (el) => el.getAttribute("data-export-hide") === "true",
           onclone: (clonedDoc) => {
             const hideEls = clonedDoc.querySelectorAll('[data-export-hide="true"]');
             hideEls.forEach((el) => el.remove());
@@ -321,7 +317,7 @@ export default function KpiChoroplethMap({
           }
         });
       } catch (h2cErr) {
-        console.warn("Primary safeHtml2canvas capture failed, trying fallback:", h2cErr);
+        console.warn("Primary captureGlossyCanvas failed, trying SVG fallback:", h2cErr);
       }
 
       // 2. Direct SVG Vector Rasterization Fallback (100% reliable for SVG map layers)
@@ -340,8 +336,8 @@ export default function KpiChoroplethMap({
             img.src = blobURL;
           });
 
-          const baseW = svgEl.clientWidth || 800;
-          const baseH = svgEl.clientHeight || 750;
+          const baseW = svgEl.clientWidth || 600;
+          const baseH = svgEl.clientHeight || 800;
           const fallbackCanvas = document.createElement("canvas");
           fallbackCanvas.width = baseW * 6;
           fallbackCanvas.height = baseH * 6;
@@ -445,7 +441,7 @@ export default function KpiChoroplethMap({
   const paramName = activeConfig?.name || activeParam;
 
   // Compute centroid for GeoJSON feature to place State/Region text label
-  const getFeatureCentroid = (feature: any, width = 600, height = 550): [number, number] | null => {
+  const getFeatureCentroid = (feature: any, width = 600, height = 800): [number, number] | null => {
     if (!feature.geometry || !feature.geometry.coordinates) return null;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
@@ -554,20 +550,22 @@ export default function KpiChoroplethMap({
     return INDIA_STATES_SIMPLIFIED.find((s) => norm(s.name) === norm(selectedState || "")) || null;
   }, [selectedState]);
 
-  // Auto-center and zoom onto selected State
+  // Auto-center and zoom onto selected State inside 600x800 frame (center 314, 408)
   useEffect(() => {
-    if (!isStateAll(selectedState) && selectedStateObj && selectedStateObj.center) {
-      const [cx, cy] = selectedStateObj.center;
+    if (!isStateAll(selectedState) && selectedStateObj && selectedStateObj.center && !hasShapefile) {
+      const [rawCx, rawCy] = selectedStateObj.center;
+      const cx = rawCx * 1.12 - 40;
+      const cy = rawCy * 1.44 + 22;
       setZoomLevel(2.2);
       setPanOffset({
-        x: (300 - cx) * 2.2,
-        y: (275 - cy) * 2.2
+        x: (314 - cx) * 2.2,
+        y: (408 - cy) * 2.2
       });
     } else {
       setZoomLevel(1);
       setPanOffset({ x: 0, y: 0 });
     }
-  }, [selectedState, selectedDistrict, selectedStateObj]);
+  }, [selectedState, selectedDistrict, selectedStateObj, hasShapefile]);
 
   // Assign color to a region based on range classes
   const getRegionColor = (pct: number): { color: string; label: string } => {
@@ -959,23 +957,37 @@ export default function KpiChoroplethMap({
     return { minX, minY, maxX, maxY };
   }, [geoFeatures, filteredGeoFeatures]);
 
-  // Project Lon/Lat to Canvas X/Y
-  const projectCoords = (lon: number, lat: number, width = 600, height = 550, customBounds = mainGeoBounds): [number, number] => {
-    if (!customBounds) {
-      // Fallback projection for standard India lat/lon
-      const x = ((lon - 68) / (98 - 68)) * (width - 80) + 40;
-      const y = height - (((lat - 6) / (37 - 6)) * (height - 80) + 40);
-      return [x, y];
-    }
+  // Unified 4:3 Height:Width (3:4 Portrait) Frame Geometry (600x800, identical across Choropleth & Spatial Maps)
+  const PORTRAIT_W = 600;
+  const PORTRAIT_H = 800;
+  const INNER_LEFT = 42;
+  const INNER_TOP = 46;
+  const INNER_W = 544;
+  const INNER_H = 724;
+  const PLOT_PAD = 6;
 
-    const pad = 40;
-    const { minX, minY, maxX, maxY } = customBounds;
-    const scaleX = (width - pad * 2) / (maxX - minX || 1);
-    const scaleY = (height - pad * 2) / (maxY - minY || 1);
-    const scale = Math.min(scaleX, scaleY);
+  // Compute portrait projection parameters preserving true geographic aspect ratio
+  const getPortraitMetrics = (customBounds = mainGeoBounds) => {
+    const b = customBounds || { minX: 68.0, maxX: 98.0, minY: 6.0, maxY: 37.0 };
+    const midLatRad = (((b.minY + b.maxY) / 2) * Math.PI) / 180;
+    const cosLat = Math.max(0.25, Math.cos(midLatRad));
+    const plotW = INNER_W - PLOT_PAD * 2;
+    const plotH = INNER_H - PLOT_PAD * 2;
+    const dLngKm = (b.maxX - b.minX) * cosLat || 0.01;
+    const dLat = b.maxY - b.minY || 0.01;
+    const scale = Math.min(plotW / dLngKm, plotH / dLat);
+    const drawnW = dLngKm * scale;
+    const drawnH = dLat * scale;
+    const ox = INNER_LEFT + PLOT_PAD + (plotW - drawnW) / 2;
+    const oy = INNER_TOP + PLOT_PAD + (plotH - drawnH) / 2;
+    return { b, cosLat, scale, drawnW, drawnH, ox, oy };
+  };
 
-    const x = (lon - minX) * scale + pad;
-    const y = height - ((lat - minY) * scale + pad);
+  // Project Lon/Lat to Portrait Canvas X/Y (540 x 960)
+  const projectCoords = (lon: number, lat: number, _width = PORTRAIT_W, _height = PORTRAIT_H, customBounds = mainGeoBounds): [number, number] => {
+    const { b, cosLat, scale, drawnH, ox, oy } = getPortraitMetrics(customBounds);
+    const x = ox + (lon - b.minX) * cosLat * scale;
+    const y = oy + drawnH - (lat - b.minY) * scale;
     return [x, y];
   };
 
@@ -989,29 +1001,12 @@ export default function KpiChoroplethMap({
   const baseMapTiles = useMemo(() => {
     if (baseMapType === "vector") return [];
 
-    // Calculate canvas outer lon/lat extent to cover 100% of the 600x550 SVG area
-    let minLon = 68.0, maxLon = 98.0, minLat = 6.0, maxLat = 37.0;
+    const { b, cosLat, scale, drawnH, ox, oy } = getPortraitMetrics(boundsForTiles);
+    let minLon = (-120 - ox) / (cosLat * scale) + b.minX;
+    let maxLon = (PORTRAIT_W + 120 - ox) / (cosLat * scale) + b.minX;
+    let maxLat = (oy + drawnH - (-120)) / scale + b.minY;
+    let minLat = (oy + drawnH - (PORTRAIT_H + 120)) / scale + b.minY;
 
-    if (mainGeoBounds) {
-      const pad = 40;
-      const { minX, minY, maxX, maxY } = mainGeoBounds;
-      const scaleX = (600 - pad * 2) / (maxX - minX || 1);
-      const scaleY = (550 - pad * 2) / (maxY - minY || 1);
-      const scale = Math.min(scaleX, scaleY);
-
-      // Invert projection for canvas bounds [-150, -150] to [750, 700] to ensure complete coverage across whole canvas
-      minLon = (-150 - pad) / scale + minX;
-      maxLon = (750 - pad) / scale + minX;
-      maxLat = (550 - pad - (-150)) / scale + minY;
-      minLat = (550 - pad - 700) / scale + minY;
-    } else {
-      minLon = 60.0;
-      maxLon = 105.0;
-      minLat = 2.0;
-      maxLat = 40.0;
-    }
-
-    // Clamp latitudes to Web Mercator limits (-85 to 85)
     minLat = Math.max(-85, Math.min(85, minLat));
     maxLat = Math.max(-85, Math.min(85, maxLat));
 
@@ -1043,8 +1038,8 @@ export default function KpiChoroplethMap({
         const nLat = tile2lat(ty, effectiveZoom);
         const sLat = tile2lat(ty + 1, effectiveZoom);
 
-        const [xNW, yNW] = projectCoords(wLon, nLat, 600, 550, mainGeoBounds);
-        const [xSE, ySE] = projectCoords(eLon, sLat, 600, 550, mainGeoBounds);
+        const [xNW, yNW] = projectCoords(wLon, nLat, PORTRAIT_W, PORTRAIT_H, boundsForTiles);
+        const [xSE, ySE] = projectCoords(eLon, sLat, PORTRAIT_W, PORTRAIT_H, boundsForTiles);
 
         const x = Math.min(xNW, xSE);
         const y = Math.min(yNW, ySE);
@@ -1069,10 +1064,10 @@ export default function KpiChoroplethMap({
       }
     }
     return tiles;
-  }, [baseMapType, mainGeoBounds, zoomLevel]);
+  }, [baseMapType, boundsForTiles, zoomLevel]);
 
   // Convert Polygon coordinates to SVG path string
-  const coordsToSvgPath = (coordinates: any[], width = 600, height = 550, customBounds = mainGeoBounds): string => {
+  const coordsToSvgPath = (coordinates: any[], width = PORTRAIT_W, height = PORTRAIT_H, customBounds = mainGeoBounds): string => {
     if (!coordinates || coordinates.length === 0) return "";
 
     const formatRing = (ring: number[][]) => {
@@ -1092,7 +1087,7 @@ export default function KpiChoroplethMap({
   };
 
   // Helper to calculate projected center of a feature
-  const getFeatureProjectedCenter = (feature: any, width = 600, height = 550, customBounds = mainGeoBounds): [number, number] | null => {
+  const getFeatureProjectedCenter = (feature: any, width = PORTRAIT_W, height = PORTRAIT_H, customBounds = mainGeoBounds): [number, number] | null => {
     if (!feature?.geometry?.coordinates) return null;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     const processCoords = (coords: any[]) => {
@@ -1120,16 +1115,34 @@ export default function KpiChoroplethMap({
       featureMatchesSelection(f, selectedState, selectedDistrict, districtStateMap)
     );
     if (!matchingFeature) return null;
-    return getFeatureProjectedCenter(matchingFeature, 600, 550, allGeoBounds);
+    return getFeatureProjectedCenter(matchingFeature, PORTRAIT_W, PORTRAIT_H, allGeoBounds);
   }, [geoFeatures, selectedState, selectedDistrict, districtStateMap, allGeoBounds]);
 
+  const portraitStats = getPortraitMetrics(boundsForTiles);
+  const scaleKmBar = (() => {
+    const kmPerDeg = 111.32;
+    const degPer90Px = 90 / (portraitStats.cosLat * portraitStats.scale || 1);
+    const rawKm = degPer90Px * portraitStats.cosLat * kmPerDeg;
+    const niceSteps = [5, 10, 25, 50, 100, 200, 500, 1000];
+    const barKm = niceSteps.find((s) => s >= rawKm * 0.65) || niceSteps[niceSteps.length - 1];
+    const barDegLng = barKm / (kmPerDeg * portraitStats.cosLat || 1);
+    const barPx = Math.max(36, Math.min(115, barDegLng * portraitStats.cosLat * portraitStats.scale));
+    return { barKm, barPx };
+  })();
+
+  const scopeLabel = !isDistrictAll(selectedDistrict)
+    ? `${toProperCase(selectedDistrict!)} District${!isStateAll(selectedState) ? `, ${toProperCase(selectedState!)}` : ""}`
+    : !isStateAll(selectedState)
+    ? toProperCase(selectedState!)
+    : "All India";
+
   return (
-    <div ref={mapExportContainerRef} className="flex flex-col space-y-3 font-sans relative bg-white p-3 rounded-2xl border border-slate-200/80 shadow-xs">
-      {/* MAP HEADER BANNER */}
-      <div className="flex items-center justify-between gap-3 bg-[#1a2356] text-white py-2.5 px-4 rounded-2xl shadow-sm">
-        <div className="flex items-center gap-2">
+    <div ref={mapExportContainerRef} className="flex flex-col space-y-2.5 font-sans relative bg-white p-3 rounded-2xl border border-slate-200/90 shadow-xs h-full">
+      {/* MAP HEADER BANNER (IDENTICAL HEIGHT TO COMPANION SPATIAL MAP) */}
+      <div className="min-h-[54px] flex items-center justify-between gap-2 bg-gradient-to-r from-[#17204e] via-[#1a2356] to-[#233175] text-white py-2 px-4 rounded-2xl shadow-[0_6px_16px_-4px_rgba(26,35,86,0.35),inset_0_1px_0_rgba(255,255,255,0.22)] relative overflow-hidden">
+        <div className="flex items-center gap-2 min-w-0 relative z-10">
           <Globe className="w-4 h-4 text-amber-300 shrink-0" />
-          <span className="font-extrabold text-xs sm:text-sm tracking-wide text-white">
+          <span className="font-extrabold text-xs sm:text-sm tracking-wide text-white leading-normal py-0.5 break-words">
             Choropleth Map: {toProperCase(reportingLevel)} Level ({toProperCase(paramName)})
           </span>
         </div>
@@ -1150,7 +1163,11 @@ export default function KpiChoroplethMap({
           className="hidden"
         />
 
-        <div className="text-xs font-bold text-slate-300 flex items-center gap-2">
+        <div className="text-xs font-bold text-slate-300 flex items-center gap-1.5 shrink-0">
+          <span className="hidden sm:inline-block bg-indigo-900/80 px-2 py-1 rounded-lg border border-indigo-700/60 text-amber-300 font-extrabold text-[11px]">
+            {filteredGeoFeatures.length > 0 ? `${filteredGeoFeatures.length} Regions` : (rawData && rawData.length > 0 ? "National" : "0 Regions")}
+          </span>
+
           {/* HIGH DENSITY 600 DPI JPEG EXPORT BUTTON */}
           <button
             data-export-hide="true"
@@ -1166,18 +1183,109 @@ export default function KpiChoroplethMap({
             )}
             <span>{isExportingJpeg ? "Exporting..." : "Save 600 DPI JPEG"}</span>
           </button>
-
-          <span className="bg-indigo-900/80 px-2.5 py-1 rounded-lg border border-indigo-700/60 text-amber-300 font-extrabold">
-            {filteredGeoFeatures.length > 0 ? `${filteredGeoFeatures.length} Regions` : (rawData && rawData.length > 0 ? "National View" : "0 Regions")}
-          </span>
         </div>
       </div>
 
-      {/* SVG CANVAS CONTAINER */}
+      {/* COMPACT CONTROLS BAR (IDENTICAL HEIGHT TO COMPANION SPATIAL MAP) */}
       <div
-        className={`bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs relative transition-all select-none cursor-grab active:cursor-grabbing ${
-          showGisAnalysis ? "h-[620px] sm:h-[680px]" : "h-[740px] sm:h-[820px]"
-        }`}
+        data-export-hide="true"
+        className="h-[46px] flex items-center justify-between gap-1.5 bg-slate-50 border border-slate-200/80 rounded-xl px-3 py-1 text-xs overflow-x-auto scrollbar-none relative z-30"
+      >
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={() => setZoomLevel((z) => Math.min(3.5, z + 0.25))}
+            className="px-2 py-1 rounded text-[10px] font-extrabold bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 cursor-pointer flex items-center gap-1"
+            title="Zoom In"
+          >
+            <Plus className="w-3 h-3" />
+            <span>Zoom+</span>
+          </button>
+          <button
+            onClick={() => setZoomLevel((z) => Math.max(0.6, z - 0.25))}
+            className="px-2 py-1 rounded text-[10px] font-extrabold bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 cursor-pointer flex items-center gap-1"
+            title="Zoom Out"
+          >
+            <Minus className="w-3 h-3" />
+            <span>Zoom-</span>
+          </button>
+          <button
+            onClick={() => {
+              setZoomLevel(1);
+              setPanOffset({ x: 0, y: 0 });
+            }}
+            className="px-2 py-1 rounded text-[10px] font-extrabold bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 cursor-pointer flex items-center gap-1"
+            title="Reset Map View"
+          >
+            <RotateCcw className="w-3 h-3" />
+            <span>Reset</span>
+          </button>
+          <button
+            onClick={() => setShowStateLabels(!showStateLabels)}
+            className={`px-2 py-1 rounded text-[10px] font-extrabold cursor-pointer border flex items-center gap-1 ${
+              showStateLabels ? "bg-amber-400 text-slate-950 border-amber-500" : "bg-white text-slate-700 border-slate-300"
+            }`}
+            title="Toggle region/state name labels independently"
+          >
+            <Layers className="w-3 h-3" />
+            <span>Labels</span>
+          </button>
+          <button
+            onClick={() => setShowExceedancePct(!showExceedancePct)}
+            className={`px-2 py-1 rounded text-[10px] font-extrabold cursor-pointer border flex items-center gap-1 ${
+              showExceedancePct ? "bg-rose-600 text-white border-rose-700" : "bg-white text-slate-700 border-slate-300"
+            }`}
+            title="Toggle % Exceeding Permissible Limit independently"
+          >
+            <Percent className="w-3 h-3" />
+            <span>% &gt; PL</span>
+          </button>
+          {Object.keys(labelOffsets).length > 0 && (
+            <button
+              onClick={() => setLabelOffsets({})}
+              className="px-2 py-1 rounded text-[10px] font-extrabold bg-amber-500 text-slate-950 border border-amber-600 cursor-pointer flex items-center gap-1"
+              title="Reset moved labels"
+            >
+              <Move className="w-3 h-3" />
+              <span>Reset Labels</span>
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={() => setBaseMapType("vector")}
+            className={`px-2 py-1 rounded text-[10px] font-bold cursor-pointer border flex items-center gap-1 ${
+              baseMapType === "vector" ? "bg-indigo-900 text-white border-indigo-950" : "bg-white text-slate-700 border-slate-300"
+            }`}
+          >
+            <Globe className="w-3 h-3" />
+            <span>White Vector</span>
+          </button>
+          <button
+            onClick={() => setBaseMapType("esri-terrain")}
+            className={`px-2 py-1 rounded text-[10px] font-bold cursor-pointer border flex items-center gap-1 ${
+              baseMapType === "esri-terrain" ? "bg-amber-500 text-slate-950 border-amber-600" : "bg-white text-slate-700 border-slate-300"
+            }`}
+          >
+            <Mountain className="w-3 h-3" />
+            <span>Terrain</span>
+          </button>
+          <button
+            onClick={() => setIsBaseMapMenuOpen(!isBaseMapMenuOpen)}
+            className={`px-2 py-1 rounded text-[10px] font-bold cursor-pointer border flex items-center gap-1 ${
+              isBaseMapMenuOpen ? "bg-slate-800 text-amber-300 border-slate-900" : "bg-white text-slate-700 border-slate-300"
+            }`}
+            title="More Base Maps & Opacity"
+          >
+            <SlidersHorizontal className="w-3 h-3" />
+            <span>Layers</span>
+          </button>
+        </div>
+      </div>
+
+      {/* PORTRAIT 3:4 (4:3 H:W) ULTRA-HD GLOSSY MAP CANVAS (IDENTICAL TO COMPANION MAP) */}
+      <div
+        className="w-full aspect-[3/4] bg-white rounded-2xl border border-slate-200/90 overflow-hidden shadow-md ring-1 ring-slate-900/5 relative transition-all select-none cursor-grab active:cursor-grabbing flex items-center justify-center"
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -1185,31 +1293,30 @@ export default function KpiChoroplethMap({
       >
         {/* UPPER-LEFT LOCATION LOCATOR INSET MAP WINDOW */}
         {(!isStateAll(selectedState) || !isDistrictAll(selectedDistrict)) && (
-          <div className="absolute top-3 left-3 bg-white/95 backdrop-blur-md border-2 border-[#1a2356] rounded-xl p-2 shadow-xl flex flex-col items-center w-40 sm:w-44 z-30 select-none animate-in fade-in duration-200">
-            <div className="flex items-center justify-between w-full border-b border-slate-200 pb-1 mb-1">
+          <div className="absolute top-12 left-11 bg-white/95 backdrop-blur-md border-2 border-[#1a2356] rounded-xl p-1.5 shadow-xl flex flex-col items-center w-32 sm:w-36 z-30 select-none animate-in fade-in duration-200">
+            <div className="flex items-center justify-between w-full border-b border-slate-200 pb-0.5 mb-1">
               <div className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-red-600 animate-ping" />
-                <span className="text-[10px] font-black uppercase text-[#1a2356] tracking-tight">
-                  Location Locator
+                <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-ping" />
+                <span className="text-[9px] font-black uppercase text-[#1a2356] tracking-tight">
+                  Locator
                 </span>
               </div>
-              <span className="text-[9px] font-bold text-slate-600 bg-amber-100 border border-amber-300 px-1.5 py-0.2 rounded">
+              <span className="text-[8px] font-bold text-slate-600 bg-amber-100 border border-amber-300 px-1 rounded">
                 {!isDistrictAll(selectedDistrict) ? "District" : "State"}
               </span>
             </div>
 
             {/* MINI OVERVIEW MAP */}
-            <div className="w-full h-28 sm:h-32 relative flex items-center justify-center bg-slate-50 rounded-lg border border-slate-200 overflow-hidden shadow-inner">
-              <svg viewBox="0 0 600 550" className="w-full h-full">
+            <div className="w-full h-32 relative flex items-center justify-center bg-white rounded-lg border border-slate-200 overflow-hidden">
+              <svg viewBox="0 0 600 800" className="w-full h-full">
                 {geoFeatures.length > 0 ? (
-                  /* RENDER ALL UPLOADED SHAPEFILE BOUNDARIES IN THE INSET LOCATOR MAP WITH EXPLICIT SELECTION HIGHLIGHT */
                   geoFeatures.map((f: any, idx: number) => {
                     const isSelected = featureMatchesSelection(f, selectedState, selectedDistrict, districtStateMap);
                     const dPath =
                       f.geometry?.type === "Polygon"
-                        ? coordsToSvgPath(f.geometry.coordinates, 600, 550, allGeoBounds)
+                        ? coordsToSvgPath(f.geometry.coordinates, PORTRAIT_W, PORTRAIT_H, allGeoBounds)
                         : f.geometry?.type === "MultiPolygon"
-                        ? f.geometry.coordinates.map((poly: any) => coordsToSvgPath(poly, 600, 550, allGeoBounds)).join(" ")
+                        ? f.geometry.coordinates.map((poly: any) => coordsToSvgPath(poly, PORTRAIT_W, PORTRAIT_H, allGeoBounds)).join(" ")
                         : "";
                     if (!dPath) return null;
                     return (
@@ -1218,118 +1325,52 @@ export default function KpiChoroplethMap({
                         d={dPath}
                         fill={isSelected ? "#dc2626" : "#cbd5e1"}
                         fillOpacity={isSelected ? 0.95 : 0.45}
-                        stroke={isSelected ? "#7f1d1d" : "#94a3b8"}
-                        strokeWidth={isSelected ? 2.5 : 0.8}
+                        stroke={isSelected ? "#7f1d1d" : "#64748b"}
+                        strokeWidth={isSelected ? 1.5 : 0.5}
                       />
                     );
                   })
                 ) : (
-                  /* FALLBACK SIMPLIFIED INDIA MAP */
-                  INDIA_STATES_SIMPLIFIED.map((st) => {
-                    const isSelectedSt = norm(st.name) === norm(selectedState || "");
-                    return (
-                      <path
-                        key={`inset-st-${st.name}`}
-                        d={st.path}
-                        fill={isSelectedSt ? "#dc2626" : "#cbd5e1"}
-                        fillOpacity={isSelectedSt ? 0.95 : 0.45}
-                        stroke={isSelectedSt ? "#7f1d1d" : "#94a3b8"}
-                        strokeWidth={isSelectedSt ? 2.5 : 0.8}
-                      />
-                    );
-                  })
+                  <g transform="translate(-40, 22) scale(1.12, 1.44)">
+                    {INDIA_STATES_SIMPLIFIED.map((st) => {
+                      const isSelectedSt = norm(st.name) === norm(selectedState || "");
+                      return (
+                        <path
+                          key={`inset-st-${st.name}`}
+                          d={st.path}
+                          fill={isSelectedSt ? "#dc2626" : "#cbd5e1"}
+                          fillOpacity={isSelectedSt ? 0.95 : 0.45}
+                          stroke={isSelectedSt ? "#7f1d1d" : "#64748b"}
+                          strokeWidth={isSelectedSt ? 1.5 : 0.5}
+                        />
+                      );
+                    })}
+                  </g>
                 )}
 
-                {/* Pulsing Pin Marker on Selected Location Center */}
                 {selectedFeatureCenterInset ? (
                   <g transform={`translate(${selectedFeatureCenterInset[0]}, ${selectedFeatureCenterInset[1]})`}>
-                    <circle r="8" fill="#f59e0b" className="animate-ping opacity-80" />
-                    <circle r="4" fill="#dc2626" stroke="#ffffff" strokeWidth="1.5" />
+                    <circle r="14" fill="#f59e0b" className="animate-ping opacity-80" />
+                    <circle r="8" fill="#dc2626" stroke="#ffffff" strokeWidth="2.5" />
                   </g>
                 ) : selectedStateObj && selectedStateObj.center ? (
-                  <g transform={`translate(${selectedStateObj.center[0]}, ${selectedStateObj.center[1]})`}>
-                    <circle r="8" fill="#f59e0b" className="animate-ping opacity-80" />
-                    <circle r="4" fill="#dc2626" stroke="#ffffff" strokeWidth="1.5" />
+                  <g transform={`translate(${selectedStateObj.center[0] * 1.12 - 40}, ${selectedStateObj.center[1] * 1.44 + 22})`}>
+                    <circle r="14" fill="#f59e0b" className="animate-ping opacity-80" />
+                    <circle r="8" fill="#dc2626" stroke="#ffffff" strokeWidth="2.5" />
                   </g>
                 ) : null}
               </svg>
             </div>
 
-            <div className="mt-1.5 w-full text-center bg-[#1a2356] text-amber-300 font-black text-[10px] py-1 px-1 rounded-md truncate shadow-xs">
+            <div className="mt-1 w-full text-center bg-[#1a2356] text-amber-300 font-black text-[9px] py-0.5 px-1 rounded truncate shadow-xs">
               ★ {!isDistrictAll(selectedDistrict) ? `${selectedDistrict}, ${selectedState}` : selectedState}
             </div>
           </div>
         )}
 
-        {/* MAP ZOOM & LAYER CONTROLS OVERLAY */}
-        <div data-export-hide="true" className={`absolute top-3 ${(!isStateAll(selectedState) || !isDistrictAll(selectedDistrict)) ? "left-48 sm:left-52" : "left-3"} bg-white/95 backdrop-blur-xs border border-slate-200 rounded-2xl p-1.5 flex flex-col gap-1 shadow-md z-20 transition-all duration-300`}>
-          <button
-            onClick={() => setZoomLevel((z) => Math.min(3.5, z + 0.25))}
-            className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-700 transition-all cursor-pointer"
-            title="Zoom In"
-          >
-            <Plus className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setZoomLevel((z) => Math.max(0.6, z - 0.25))}
-            className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-700 transition-all cursor-pointer"
-            title="Zoom Out"
-          >
-            <Minus className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => {
-              setZoomLevel(1);
-              setPanOffset({ x: 0, y: 0 });
-            }}
-            className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-700 transition-all cursor-pointer border-t border-slate-100"
-            title="Reset Map View"
-          >
-            <RotateCcw className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setShowExceedancePct(!showExceedancePct)}
-            className={`p-1.5 rounded-xl transition-all cursor-pointer border-t border-slate-100 flex items-center justify-center ${
-              showExceedancePct ? "bg-rose-600 text-white hover:bg-rose-700 shadow-xs" : "hover:bg-slate-100 text-slate-700"
-            }`}
-            title={showExceedancePct ? "Hide % > PL on map labels" : "Show Percentage of Samples Exceeding Permissible Limit (% > PL) on map labels"}
-          >
-            <Percent className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setIsBaseMapMenuOpen(!isBaseMapMenuOpen)}
-            className={`p-1.5 rounded-xl transition-all cursor-pointer border-t border-slate-100 flex items-center justify-center ${
-              baseMapType !== "vector" ? "bg-amber-500 text-slate-950 font-black shadow-xs hover:bg-amber-400" : "hover:bg-slate-100 text-slate-700"
-            }`}
-            title="Base Map Facility: Esri Terrain, Google Earth Satellite, Esri Topo"
-          >
-            <Mountain className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setLabelOffsets({})}
-            className={`p-1.5 rounded-xl transition-all cursor-pointer border-t border-slate-100 flex items-center justify-center ${
-              Object.keys(labelOffsets).length > 0
-                ? "bg-amber-500 text-slate-950 font-extrabold shadow-xs hover:bg-amber-400"
-                : "hover:bg-slate-100 text-slate-700"
-            }`}
-            title={Object.keys(labelOffsets).length > 0 ? "Reset moved labels back to original positions" : "Label Moving Facility: Click & drag any text label on the map"}
-          >
-            <Move className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={handleExport600DpiJpeg}
-            disabled={isExportingJpeg}
-            className="p-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl transition-all cursor-pointer border-t border-amber-600 flex items-center justify-center shadow-xs disabled:opacity-50"
-            title="Save High Density 600 DPI JPEG Image (Choropleth Map Only)"
-          >
-            {isExportingJpeg ? <Loader2 className="w-4 h-4 animate-spin text-slate-950" /> : <FileImage className="w-4 h-4 text-slate-950" />}
-          </button>
-        </div>
-
         {/* BASE MAP SELECTION OVERLAY POPOVER PANEL */}
         {isBaseMapMenuOpen && (
-          <div data-export-hide="true" className={`absolute top-3 ${(!isStateAll(selectedState) || !isDistrictAll(selectedDistrict)) ? "left-60 sm:left-64" : "left-14 sm:left-16"} bg-white/98 backdrop-blur-md border border-slate-300 rounded-2xl p-3.5 shadow-2xl z-30 w-72 sm:w-80 animate-in fade-in zoom-in-95 duration-150`}>
+          <div data-export-hide="true" className="absolute top-3 right-3 bg-white/98 backdrop-blur-md border border-slate-300 rounded-2xl p-3.5 shadow-2xl z-30 w-72 sm:w-80 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-200 pb-2 mb-3">
               <div className="flex items-center gap-1.5 text-indigo-950 font-black text-xs">
                 <Mountain className="w-4 h-4 text-amber-600" />
@@ -1423,7 +1464,6 @@ export default function KpiChoroplethMap({
               </div>
             </div>
 
-            {/* OPACITY SLIDERS */}
             {baseMapType !== "vector" && (
               <div className="pt-2.5 border-t border-slate-200 space-y-3">
                 <div>
@@ -1462,321 +1502,516 @@ export default function KpiChoroplethMap({
           </div>
         )}
 
-        {/* COMPASS ROSE OVERLAY */}
-        <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-xs border border-slate-200 rounded-2xl p-2 flex flex-col items-center justify-center shadow-md z-20 pointer-events-none">
-          <span className="text-[10px] font-black text-red-600 leading-none">N</span>
-          <Compass className="w-5 h-5 text-slate-700 my-0.5" />
-        </div>
-
-        {/* MAIN SVG MAP RENDERER */}
+        {/* MAIN 3:4 (4:3 H:W) ULTRA-HD GLOSSY SVG MAP RENDERER (600 x 800 IDENTICAL TO COMPANION SPATIAL MAP) */}
         <svg
-          className="w-full h-full overflow-visible"
-          viewBox="0 0 600 550"
+          className="w-full h-full block bg-white"
+          viewBox="0 0 600 800"
           preserveAspectRatio="xMidYMid meet"
-          style={{ overflow: "visible" }}
+          shapeRendering="geometricPrecision"
+          style={{ backgroundColor: "#ffffff" }}
         >
-          <g
-            transform={`translate(${panOffset.x}, ${panOffset.y}) scale(${zoomLevel})`}
-            style={{ transformOrigin: "300px 275px" }}
-            className="transition-transform duration-75"
+          <defs>
+            <clipPath id="kpi-choropleth-clip">
+              <rect x={INNER_LEFT} y={INNER_TOP} width={INNER_W} height={INNER_H} rx="6" />
+            </clipPath>
+            <linearGradient id="kpi-hd-header-accent" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#1e3a8a" stopOpacity="0" />
+              <stop offset="20%" stopColor="#2563eb" stopOpacity="0.85" />
+              <stop offset="50%" stopColor="#06b6d4" stopOpacity="0.95" />
+              <stop offset="80%" stopColor="#2563eb" stopOpacity="0.85" />
+              <stop offset="100%" stopColor="#1e3a8a" stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="kpi-hd-gloss-sheen" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#ffffff" stopOpacity="0.28" />
+              <stop offset="38%" stopColor="#ffffff" stopOpacity="0.08" />
+              <stop offset="68%" stopColor="#ffffff" stopOpacity="0" />
+              <stop offset="100%" stopColor="#0f172a" stopOpacity="0.06" />
+            </linearGradient>
+            <linearGradient id="kpi-hd-frame-bg" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#f8fafc" stopOpacity="0.65" />
+              <stop offset="15%" stopColor="#ffffff" stopOpacity="1" />
+              <stop offset="100%" stopColor="#f8fafc" stopOpacity="0.45" />
+            </linearGradient>
+            <filter id="kpi-hd-poly-shadow" x="-12%" y="-12%" width="124%" height="128%">
+              <feDropShadow dx="0" dy="3.2" stdDeviation="4.2" floodColor="#0f172a" floodOpacity="0.18" />
+            </filter>
+            <filter id="kpi-hd-badge-shadow" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="1.8" stdDeviation="2.5" floodColor="#0f172a" floodOpacity="0.14" />
+            </filter>
+          </defs>
+
+          {/* Pure White Publication Background */}
+          <rect x="0" y="0" width="600" height="800" fill="#ffffff" />
+          <rect x={INNER_LEFT} y={INNER_TOP} width={INNER_W} height={INNER_H} rx="6" fill="url(#kpi-hd-frame-bg)" />
+
+          {/* Modern Ultra-HD Header Strip (Matches Companion IDW / Point Map) */}
+          <text
+            x="300"
+            y="16"
+            fill="#0f172a"
+            fontFamily="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+            fontSize="12.8"
+            fontWeight="800"
+            letterSpacing="-0.2"
+            textAnchor="middle"
+            dominantBaseline="middle"
           >
-            {/* LAYER 0: BASE MAP RASTER TILES LAYER (ESRI TERRAIN / GOOGLE EARTH SATELLITE / ESRI TOPO) */}
-            {baseMapType !== "vector" && baseMapTiles.length > 0 && (
-              <g id="kpi-map-basemap-layer" opacity={basemapOpacity}>
-                {baseMapTiles.map((tile) => (
-                  <image
-                    key={tile.id}
-                    href={tile.url}
-                    x={tile.x}
-                    y={tile.y}
-                    width={tile.width}
-                    height={tile.height}
-                    preserveAspectRatio="none"
-                  />
-                ))}
-              </g>
-            )}
+            {`Choropleth Exceedance Map of ${toProperCase(paramName)} (${activeParam}) — ${scopeLabel}`}
+          </text>
+          <text
+            x="300"
+            y="31.5"
+            fill="#475569"
+            fontFamily="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+            fontSize="9.8"
+            fontWeight="600"
+            textAnchor="middle"
+            dominantBaseline="middle"
+          >
+            {`BIS IS 10500:2012 (PL: ${activeParam.toLowerCase() === "ph" ? "6.5–8.5" : `${b2} ${activeConfig?.unit || ""}`})  •  Level: ${toProperCase(reportingLevel)}`}
+          </text>
+          <rect x={INNER_LEFT + 28} y="40" width={INNER_W - 56} height="1.2" rx="0.6" fill="url(#kpi-hd-header-accent)" />
 
-            {/* LAYER 1: POLYGONS LAYER */}
-            <g id="kpi-map-polygons-layer">
-              {filteredGeoFeatures.length > 0 ? (
-                filteredGeoFeatures.map((feature: any, idx: number) => {
-                  const { displayName, metric } = getFeatureMetricAndName(feature);
-                  const { color, label } = getRegionColor(metric.pct);
+          {/* Subtle Modern Dashed Graticule Grid Inside Plot */}
+          <g stroke="rgba(148, 163, 184, 0.24)" strokeWidth="0.45" strokeDasharray="3 3" pointerEvents="none">
+            {[1, 2, 3].map((i) => {
+              const gx = INNER_LEFT + (i / 4) * INNER_W;
+              const gy = INNER_TOP + (i / 4) * INNER_H;
+              return (
+                <React.Fragment key={`grid-${i}`}>
+                  <line x1={gx} y1={INNER_TOP} x2={gx} y2={INNER_TOP + INNER_H} />
+                  <line x1={INNER_LEFT} y1={gy} x2={INNER_LEFT + INNER_W} y2={gy} />
+                </React.Fragment>
+              );
+            })}
+          </g>
 
-                  const dPath =
-                    feature.geometry?.type === "Polygon"
-                      ? coordsToSvgPath(feature.geometry.coordinates)
-                      : feature.geometry?.type === "MultiPolygon"
-                      ? feature.geometry.coordinates.map((poly: any) => coordsToSvgPath(poly)).join(" ")
-                      : "";
-
-                  if (!dPath) return null;
-
-                  return (
-                    <path
-                      key={`geo-poly-${idx}`}
-                      d={dPath}
-                      fill={metric.total > 0 ? color : "#e2e8f0"}
-                      fillOpacity={baseMapType !== "vector" ? polygonOpacity : 0.88}
-                      stroke="#ffffff"
-                      strokeWidth={0.8 / zoomLevel}
-                      className="transition-all duration-150 cursor-pointer hover:fill-opacity-100 hover:stroke-indigo-900"
-                      onMouseEnter={(e) => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        setHoveredRegion({
-                          name: displayName,
-                          total: metric.total,
-                          exceed: metric.exceed,
-                          pct: metric.pct,
-                          meanVal: metric.validCount > 0 ? metric.sum / metric.validCount : null,
-                          x: rect.left + rect.width / 2,
-                          y: rect.top - 10,
-                          color,
-                          rangeLabel: label
-                        });
-                      }}
-                      onMouseLeave={() => setHoveredRegion(null)}
+          <g clipPath="url(#kpi-choropleth-clip)">
+            <g
+              transform={`translate(${panOffset.x}, ${panOffset.y}) scale(${zoomLevel})`}
+              style={{ transformOrigin: "314px 408px" }}
+              className="transition-transform duration-75"
+            >
+              {/* LAYER 0: BASE MAP RASTER TILES LAYER */}
+              {baseMapType !== "vector" && baseMapTiles.length > 0 && (
+                <g id="kpi-map-basemap-layer" opacity={basemapOpacity}>
+                  {baseMapTiles.map((tile) => (
+                    <image
+                      key={tile.id}
+                      href={tile.url}
+                      x={tile.x}
+                      y={tile.y}
+                      width={tile.width}
+                      height={tile.height}
+                      preserveAspectRatio="none"
                     />
-                  );
-                })
-              ) : (
-                /* FALLBACK BUILT-IN SIMPLIFIED INDIA MAP POLYGONS */
-                INDIA_STATES_SIMPLIFIED.map((st) => {
-                  const normName = norm(st.name);
-                  const isSelSt = !isStateAll(selectedState) && normName === norm(selectedState || "");
-                  const isOtherStFaded = !isStateAll(selectedState) && !isSelSt;
-
-                  const metric = regionMetricsMap[normName] || { total: 0, exceed: 0, pct: 0, sum: 0, validCount: 0 };
-                  const { color, label } = getRegionColor(metric.pct);
-
-                  return (
-                    <path
-                      key={`st-poly-${st.name}`}
-                      d={st.path}
-                      fill={isOtherStFaded ? "#f1f5f9" : color}
-                      fillOpacity={isOtherStFaded ? 0.25 : 0.88}
-                      stroke={isSelSt ? "#1a2356" : "#ffffff"}
-                      strokeWidth={(isSelSt ? 2.5 : 1.2) / zoomLevel}
-                      className="transition-all duration-200 cursor-pointer hover:fill-opacity-100 hover:stroke-indigo-950"
-                      onMouseEnter={(e) => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        setHoveredRegion({
-                          name: st.name,
-                          total: metric.total,
-                          exceed: metric.exceed,
-                          pct: metric.pct,
-                          meanVal: metric.validCount > 0 ? metric.sum / metric.validCount : null,
-                          x: rect.left + rect.width / 2,
-                          y: rect.top - 10,
-                          color,
-                          rangeLabel: label
-                        });
-                      }}
-                      onMouseLeave={() => setHoveredRegion(null)}
-                    />
-                  );
-                })
+                  ))}
+                </g>
               )}
-            </g>
 
-            {/* LAYER 2: UPPER TEXT LABELS LAYER (Renders on top of all polygons) */}
-            {showStateLabels && (
-              <g id="kpi-map-labels-upper-layer">
+              {/* LAYER 1: GLOSSY 3D-ELEVATED POLYGONS LAYER (0.5px HD BOUNDARIES) */}
+              <g id="kpi-map-polygons-layer" filter={baseMapType === "vector" ? "url(#kpi-hd-poly-shadow)" : undefined}>
                 {filteredGeoFeatures.length > 0 ? (
                   filteredGeoFeatures.map((feature: any, idx: number) => {
                     const { displayName, metric } = getFeatureMetricAndName(feature);
-                    const centroid = getFeatureProjectedCenter(feature, 600, 550, mainGeoBounds);
-                    if (!centroid) return null;
+                    const { color, label } = getRegionColor(metric.pct);
 
-                    const labelKey = `geo-${displayName}-${idx}`;
-                    const offset = labelOffsets[labelKey] || { x: 0, y: 0 };
-                    const showPct = showExceedancePct;
+                    const dPath =
+                      feature.geometry?.type === "Polygon"
+                        ? coordsToSvgPath(feature.geometry.coordinates)
+                        : feature.geometry?.type === "MultiPolygon"
+                        ? feature.geometry.coordinates.map((poly: any) => coordsToSvgPath(poly)).join(" ")
+                        : "";
 
-                    const lx = centroid[0] + offset.x;
-                    const ly = centroid[1] + offset.y;
-
-                    const nameY = showPct ? ly - (4.0 / zoomLevel) : ly;
-                    const pctY = ly + (5.0 / zoomLevel);
-
-                    const isShifted = Math.abs(offset.x) > 0.5 || Math.abs(offset.y) > 0.5;
-
-                    const textLen = Math.max(displayName.length, showPct ? 6 : 0);
-                    const bgW = Math.max(26 / zoomLevel, (textLen * 5.4 + 6) / zoomLevel);
-                    const bgH = (showPct ? 20 : 13) / zoomLevel;
-                    const bgX = lx - bgW / 2;
-                    const bgY = ly - bgH / 2;
+                    if (!dPath) return null;
 
                     return (
-                      <g
-                        key={`geo-label-grp-${idx}`}
-                        className="cursor-grab active:cursor-grabbing select-none"
-                      >
-                        {/* Name Text Halo Outline */}
-                        <text
-                          x={lx}
-                          y={nameY}
-                          fill="none"
-                          stroke="#ffffff"
-                          strokeWidth={3.5 / zoomLevel}
+                      <g key={`geo-poly-${idx}`}>
+                        <path
+                          d={dPath}
+                          fill={metric.total > 0 ? color : "#e2e8f0"}
+                          fillOpacity={baseMapType !== "vector" ? polygonOpacity : 0.94}
+                          stroke="#0f172a"
+                          strokeOpacity="0.82"
+                          strokeWidth={0.5 / zoomLevel}
                           strokeLinejoin="round"
-                          fontSize={Math.max(6.5, 9.5 / zoomLevel)}
-                          fontWeight="900"
-                          textAnchor="middle"
-                          dominantBaseline="central"
-                          pointerEvents="none"
-                        >
-                          {displayName}
-                        </text>
-
-                        {/* Name Text Fill */}
-                        <text
-                          x={lx}
-                          y={nameY}
-                          fill="#0f172a"
-                          fontSize={Math.max(6.5, 9.5 / zoomLevel)}
-                          fontWeight="900"
-                          textAnchor="middle"
-                          dominantBaseline="central"
-                          pointerEvents="all"
-                          className="cursor-grab active:cursor-grabbing hover:fill-amber-600 transition-colors"
-                          onMouseDown={(e) => startLabelDrag(e, labelKey)}
-                        >
-                          {displayName}
-                        </text>
-
-                        {/* Percentage Exceedance Text Label with Halo */}
-                        {showPct && (
-                          <>
-                            <text
-                              x={lx}
-                              y={pctY}
-                              fill="none"
-                              stroke="#ffffff"
-                              strokeWidth={3.5 / zoomLevel}
-                              strokeLinejoin="round"
-                              fontSize={Math.max(5.5, 8.5 / zoomLevel)}
-                              fontWeight="900"
-                              textAnchor="middle"
-                              dominantBaseline="central"
-                              pointerEvents="none"
-                            >
-                              {metric.pct.toFixed(1)}%
-                            </text>
-                            <text
-                              x={lx}
-                              y={pctY}
-                              fill={metric.pct > 0 ? "#b91c1c" : "#047857"}
-                              fontSize={Math.max(5.5, 8.5 / zoomLevel)}
-                              fontWeight="900"
-                              textAnchor="middle"
-                              dominantBaseline="central"
-                              pointerEvents="all"
-                              className="cursor-grab active:cursor-grabbing"
-                              onMouseDown={(e) => startLabelDrag(e, labelKey)}
-                            >
-                              {metric.pct.toFixed(1)}%
-                            </text>
-                          </>
+                          strokeLinecap="round"
+                          className="transition-all duration-150 cursor-pointer hover:fill-opacity-100"
+                          onMouseEnter={(e) => {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setHoveredRegion({
+                              name: displayName,
+                              total: metric.total,
+                              exceed: metric.exceed,
+                              pct: metric.pct,
+                              meanVal: metric.validCount > 0 ? metric.sum / metric.validCount : null,
+                              x: rect.left + rect.width / 2,
+                              y: rect.top - 10,
+                              color,
+                              rangeLabel: label
+                            });
+                          }}
+                          onMouseLeave={() => setHoveredRegion(null)}
+                        />
+                        {baseMapType === "vector" && (
+                          <path
+                            d={dPath}
+                            fill="url(#kpi-hd-gloss-sheen)"
+                            stroke="none"
+                            pointerEvents="none"
+                          />
                         )}
                       </g>
                     );
                   })
                 ) : (
-                  INDIA_STATES_SIMPLIFIED.map((st) => {
-                    const normName = norm(st.name);
-                    const metric = regionMetricsMap[normName] || { total: 0, exceed: 0, pct: 0, sum: 0, validCount: 0 };
-                    const labelKey = `st-${st.name}`;
-                    const offset = labelOffsets[labelKey] || { x: 0, y: 0 };
-                    const showPct = showExceedancePct;
+                  <g transform="translate(-40, 22) scale(1.12, 1.44)">
+                    {INDIA_STATES_SIMPLIFIED.map((st) => {
+                      const normName = norm(st.name);
+                      const isSelSt = !isStateAll(selectedState) && normName === norm(selectedState || "");
+                      const isOtherStFaded = !isStateAll(selectedState) && !isSelSt;
 
-                    const lx = st.center[0] + offset.x;
-                    const ly = st.center[1] + offset.y;
+                      const metric = regionMetricsMap[normName] || { total: 0, exceed: 0, pct: 0, sum: 0, validCount: 0 };
+                      const { color, label } = getRegionColor(metric.pct);
 
-                    const nameY = showPct ? ly - (4.0 / zoomLevel) : ly;
-                    const pctY = ly + (5.0 / zoomLevel);
-
-                    const isShifted = Math.abs(offset.x) > 0.5 || Math.abs(offset.y) > 0.5;
-
-                    return (
-                      <g
-                        key={`st-label-grp-${st.name}`}
-                        className="cursor-grab active:cursor-grabbing select-none"
-                      >
-                        {/* State Name Halo Outline */}
-                        <text
-                          x={lx}
-                          y={nameY}
-                          fill="none"
-                          stroke="#ffffff"
-                          strokeWidth={3.5 / zoomLevel}
-                          strokeLinejoin="round"
-                          fontSize={Math.max(6.5, 9.5 / zoomLevel)}
-                          fontWeight="900"
-                          textAnchor="middle"
-                          dominantBaseline="central"
-                          pointerEvents="none"
-                        >
-                          {st.name}
-                        </text>
-
-                        {/* State Name Fill */}
-                        <text
-                          x={lx}
-                          y={nameY}
-                          fill="#0f172a"
-                          fontSize={Math.max(6.5, 9.5 / zoomLevel)}
-                          fontWeight="900"
-                          textAnchor="middle"
-                          dominantBaseline="central"
-                          pointerEvents="all"
-                          className="cursor-grab active:cursor-grabbing hover:fill-amber-600 transition-colors"
-                          onMouseDown={(e) => startLabelDrag(e, labelKey)}
-                        >
-                          {st.name}
-                        </text>
-
-                        {/* Percentage Exceedance Text Label with Halo */}
-                        {showPct && (
-                          <>
-                            <text
-                              x={lx}
-                              y={pctY}
-                              fill="none"
-                              stroke="#ffffff"
-                              strokeWidth={3.5 / zoomLevel}
-                              strokeLinejoin="round"
-                              fontSize={Math.max(5.5, 8.5 / zoomLevel)}
-                              fontWeight="900"
-                              textAnchor="middle"
-                              dominantBaseline="central"
+                      return (
+                        <g key={`st-poly-${st.name}`}>
+                          <path
+                            d={st.path}
+                            fill={isOtherStFaded ? "#f1f5f9" : color}
+                            fillOpacity={isOtherStFaded ? 0.35 : 0.94}
+                            stroke={isSelSt ? "#0f172a" : "#1e293b"}
+                            strokeOpacity={isSelSt ? 0.95 : 0.78}
+                            strokeWidth={(isSelSt ? 0.85 : 0.5) / zoomLevel}
+                            strokeLinejoin="round"
+                            strokeLinecap="round"
+                            className="transition-all duration-200 cursor-pointer hover:fill-opacity-100"
+                            onMouseEnter={(e) => {
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              setHoveredRegion({
+                                name: st.name,
+                                total: metric.total,
+                                exceed: metric.exceed,
+                                pct: metric.pct,
+                                meanVal: metric.validCount > 0 ? metric.sum / metric.validCount : null,
+                                x: rect.left + rect.width / 2,
+                                y: rect.top - 10,
+                                color,
+                                rangeLabel: label
+                              });
+                            }}
+                            onMouseLeave={() => setHoveredRegion(null)}
+                          />
+                          {!isOtherStFaded && (
+                            <path
+                              d={st.path}
+                              fill="url(#kpi-hd-gloss-sheen)"
+                              stroke="none"
                               pointerEvents="none"
-                            >
-                              {metric.pct.toFixed(1)}%
-                            </text>
-                            <text
-                              x={lx}
-                              y={pctY}
-                              fill={metric.pct > 0 ? "#b91c1c" : "#047857"}
-                              fontSize={Math.max(5.5, 8.5 / zoomLevel)}
-                              fontWeight="900"
-                              textAnchor="middle"
-                              dominantBaseline="central"
-                              pointerEvents="all"
-                              className="cursor-grab active:cursor-grabbing"
-                              onMouseDown={(e) => startLabelDrag(e, labelKey)}
-                            >
-                              {metric.pct.toFixed(1)}%
-                            </text>
-                          </>
-                        )}
-                      </g>
-                    );
-                  })
+                            />
+                          )}
+                        </g>
+                      );
+                    })}
+                  </g>
                 )}
               </g>
-            )}
+
+              {/* LAYER 2: INDEPENDENT HIGH-DENSITY LABELS & PERCENTAGE LAYER */}
+              {(showStateLabels || showExceedancePct) && (
+                <g
+                  id="kpi-map-labels-upper-layer"
+                  fontFamily="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+                >
+                  {filteredGeoFeatures.length > 0 ? (
+                    filteredGeoFeatures.map((feature: any, idx: number) => {
+                      const { displayName, metric } = getFeatureMetricAndName(feature);
+                      const centroid = getFeatureProjectedCenter(feature, PORTRAIT_W, PORTRAIT_H, mainGeoBounds);
+                      if (!centroid) return null;
+
+                      const labelKey = `geo-${displayName}-${idx}`;
+                      const offset = labelOffsets[labelKey] || { x: 0, y: 0 };
+                      const showNames = showStateLabels;
+                      const showPct = showExceedancePct;
+
+                      const lx = centroid[0] + offset.x;
+                      const ly = centroid[1] + offset.y;
+
+                      const nameY = showNames && showPct ? ly - (5.2 / zoomLevel) : ly;
+                      const pctY = showNames && showPct ? ly + (6.2 / zoomLevel) : ly;
+
+                      return (
+                        <g
+                          key={`geo-label-grp-${idx}`}
+                          className="cursor-grab active:cursor-grabbing select-none"
+                        >
+                          {showNames && (
+                            <>
+                              <text
+                                x={lx}
+                                y={nameY}
+                                fill="none"
+                                stroke="#ffffff"
+                                strokeOpacity="0.96"
+                                strokeWidth={3.6 / zoomLevel}
+                                strokeLinejoin="round"
+                                fontSize={Math.max(7.8, 10 / zoomLevel)}
+                                fontWeight="800"
+                                textAnchor="middle"
+                                dominantBaseline="central"
+                                pointerEvents="none"
+                              >
+                                {displayName}
+                              </text>
+                              <text
+                                x={lx}
+                                y={nameY}
+                                fill="#0f172a"
+                                fontSize={Math.max(7.8, 10 / zoomLevel)}
+                                fontWeight="800"
+                                textAnchor="middle"
+                                dominantBaseline="central"
+                                pointerEvents="all"
+                                className="cursor-grab active:cursor-grabbing hover:fill-blue-700 transition-colors"
+                                onMouseDown={(e) => startLabelDrag(e, labelKey)}
+                              >
+                                {displayName}
+                              </text>
+                            </>
+                          )}
+
+                          {showPct && (
+                            <>
+                              <text
+                                x={lx}
+                                y={pctY}
+                                fill="none"
+                                stroke="#ffffff"
+                                strokeOpacity="0.96"
+                                strokeWidth={3.4 / zoomLevel}
+                                strokeLinejoin="round"
+                                fontSize={Math.max(7.2, 9.2 / zoomLevel)}
+                                fontWeight="800"
+                                textAnchor="middle"
+                                dominantBaseline="central"
+                                pointerEvents="none"
+                              >
+                                {metric.pct.toFixed(1)}%
+                              </text>
+                              <text
+                                x={lx}
+                                y={pctY}
+                                fill={metric.pct > 0 ? "#b91c1c" : "#047857"}
+                                fontSize={Math.max(7.2, 9.2 / zoomLevel)}
+                                fontWeight="800"
+                                textAnchor="middle"
+                                dominantBaseline="central"
+                                pointerEvents="all"
+                                className="cursor-grab active:cursor-grabbing"
+                                onMouseDown={(e) => startLabelDrag(e, labelKey)}
+                              >
+                                {metric.pct.toFixed(1)}%
+                              </text>
+                            </>
+                          )}
+                        </g>
+                      );
+                    })
+                  ) : (
+                    INDIA_STATES_SIMPLIFIED.map((st) => {
+                      const normName = norm(st.name);
+                      const metric = regionMetricsMap[normName] || { total: 0, exceed: 0, pct: 0, sum: 0, validCount: 0 };
+                      const labelKey = `st-${st.name}`;
+                      const offset = labelOffsets[labelKey] || { x: 0, y: 0 };
+                      const showNames = showStateLabels;
+                      const showPct = showExceedancePct;
+
+                      const lx = st.center[0] * 1.12 - 40 + offset.x;
+                      const ly = st.center[1] * 1.44 + 22 + offset.y;
+
+                      const nameY = showNames && showPct ? ly - (5.2 / zoomLevel) : ly;
+                      const pctY = showNames && showPct ? ly + (6.2 / zoomLevel) : ly;
+
+                      return (
+                        <g
+                          key={`st-label-grp-${st.name}`}
+                          className="cursor-grab active:cursor-grabbing select-none"
+                        >
+                          {showNames && (
+                            <>
+                              <text
+                                x={lx}
+                                y={nameY}
+                                fill="none"
+                                stroke="#ffffff"
+                                strokeOpacity="0.96"
+                                strokeWidth={3.6 / zoomLevel}
+                                strokeLinejoin="round"
+                                fontSize={Math.max(7.8, 10 / zoomLevel)}
+                                fontWeight="800"
+                                textAnchor="middle"
+                                dominantBaseline="central"
+                                pointerEvents="none"
+                              >
+                                {st.name}
+                              </text>
+                              <text
+                                x={lx}
+                                y={nameY}
+                                fill="#0f172a"
+                                fontSize={Math.max(7.8, 10 / zoomLevel)}
+                                fontWeight="800"
+                                textAnchor="middle"
+                                dominantBaseline="central"
+                                pointerEvents="all"
+                                className="cursor-grab active:cursor-grabbing hover:fill-blue-700 transition-colors"
+                                onMouseDown={(e) => startLabelDrag(e, labelKey)}
+                              >
+                                {st.name}
+                              </text>
+                            </>
+                          )}
+
+                          {showPct && (
+                            <>
+                              <text
+                                x={lx}
+                                y={pctY}
+                                fill="none"
+                                stroke="#ffffff"
+                                strokeOpacity="0.96"
+                                strokeWidth={3.4 / zoomLevel}
+                                strokeLinejoin="round"
+                                fontSize={Math.max(7.2, 9.2 / zoomLevel)}
+                                fontWeight="800"
+                                textAnchor="middle"
+                                dominantBaseline="central"
+                                pointerEvents="none"
+                              >
+                                {metric.pct.toFixed(1)}%
+                              </text>
+                              <text
+                                x={lx}
+                                y={pctY}
+                                fill={metric.pct > 0 ? "#b91c1c" : "#047857"}
+                                fontSize={Math.max(7.2, 9.2 / zoomLevel)}
+                                fontWeight="800"
+                                textAnchor="middle"
+                                dominantBaseline="central"
+                                pointerEvents="all"
+                                className="cursor-grab active:cursor-grabbing"
+                                onMouseDown={(e) => startLabelDrag(e, labelKey)}
+                              >
+                                {metric.pct.toFixed(1)}%
+                              </text>
+                            </>
+                          )}
+                        </g>
+                      );
+                    })
+                  )}
+                </g>
+              )}
+            </g>
           </g>
+
+          {/* Sleek Modern Glossy North Compass Badge (Top-Right inside frame) */}
+          <g transform={`translate(${INNER_LEFT + INNER_W - 26}, ${INNER_TOP + 26})`} filter="url(#kpi-hd-badge-shadow)" pointerEvents="none">
+            <circle r="15.5" fill="rgba(255,255,255,0.94)" stroke="#cbd5e1" strokeWidth="0.7" />
+            <circle r="13.2" fill="none" stroke="rgba(148,163,184,0.35)" strokeWidth="0.5" />
+            <text
+              x="0"
+              y="-8.2"
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fill="#e11d48"
+              fontFamily="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+              fontSize="8.5"
+              fontWeight="800"
+            >
+              N
+            </text>
+            <polygon points="0,-3.5 3.6,7.2 0,4.2" fill="#0f172a" />
+            <polygon points="0,-3.5 -3.6,7.2 0,4.2" fill="#f1f5f9" stroke="#334155" strokeWidth="0.55" strokeLinejoin="round" />
+          </g>
+
+          {/* Sleek Modern Glossy Scale Pill (Bottom-Left inside frame) */}
+          <g transform={`translate(${INNER_LEFT + 14}, ${INNER_TOP + INNER_H - 18})`} filter="url(#kpi-hd-badge-shadow)" pointerEvents="none">
+            <rect x="-6" y="-15" width={scaleKmBar.barPx + 30} height="23" rx="5" fill="rgba(255,255,255,0.92)" stroke="#e2e8f0" strokeWidth="0.6" />
+            <rect x="0" y="0" width={scaleKmBar.barPx / 2} height="4" rx="1" fill="#0f172a" />
+            <rect x="0" y="0" width={scaleKmBar.barPx} height="4" rx="1" fill="none" stroke="#334155" strokeWidth="0.6" />
+            <text
+              x="0"
+              y="-3.5"
+              textAnchor="start"
+              fill="#0f172a"
+              fontFamily="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+              fontSize="8.5"
+              fontWeight="700"
+            >
+              0
+            </text>
+            <text
+              x={scaleKmBar.barPx + 17}
+              y="-3.5"
+              textAnchor="end"
+              fill="#0f172a"
+              fontFamily="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+              fontSize="8.5"
+              fontWeight="700"
+            >
+              {`${scaleKmBar.barKm} km`}
+            </text>
+          </g>
+
+          {/* Clean Modern Coordinate Ticks (°E & °N) */}
+          <g
+            fontFamily="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+            fontSize="8.8"
+            fontWeight="700"
+            fill="#475569"
+            pointerEvents="none"
+          >
+            {[0, 0.25, 0.5, 0.75, 1].map((frac, i) => {
+              const lngVal = portraitStats.b.minX + frac * (portraitStats.b.maxX - portraitStats.b.minX);
+              const tx = portraitStats.ox + frac * (portraitStats.b.maxX - portraitStats.b.minX) * portraitStats.cosLat * portraitStats.scale;
+              const latVal = portraitStats.b.minY + frac * (portraitStats.b.maxY - portraitStats.b.minY);
+              const ty = portraitStats.oy + (1 - frac) * portraitStats.drawnH;
+              return (
+                <React.Fragment key={`tick-${i}`}>
+                  {tx >= INNER_LEFT && tx <= INNER_LEFT + INNER_W && (
+                    <>
+                      <line x1={tx} y1={INNER_TOP + INNER_H} x2={tx} y2={INNER_TOP + INNER_H + 4} stroke="#94a3b8" strokeWidth="0.7" />
+                      <text x={tx} y={INNER_TOP + INNER_H + 14} textAnchor="middle">
+                        {`${lngVal.toFixed(1)}°E`}
+                      </text>
+                    </>
+                  )}
+                  {ty >= INNER_TOP && ty <= INNER_TOP + INNER_H && (
+                    <>
+                      <line x1={INNER_LEFT - 4} y1={ty} x2={INNER_LEFT} y2={ty} stroke="#94a3b8" strokeWidth="0.7" />
+                      <text x={INNER_LEFT - 7} y={ty + 3} textAnchor="end">
+                        {`${latVal.toFixed(1)}°N`}
+                      </text>
+                    </>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </g>
+
+          {/* Sleek Modern Hairline Plot Frame */}
+          <rect
+            x={INNER_LEFT}
+            y={INNER_TOP}
+            width={INNER_W}
+            height={INNER_H}
+            rx="6"
+            fill="none"
+            stroke="#94a3b8"
+            strokeWidth="0.65"
+            pointerEvents="none"
+          />
         </svg>
 
         {/* FLOATING HOVER TOOLTIP CARD */}

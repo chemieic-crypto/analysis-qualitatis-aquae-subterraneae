@@ -1,3 +1,5 @@
+import { domToCanvas } from "modern-screenshot";
+
 export const hexToRgb = (hexStr: string) => {
   const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
   const fullHex = hexStr.replace(shorthandRegex, (_, r, g, b) => r + r + g + g + b + b);
@@ -236,21 +238,26 @@ export const sanitizeColorsForHtml2canvas = (clonedDoc: Document) => {
             }
           }
 
-          // Fix box shadows with inset or multiple layers that html2canvas cannot render
+          // Sanitize oklch/oklab inside box shadows instead of flattening glossy multi-layer depth
           const bs = el.style.boxShadow;
-          if (bs && (bs.includes("inset") || bs.split(",").length > 2)) {
-            el.style.boxShadow = "0 4px 12px rgba(0, 0, 0, 0.08)";
+          if (bs && (bs.toLowerCase().includes("oklch") || bs.toLowerCase().includes("oklab"))) {
+            el.style.boxShadow = replaceOklabAndOklchNested(bs);
           }
 
-          // Prevent text clipping in html2canvas caused by explicit collapsed line-height
+          // Prevent text clipping in html2canvas caused by Tailwind .truncate or collapsed line-height
           const tagName = el.tagName.toLowerCase();
-          if (["span", "p", "h1", "h2", "h3", "h4", "h5", "h6", "div", "b", "strong", "a"].includes(tagName)) {
+          if (["span", "p", "h1", "h2", "h3", "h4", "h5", "h6", "div", "b", "strong", "a", "label"].includes(tagName)) {
+            if (el.classList.contains("truncate")) {
+              el.classList.remove("truncate");
+            }
             el.style.setProperty("overflow", "visible", "important");
+            el.style.setProperty("overflow-x", "visible", "important");
+            el.style.setProperty("overflow-y", "visible", "important");
             el.style.setProperty("text-overflow", "clip", "important");
 
             const lh = el.style.lineHeight;
             if (lh === "1" || lh === "none" || (lh && lh.includes("none"))) {
-              el.style.setProperty("line-height", "1.35", "important");
+              el.style.setProperty("line-height", "1.4", "important");
             }
           }
 
@@ -578,4 +585,84 @@ export const safeHtml2canvas = async (
       } catch (e) {}
     }
   }
+};
+
+/**
+ * Ultra-HD Glossy DOM-to-Canvas Capture
+ * Uses modern-screenshot (native browser SVG foreignObject rendering) so:
+ *  - Zero text baseline shifting or vertical clipping (exact GUI parity)
+ *  - Preserves 100% of glossy glassmorphic gradients, inset highlights, drop shadows, SVG filters & Canvas plots
+ * Falls back cleanly to safeHtml2canvas if foreignObject serialization or CORS taints the canvas.
+ */
+export const captureGlossyCanvas = async (
+  element: HTMLElement,
+  options?: {
+    scale?: number;
+    backgroundColor?: string;
+    onclone?: (clonedDoc: Document, clonedEl: HTMLElement) => void;
+  }
+): Promise<HTMLCanvasElement> => {
+  const requestedScale = options?.scale ?? 3;
+  const bg = options?.backgroundColor ?? "#ffffff";
+  const w = Math.max(1, element.offsetWidth || element.scrollWidth || 1200);
+  const h = Math.max(1, element.offsetHeight || element.scrollHeight || 800);
+  // Keep within browser max canvas dimension (16384px) while keeping maximum sharpness
+  const safeScale = Math.max(1.5, Math.min(requestedScale, 13000 / Math.max(w, h)));
+
+  try {
+    const canvas = await domToCanvas(element, {
+      scale: safeScale,
+      backgroundColor: bg,
+      width: w,
+      height: h,
+      timeout: 8000,
+      filter: (node: Node) => {
+        if (node instanceof Element) {
+          if (
+            node.getAttribute("data-export-hide") === "true" ||
+            node.classList.contains("export-hide")
+          ) {
+            return false;
+          }
+          if (node.id === "draggable-crop-box") {
+            return false;
+          }
+        }
+        return true;
+      },
+      fetch: {
+        requestInit: { mode: "cors", cache: "force-cache" },
+        placeholderImage:
+          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+      },
+      features: {
+        fixSvgXmlDecode: true,
+        removeAbnormalAttributes: true,
+        removeControlCharacter: true,
+      },
+    });
+
+    if (canvas && canvas.width > 0 && canvas.height > 0) {
+      // Verify the canvas is not CORS-tainted before returning
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.getImageData(0, 0, 1, 1);
+      }
+      return canvas;
+    }
+  } catch (err) {
+    console.warn("captureGlossyCanvas (modern-screenshot) fallback to safeHtml2canvas:", err);
+  }
+
+  return safeHtml2canvas(element, {
+    scale: Math.min(4, requestedScale),
+    useCORS: true,
+    allowTaint: false,
+    backgroundColor: bg,
+    logging: false,
+    imageTimeout: 15000,
+    scrollX: 0,
+    scrollY: 0,
+    onclone: options?.onclone,
+  });
 };

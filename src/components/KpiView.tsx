@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from "react";
-import { safeHtml2canvas } from "../utils/colorSanitizer";
+import { captureGlossyCanvas } from "../utils/colorSanitizer";
 import { DataHeaders, ShapefileLayer } from "../types";
 import { PARAM_CONFIG, hasBisLimit } from "../data/config";
 import { toProperCase } from "../utils/shapefileFilter";
@@ -51,6 +51,7 @@ import {
   Cell
 } from "recharts";
 import KpiChoroplethMap, { BaseMapType } from "./KpiChoroplethMap";
+import KpiSpatialSupplementMap from "./KpiSpatialSupplementMap";
 
 interface KpiViewProps {
   rawData: any[];
@@ -428,16 +429,10 @@ export default function KpiView({
         showToast("Generating high-density 600 DPI JPEG image...", "success");
       }
       
-      // safeHtml2canvas with scale: 4 for high resolution and allowTaint: false to prevent DOMSecurity exceptions
-      const canvas = await safeHtml2canvas(kpiSectionRef.current, {
-        scale: 4,
-        useCORS: true,
-        allowTaint: false,
+      // Capture pixel-identical glossy HD canvas (zero text cutting, preserves glassmorphism & 3D depth)
+      const canvas = await captureGlossyCanvas(kpiSectionRef.current, {
+        scale: 3,
         backgroundColor: "#f8fafc",
-        logging: false,
-        imageTimeout: 15000,
-        scrollX: 0,
-        scrollY: 0,
       });
 
       let exported = false;
@@ -1002,130 +997,124 @@ export default function KpiView({
 
       {/* TOP GLOSSY HEADER BANNER */}
       <div className={`py-4 px-6 rounded-2xl text-center flex items-center justify-center min-h-[56px] border relative overflow-hidden text-white ${activeTheme.headerBanner}`}>
+        <div className="absolute top-0 left-0 right-0 h-[48%] bg-gradient-to-b from-white/15 via-white/5 to-transparent pointer-events-none rounded-t-2xl z-0" />
         <div className={`absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r ${activeTheme.headerAccentLine} opacity-90`} />
         <h1 className="text-lg sm:text-2xl font-black tracking-tight text-white text-center leading-snug drop-shadow-md relative z-10">
           Key Indicators of {toProperCase(paramName)} ({selectedParamKey}) in Groundwater in {toProperCase(locationScopeText)}{assessmentPeriodText ? ` (${toProperCase(assessmentPeriodText)})` : ""}
         </h1>
       </div>
 
-      {/* TOP ROW - 7 KPI METRIC CARDS (ULTRA-GLOSSY 3D GLASSMOPRHIC ENHANCED) */}
+      {/* TOP ROW - 7 KPI METRIC CARDS (ULTRA-GLOSSY 3D GLASSMORPHIC ENHANCED) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-2.5">
         {/* Card 1: Samples Analysed */}
-        <div className="group relative bg-gradient-to-b from-white via-slate-50/90 to-blue-50/50 rounded-2xl p-3 border border-white/90 shadow-md shadow-blue-500/10 flex flex-col justify-between min-h-[160px] sm:min-h-[170px] border-b-[5px] border-b-blue-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-blue-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
-          {/* Specular Top Glass Sheen (Hidden during export) */}
-          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
-          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 z-10" />
+        <div className="group relative bg-gradient-to-b from-white via-slate-50/90 to-blue-50/50 rounded-2xl p-3 border border-slate-200/70 shadow-[0_12px_28px_-8px_rgba(37,99,235,0.18),inset_0_2px_0_0_rgba(255,255,255,0.95)] flex flex-col justify-between min-h-[164px] sm:min-h-[172px] border-b-[5px] border-b-blue-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-blue-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
+          <div className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 pointer-events-none z-10" />
 
           <div className="relative z-10">
             <div className="flex items-center justify-between text-slate-700 mb-1 gap-1 min-w-0">
-              <span className="text-[10px] font-black uppercase tracking-tight text-slate-800 truncate min-w-0 leading-normal">Samples Analysed</span>
+              <span className="text-[10px] font-black uppercase tracking-tight text-slate-800 leading-normal py-0.5 break-words">Samples Analysed</span>
               <Info className="w-3.5 h-3.5 text-slate-400 shrink-0 group-hover:text-blue-600 transition-colors" />
             </div>
             <div className="my-2 flex items-center gap-2 min-w-0">
-              {/* 3D Crystal Gem Badge */}
               <div className="p-2 sm:p-2.5 bg-gradient-to-br from-blue-400/20 via-blue-100 to-blue-200/90 text-blue-700 rounded-xl border border-white/90 shrink-0 shadow-md shadow-blue-500/20 relative group-hover:scale-105 transition-transform duration-300">
-                <div data-export-hide="true" className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/80 blur-[0.5px]" />
+                <div className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/85 pointer-events-none" />
                 <Droplets className="w-4 h-4 sm:w-4.5 sm:h-4.5 relative z-10" />
               </div>
               <div className="min-w-0 flex-1">
-                <span className="text-xl sm:text-2xl xl:text-2xl 2xl:text-3xl font-black text-slate-900 tracking-tight block leading-snug py-0.5 truncate" title={String(paramMetrics.totalSamples)}>
+                <span className="text-xl sm:text-2xl xl:text-2xl 2xl:text-3xl font-black text-slate-900 tracking-tight block leading-normal py-0.5" title={String(paramMetrics.totalSamples)}>
                   {paramMetrics.totalSamples}
                 </span>
               </div>
             </div>
           </div>
-          <p className="text-[9px] sm:text-[10px] font-extrabold text-slate-500 leading-normal py-0.5 border-t border-slate-200/80 truncate relative z-10">
+          <p className="text-[9px] sm:text-[10px] font-extrabold text-slate-500 leading-normal py-0.5 border-t border-slate-200/80 relative z-10 break-words">
             Background stations ({paramName})
           </p>
         </div>
 
         {/* Card 2: Samples Above Permissible Limit */}
-        <div className="group relative bg-gradient-to-b from-white via-amber-50/60 to-amber-100/50 rounded-2xl p-3 border border-white/90 shadow-md shadow-amber-500/10 flex flex-col justify-between min-h-[160px] sm:min-h-[170px] border-b-[5px] border-b-amber-500 hover:-translate-y-1 hover:shadow-lg hover:shadow-amber-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
-          {/* Specular Top Glass Sheen (Hidden during export) */}
-          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
-          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 z-10" />
+        <div className="group relative bg-gradient-to-b from-white via-amber-50/60 to-amber-100/50 rounded-2xl p-3 border border-amber-200/60 shadow-[0_12px_28px_-8px_rgba(245,158,11,0.18),inset_0_2px_0_0_rgba(255,255,255,0.95)] flex flex-col justify-between min-h-[164px] sm:min-h-[172px] border-b-[5px] border-b-amber-500 hover:-translate-y-1 hover:shadow-lg hover:shadow-amber-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
+          <div className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 pointer-events-none z-10" />
 
           <div className="relative z-10">
             <div className="flex items-center justify-between text-slate-700 mb-1 gap-1 min-w-0">
-              <span className="text-[10px] font-black uppercase tracking-tight text-amber-950 truncate min-w-0 leading-normal">Samples Above PL</span>
+              <span className="text-[10px] font-black uppercase tracking-tight text-amber-950 leading-normal py-0.5 break-words">Samples Above PL</span>
               <Info className="w-3.5 h-3.5 text-slate-400 shrink-0 group-hover:text-amber-600 transition-colors" />
             </div>
             <div className="my-2 flex items-center gap-2 min-w-0">
-              {/* 3D Crystal Gem Badge */}
               <div className="p-2 sm:p-2.5 bg-gradient-to-br from-amber-400/20 via-amber-100 to-amber-200/90 text-amber-700 rounded-xl border border-white/90 shrink-0 shadow-md shadow-amber-500/20 relative group-hover:scale-105 transition-transform duration-300">
-                <div data-export-hide="true" className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/80 blur-[0.5px]" />
+                <div className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/85 pointer-events-none" />
                 <AlertTriangle className="w-4 h-4 sm:w-4.5 sm:h-4.5 relative z-10" />
               </div>
               <div className="min-w-0 flex-1">
-                <span className="text-xl sm:text-2xl xl:text-2xl 2xl:text-3xl font-black text-amber-950 tracking-tight block leading-snug py-0.5 truncate" title={String(paramMetrics.exceedanceCount)}>
+                <span className="text-xl sm:text-2xl xl:text-2xl 2xl:text-3xl font-black text-amber-950 tracking-tight block leading-normal py-0.5" title={String(paramMetrics.exceedanceCount)}>
                   {paramMetrics.exceedanceCount}
                 </span>
               </div>
             </div>
           </div>
-          <p className="text-[9px] sm:text-[10px] font-extrabold text-amber-800/90 leading-normal py-0.5 border-t border-amber-200/80 truncate relative z-10">
+          <p className="text-[9px] sm:text-[10px] font-extrabold text-amber-800/90 leading-normal py-0.5 border-t border-amber-200/80 relative z-10 break-words">
             Exceeding (&gt; {b2} {unit})
           </p>
         </div>
 
         {/* Card 3: Percent Exceedance */}
-        <div className="group relative bg-gradient-to-b from-white via-rose-50/60 to-rose-100/50 rounded-2xl p-3 border border-white/90 shadow-md shadow-rose-500/10 flex flex-col justify-between min-h-[160px] sm:min-h-[170px] border-b-[5px] border-b-rose-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-rose-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
-          {/* Specular Top Glass Sheen (Hidden during export) */}
-          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
-          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 z-10" />
+        <div className="group relative bg-gradient-to-b from-white via-rose-50/60 to-rose-100/50 rounded-2xl p-3 border border-rose-200/60 shadow-[0_12px_28px_-8px_rgba(225,29,72,0.18),inset_0_2px_0_0_rgba(255,255,255,0.95)] flex flex-col justify-between min-h-[164px] sm:min-h-[172px] border-b-[5px] border-b-rose-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-rose-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
+          <div className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 pointer-events-none z-10" />
 
           <div className="relative z-10">
             <div className="flex items-center justify-between text-slate-700 mb-1 gap-1 min-w-0">
-              <span className="text-[10px] font-black uppercase tracking-tight text-rose-950 truncate min-w-0 leading-normal">% Exceedance</span>
+              <span className="text-[10px] font-black uppercase tracking-tight text-rose-950 leading-normal py-0.5 break-words">% Exceedance</span>
               <Info className="w-3.5 h-3.5 text-slate-400 shrink-0 group-hover:text-rose-600 transition-colors" />
             </div>
             <div className="my-2 flex items-center gap-2 min-w-0">
-              {/* 3D Crystal Gem Badge */}
               <div className="p-2 sm:p-2.5 bg-gradient-to-br from-rose-400/20 via-rose-100 to-rose-200/90 text-rose-700 rounded-xl border border-white/90 shrink-0 shadow-md shadow-rose-500/20 relative group-hover:scale-105 transition-transform duration-300">
-                <div data-export-hide="true" className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/80 blur-[0.5px]" />
+                <div className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/85 pointer-events-none" />
                 <TrendingUp className="w-4 h-4 sm:w-4.5 sm:h-4.5 relative z-10" />
               </div>
               <div className="min-w-0 flex-1">
-                <span className="text-lg sm:text-xl xl:text-xl 2xl:text-2xl font-black text-rose-700 tracking-tight block leading-snug py-0.5 truncate" title={`${paramMetrics.exceedancePct.toFixed(2)}%`}>
+                <span className="text-lg sm:text-xl xl:text-xl 2xl:text-2xl font-black text-rose-700 tracking-tight block leading-normal py-0.5" title={`${paramMetrics.exceedancePct.toFixed(2)}%`}>
                   {paramMetrics.exceedancePct.toFixed(2)}%
                 </span>
               </div>
             </div>
           </div>
-          <p className="text-[9px] sm:text-[10px] font-extrabold text-slate-500 leading-normal py-0.5 border-t border-rose-200/80 truncate relative z-10">
+          <p className="text-[9px] sm:text-[10px] font-extrabold text-slate-500 leading-normal py-0.5 border-t border-rose-200/80 relative z-10 break-words">
             Non-compliance rate
           </p>
         </div>
 
         {/* Card 4: Partially Affected Admin Units */}
-        <div className="group relative bg-gradient-to-b from-white via-purple-50/60 to-purple-100/50 rounded-2xl p-3 border border-white/90 shadow-md shadow-purple-500/10 flex flex-col justify-between min-h-[160px] sm:min-h-[170px] border-b-[5px] border-b-purple-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-purple-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
-          {/* Specular Top Glass Sheen (Hidden during export) */}
-          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
-          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 z-10" />
+        <div className="group relative bg-gradient-to-b from-white via-purple-50/60 to-purple-100/50 rounded-2xl p-3 border border-purple-200/60 shadow-[0_12px_28px_-8px_rgba(147,51,234,0.18),inset_0_2px_0_0_rgba(255,255,255,0.95)] flex flex-col justify-between min-h-[164px] sm:min-h-[172px] border-b-[5px] border-b-purple-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-purple-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
+          <div className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 pointer-events-none z-10" />
 
           <div className="relative z-10">
             <div className="flex items-center justify-between text-slate-700 mb-1 gap-1 min-w-0">
-              <span className="text-[10px] font-black uppercase tracking-tight text-purple-950 truncate min-w-0 leading-normal">
+              <span className="text-[10px] font-black uppercase tracking-tight text-purple-950 leading-normal py-0.5 break-words">
                 Partially Affected
               </span>
               <Info className="w-3.5 h-3.5 text-slate-400 shrink-0 group-hover:text-purple-600 transition-colors" />
             </div>
             <div className="my-1 space-y-1 min-w-0">
-              <div className="flex items-center justify-between text-[10px] font-bold text-slate-700 bg-white/80 px-1.5 py-1 rounded-lg border border-purple-200/80 shadow-xs min-w-0 leading-normal">
+              <div className="flex items-center justify-between text-[10px] font-bold text-slate-700 bg-white/85 px-1.5 py-1 rounded-lg border border-purple-200/80 shadow-xs min-w-0 leading-normal">
                 <span className="shrink-0 text-slate-600">States:</span>
-                <span className="font-black text-purple-950 truncate ml-1 leading-normal">
+                <span className="font-black text-purple-950 ml-1 leading-normal whitespace-nowrap">
                   {paramMetrics.affectedUnits.affectedStates} <span className="text-[9px] text-slate-400 font-semibold">/ {paramMetrics.affectedUnits.totalStates}</span>
                 </span>
               </div>
-              <div className="flex items-center justify-between text-[10px] font-bold text-slate-700 bg-white/80 px-1.5 py-1 rounded-lg border border-purple-200/80 shadow-xs min-w-0 leading-normal">
+              <div className="flex items-center justify-between text-[10px] font-bold text-slate-700 bg-white/85 px-1.5 py-1 rounded-lg border border-purple-200/80 shadow-xs min-w-0 leading-normal">
                 <span className="shrink-0 text-slate-600">Districts:</span>
-                <span className="font-black text-purple-950 truncate ml-1 leading-normal">
+                <span className="font-black text-purple-950 ml-1 leading-normal whitespace-nowrap">
                   {paramMetrics.affectedUnits.affectedDistricts} <span className="text-[9px] text-slate-400 font-semibold">/ {paramMetrics.affectedUnits.totalDistricts}</span>
                 </span>
               </div>
-              <div className="flex items-center justify-between text-[10px] font-bold text-slate-700 bg-white/80 px-1.5 py-1 rounded-lg border border-purple-200/80 shadow-xs min-w-0 leading-normal">
+              <div className="flex items-center justify-between text-[10px] font-bold text-slate-700 bg-white/85 px-1.5 py-1 rounded-lg border border-purple-200/80 shadow-xs min-w-0 leading-normal">
                 <span className="shrink-0 text-slate-600">Blocks:</span>
-                <span className="font-black text-purple-950 truncate ml-1 leading-normal">
+                <span className="font-black text-purple-950 ml-1 leading-normal whitespace-nowrap">
                   {paramMetrics.affectedUnits.totalBlocks > 0
                     ? `${paramMetrics.affectedUnits.affectedBlocks} / ${paramMetrics.affectedUnits.totalBlocks}`
                     : "N/A"}
@@ -1133,28 +1122,26 @@ export default function KpiView({
               </div>
             </div>
           </div>
-          <p className="text-[9px] sm:text-[10px] font-extrabold text-purple-900/90 leading-normal py-0.5 border-t border-purple-200/80 truncate relative z-10">
+          <p className="text-[9px] sm:text-[10px] font-extrabold text-purple-900/90 leading-normal py-0.5 border-t border-purple-200/80 relative z-10 break-words">
             Units with ≥1 sample &gt; PL
           </p>
         </div>
 
         {/* Card 5: Highest Exceedance Area */}
-        <div className="group relative bg-gradient-to-b from-white via-red-50/60 to-red-100/50 rounded-2xl p-3 border border-white/90 shadow-md shadow-red-500/10 flex flex-col justify-between min-h-[160px] sm:min-h-[170px] border-b-[5px] border-b-red-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-red-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
-          {/* Specular Top Glass Sheen (Hidden during export) */}
-          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
-          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 z-10" />
+        <div className="group relative bg-gradient-to-b from-white via-red-50/60 to-red-100/50 rounded-2xl p-3 border border-red-200/60 shadow-[0_12px_28px_-8px_rgba(220,38,38,0.18),inset_0_2px_0_0_rgba(255,255,255,0.95)] flex flex-col justify-between min-h-[164px] sm:min-h-[172px] border-b-[5px] border-b-red-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-red-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
+          <div className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 pointer-events-none z-10" />
 
           <div className="relative z-10">
             <div className="flex items-center justify-between text-slate-700 mb-1 gap-1 min-w-0">
-              <span className="text-[10px] font-black uppercase tracking-tight text-red-950 truncate min-w-0 leading-normal">
+              <span className="text-[10px] font-black uppercase tracking-tight text-red-950 leading-normal py-0.5 break-words">
                 Highest {top5LevelLabel}
               </span>
               <Info className="w-3.5 h-3.5 text-slate-400 shrink-0 group-hover:text-red-600 transition-colors" />
             </div>
             <div className="my-1.5 flex items-center gap-1.5 min-w-0">
-              {/* 3D Crystal Gem Badge */}
               <div className="p-2 sm:p-2.5 bg-gradient-to-br from-red-400/20 via-red-100 to-red-200/90 text-red-700 rounded-xl border border-white/90 shrink-0 shadow-md shadow-red-500/20 relative group-hover:scale-105 transition-transform duration-300">
-                <div data-export-hide="true" className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/80 blur-[0.5px]" />
+                <div className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/85 pointer-events-none" />
                 <MapPin className="w-4 h-4 sm:w-4.5 sm:h-4.5 relative z-10" />
               </div>
               <div className="min-w-0 flex-1 overflow-visible">
@@ -1167,211 +1154,202 @@ export default function KpiView({
               </div>
             </div>
           </div>
-          <p className="text-[9px] sm:text-[10px] font-extrabold text-slate-500 leading-normal py-0.5 border-t border-red-200/80 truncate relative z-10">
+          <p className="text-[9px] sm:text-[10px] font-extrabold text-slate-500 leading-normal py-0.5 border-t border-red-200/80 relative z-10 break-words">
             Highest non-compliant area
           </p>
         </div>
 
         {/* Card 6: BIS Permissible Limit */}
-        <div className="group relative bg-gradient-to-b from-white via-emerald-50/60 to-emerald-100/50 rounded-2xl p-3 border border-white/90 shadow-md shadow-emerald-500/10 flex flex-col justify-between min-h-[160px] sm:min-h-[170px] border-b-[5px] border-b-emerald-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-emerald-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
-          {/* Specular Top Glass Sheen (Hidden during export) */}
-          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
-          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 z-10" />
+        <div className="group relative bg-gradient-to-b from-white via-emerald-50/60 to-emerald-100/50 rounded-2xl p-3 border border-emerald-200/60 shadow-[0_12px_28px_-8px_rgba(16,185,129,0.18),inset_0_2px_0_0_rgba(255,255,255,0.95)] flex flex-col justify-between min-h-[164px] sm:min-h-[172px] border-b-[5px] border-b-emerald-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-emerald-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
+          <div className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 pointer-events-none z-10" />
 
           <div className="relative z-10">
             <div className="flex items-center justify-between text-slate-700 mb-1 gap-1 min-w-0">
-              <span className="text-[10px] font-black uppercase tracking-tight text-emerald-950 truncate min-w-0 leading-normal">BIS PL Limit</span>
+              <span className="text-[10px] font-black uppercase tracking-tight text-emerald-950 leading-normal py-0.5 break-words">BIS PL Limit</span>
               <Info className="w-3.5 h-3.5 text-slate-400 shrink-0 group-hover:text-emerald-600 transition-colors" />
             </div>
             <div className="my-2 flex items-center gap-2 min-w-0">
-              {/* 3D Crystal Gem Badge */}
               <div className="p-2 sm:p-2.5 bg-gradient-to-br from-emerald-400/20 via-emerald-100 to-emerald-200/90 text-emerald-700 rounded-xl border border-white/90 shrink-0 shadow-md shadow-emerald-500/20 relative group-hover:scale-105 transition-transform duration-300">
-                <div data-export-hide="true" className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/80 blur-[0.5px]" />
+                <div className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/85 pointer-events-none" />
                 <FileText className="w-4 h-4 sm:w-4.5 sm:h-4.5 relative z-10" />
               </div>
               <div className="min-w-0 flex-1">
-                <span className="text-xl sm:text-2xl xl:text-2xl 2xl:text-3xl font-black text-slate-900 tracking-tight block leading-snug py-0.5 truncate" title={String(b2)}>
+                <span className="text-xl sm:text-2xl xl:text-2xl 2xl:text-3xl font-black text-slate-900 tracking-tight block leading-normal py-0.5" title={String(b2)}>
                   {b2}
                 </span>
-                <span className="text-[10px] sm:text-[11px] font-bold text-slate-500 block mt-0.5 leading-normal truncate">
+                <span className="text-[10px] sm:text-[11px] font-bold text-slate-500 block mt-0.5 leading-normal break-words">
                   {unit}
                 </span>
               </div>
             </div>
           </div>
-          <p className="text-[9px] sm:text-[10px] font-extrabold text-slate-500 leading-normal py-0.5 border-t border-emerald-200/80 truncate relative z-10">
+          <p className="text-[9px] sm:text-[10px] font-extrabold text-slate-500 leading-normal py-0.5 border-t border-emerald-200/80 relative z-10 break-words">
             IS 10500:2012 Standard
           </p>
         </div>
 
         {/* Card 7: Geographical Coverage */}
-        <div className="group relative bg-gradient-to-b from-white via-teal-50/60 to-teal-100/50 rounded-2xl p-3 border border-white/90 shadow-md shadow-teal-500/10 flex flex-col justify-between min-h-[160px] sm:min-h-[170px] border-b-[5px] border-b-teal-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-teal-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
-          {/* Specular Top Glass Sheen (Hidden during export) */}
-          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
-          <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 z-10" />
+        <div className="group relative bg-gradient-to-b from-white via-teal-50/60 to-teal-100/50 rounded-2xl p-3 border border-teal-200/60 shadow-[0_12px_28px_-8px_rgba(20,184,166,0.18),inset_0_2px_0_0_rgba(255,255,255,0.95)] flex flex-col justify-between min-h-[164px] sm:min-h-[172px] border-b-[5px] border-b-teal-600 hover:-translate-y-1 hover:shadow-lg hover:shadow-teal-500/20 transition-all duration-300 ease-out min-w-0 cursor-pointer">
+          <div className="absolute top-0 left-0 right-0 h-[45%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent opacity-90 pointer-events-none z-10" />
 
           <div className="relative z-10">
             <div className="flex items-center justify-between text-slate-700 mb-1 gap-1 min-w-0">
-              <span className="text-[10px] font-black uppercase tracking-tight text-teal-950 truncate min-w-0 leading-normal">Geo Coverage</span>
+              <span className="text-[10px] font-black uppercase tracking-tight text-teal-950 leading-normal py-0.5 break-words">Geo Coverage</span>
               <Info className="w-3.5 h-3.5 text-slate-400 shrink-0 group-hover:text-teal-600 transition-colors" />
             </div>
             <div className="my-2 flex items-center gap-2 min-w-0">
-              {/* 3D Crystal Gem Badge */}
               <div className="p-2 sm:p-2.5 bg-gradient-to-br from-teal-400/20 via-teal-100 to-teal-200/90 text-teal-700 rounded-xl border border-white/90 shrink-0 shadow-md shadow-teal-500/20 relative group-hover:scale-105 transition-transform duration-300">
-                <div data-export-hide="true" className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/80 blur-[0.5px]" />
+                <div className="absolute top-0.5 left-1 w-1.5 h-1.5 rounded-full bg-white/85 pointer-events-none" />
                 <Globe className="w-4 h-4 sm:w-4.5 sm:h-4.5 relative z-10" />
               </div>
               <div className="min-w-0 flex-1">
-                <span className="text-xs sm:text-xs xl:text-xs font-black text-slate-900 tracking-tight block leading-snug py-0.5 truncate">
+                <span className="text-xs sm:text-xs xl:text-xs font-black text-slate-900 tracking-tight block leading-normal py-0.5 break-words">
                   {paramMetrics.stateCount} States/UTs
                 </span>
-                <span className="text-[10px] font-extrabold text-teal-800 block mt-0.5 leading-normal truncate">
+                <span className="text-[10px] font-extrabold text-teal-800 block mt-0.5 leading-normal break-words">
                   {paramMetrics.districtCount} Districts
                 </span>
               </div>
             </div>
           </div>
-          <p className="text-[9px] sm:text-[10px] font-extrabold text-slate-500 leading-normal py-0.5 border-t border-slate-200/80 truncate relative z-10">
+          <p className="text-[9px] sm:text-[10px] font-extrabold text-slate-500 leading-normal py-0.5 border-t border-slate-200/80 relative z-10 break-words">
             Observation network
           </p>
         </div>
       </div>
 
-      {/* MIDDLE SECTION GRID: LEFT CARDS (42%) & RIGHT SPATIAL MAP (58%) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 transition-all">
-        {/* LEFT COLUMN: 3 CARDS (Hidable) */}
-        <div className={`${showGisAnalysis ? "lg:col-span-5" : "hidden"} space-y-4 flex flex-col justify-between transition-all`}>
-          {/* CARD A: BIS STANDARD CARD */}
-          <div className="relative bg-gradient-to-b from-white via-slate-50/80 to-indigo-50/30 rounded-2xl p-4 border border-white/90 shadow-[0_16px_36px_-6px_rgba(26,35,86,0.18),0_6px_16px_-2px_rgba(0,0,0,0.04),inset_0_2px_1px_0_rgba(255,255,255,0.95)] hover:-translate-y-1 hover:shadow-[0_20px_40px_-6px_rgba(26,35,86,0.25)] transition-all duration-300 overflow-hidden">
-            <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[40%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
-            
-            <div className={`relative z-10 text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-[0_6px_14px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.3)] tracking-wide mb-3 ${activeTheme.cardHeader}`}>
-              BIS Standard: {toProperCase(paramName)} ({selectedParamKey})
-            </div>
+      {/* ANALYSIS CARDS ROW (3-COLUMN STRIP WHEN SPLIT VIEW ACTIVE) */}
+      <div className={`${showGisAnalysis ? "grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch" : "hidden"} transition-all`}>
+        {/* CARD A: BIS STANDARD CARD */}
+        <div className="relative bg-gradient-to-b from-white via-slate-50/80 to-indigo-50/30 rounded-2xl p-4 border border-slate-200/80 shadow-[0_16px_36px_-6px_rgba(26,35,86,0.16),0_6px_16px_-2px_rgba(0,0,0,0.04),inset_0_2px_1px_0_rgba(255,255,255,0.95)] hover:-translate-y-1 hover:shadow-[0_20px_40px_-6px_rgba(26,35,86,0.25)] transition-all duration-300 overflow-hidden flex flex-col justify-between">
+          <div className="absolute top-0 left-0 right-0 h-[40%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
 
-            <div className="relative z-10 flex items-center justify-between gap-4 py-1">
-              {/* Droplet Icon */}
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-cyan-400/20 via-cyan-100 to-cyan-200/90 text-cyan-900 flex items-center justify-center border border-white/90 shrink-0 shadow-[0_8px_18px_rgba(6,182,212,0.35),inset_0_2px_3px_rgba(255,255,255,1),inset_0_-2px_4px_rgba(0,0,0,0.1)] relative overflow-hidden">
-                <div data-export-hide="true" className="absolute top-0.5 left-1 w-2 h-2 rounded-full bg-white/80 blur-[0.5px]" />
-                <Droplets className="w-6 h-6 relative z-10" />
-              </div>
-
-              {/* Acceptable & Permissible Limit Pills */}
-              <div className="flex-1 space-y-2">
-                <div className="flex items-center justify-between bg-emerald-50/90 border border-emerald-300/90 rounded-xl px-3 py-1.5 shadow-[0_2px_6px_rgba(16,185,129,0.12)]">
-                  <span className="text-xs font-black text-slate-800">Acceptable</span>
-                  <span className="text-xs font-black text-emerald-800 bg-emerald-100/90 px-2.5 py-0.5 rounded-lg border border-emerald-400/80 shadow-2xs">
-                    {b1} {unit}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between bg-amber-50/90 border border-amber-300/90 rounded-xl px-3 py-1.5 shadow-[0_2px_6px_rgba(245,158,11,0.12)]">
-                  <span className="text-xs font-black text-slate-800">Permissible*</span>
-                  <span className="text-xs font-black text-amber-800 bg-amber-100/90 px-2.5 py-0.5 rounded-lg border border-amber-400/80 shadow-2xs">
-                    {b2} {unit}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <p className="relative z-10 text-[10px] text-slate-500 italic font-medium text-center mt-2">
-              *Absence of alternate source (IS 10500:2012)
-            </p>
+          <div className={`relative z-10 text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-[0_6px_14px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.3)] tracking-wide mb-3 ${activeTheme.cardHeader}`}>
+            BIS Standard: {toProperCase(paramName)} ({selectedParamKey})
           </div>
 
-          {/* CARD B: DONUT 3D CHART CARD */}
-          <div className="relative bg-gradient-to-b from-white via-slate-50/80 to-indigo-50/30 rounded-2xl p-4 border border-white/90 shadow-[0_16px_36px_-6px_rgba(26,35,86,0.18),0_6px_16px_-2px_rgba(0,0,0,0.04),inset_0_2px_1px_0_rgba(255,255,255,0.95)] hover:-translate-y-1 hover:shadow-[0_20px_40px_-6px_rgba(26,35,86,0.25)] transition-all duration-300 overflow-hidden">
-            <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[40%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
-
-            <div className={`relative z-10 text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-[0_6px_14px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.3)] tracking-wide mb-2 ${activeTheme.cardHeader}`}>
-              Compliance Status: {toProperCase(paramName)} ({selectedParamKey})
+          <div className="relative z-10 flex items-center justify-between gap-4 py-1">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-cyan-400/20 via-cyan-100 to-cyan-200/90 text-cyan-900 flex items-center justify-center border border-white/90 shrink-0 shadow-[0_8px_18px_rgba(6,182,212,0.35),inset_0_2px_3px_rgba(255,255,255,1),inset_0_-2px_4px_rgba(0,0,0,0.1)] relative overflow-hidden">
+              <div className="absolute top-0.5 left-1 w-2 h-2 rounded-full bg-white/85 pointer-events-none" />
+              <Droplets className="w-6 h-6 relative z-10" />
             </div>
 
-            <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-4 py-2">
-              {/* 3D Donut Chart Component */}
-              <Compliance3DDonutChart
-                withinCount={paramMetrics.withinCount}
-                exceedCount={paramMetrics.exceedanceCount}
-                withinPct={paramMetrics.withinPct}
-                exceedPct={paramMetrics.exceedancePct}
-                b2={b2}
-                unit={unit}
-              />
+            <div className="flex-1 space-y-2">
+              <div className="flex items-center justify-between bg-emerald-50/90 border border-emerald-300/90 rounded-xl px-3 py-1.5 shadow-[0_2px_6px_rgba(16,185,129,0.12)]">
+                <span className="text-xs font-black text-slate-800 leading-normal">Acceptable</span>
+                <span className="text-xs font-black text-emerald-800 bg-emerald-100/90 px-2.5 py-0.5 rounded-lg border border-emerald-400/80 shadow-2xs leading-normal">
+                  {b1} {unit}
+                </span>
+              </div>
 
-              {/* Donut Legend */}
-              <div className="space-y-3 flex-1 text-xs w-full">
-                <div className="flex items-center justify-between font-bold border-b border-slate-200/80 pb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="w-3.5 h-3.5 rounded-md bg-emerald-500 shadow-[0_2px_6px_rgba(16,185,129,0.4)] border border-emerald-600 shrink-0" />
-                    <span className="text-slate-700">Within Limit (≤{b2})</span>
-                  </div>
-                  <span className="text-slate-900 font-black">
-                    {paramMetrics.withinCount}{" "}
-                    <span className="text-emerald-700 text-[11px]">({paramMetrics.withinPct.toFixed(2)}%)</span>
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between font-bold">
-                  <div className="flex items-center gap-2">
-                    <span className="w-3.5 h-3.5 rounded-md bg-amber-500 shadow-[0_2px_6px_rgba(245,158,11,0.4)] border border-amber-600 shrink-0" />
-                    <span className="text-slate-700">Exceeding (&gt;{b2})</span>
-                  </div>
-                  <span className="text-slate-900 font-black">
-                    {paramMetrics.exceedanceCount}{" "}
-                    <span className="text-amber-600 text-[11px]">({paramMetrics.exceedancePct.toFixed(2)}%)</span>
-                  </span>
-                </div>
-
-                <div className="p-2.5 bg-white/90 rounded-xl border border-slate-200/90 text-[11px] text-slate-600 font-semibold flex items-center justify-between shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-                  <span>Evaluated Samples:</span>
-                  <span className="font-black text-slate-900">{paramMetrics.withinCount + paramMetrics.exceedanceCount}</span>
-                </div>
+              <div className="flex items-center justify-between bg-amber-50/90 border border-amber-300/90 rounded-xl px-3 py-1.5 shadow-[0_2px_6px_rgba(245,158,11,0.12)]">
+                <span className="text-xs font-black text-slate-800 leading-normal">Permissible*</span>
+                <span className="text-xs font-black text-amber-800 bg-amber-100/90 px-2.5 py-0.5 rounded-lg border border-amber-400/80 shadow-2xs leading-normal">
+                  {b2} {unit}
+                </span>
               </div>
             </div>
           </div>
 
-          {/* CARD C: TOP 5 STATES / DISTRICTS / BLOCKS BY EXCEEDANCE BAR CHART */}
-          <div className="relative bg-gradient-to-b from-white via-slate-50/80 to-indigo-50/30 rounded-2xl p-4 border border-white/90 shadow-[0_16px_36px_-6px_rgba(26,35,86,0.18),0_6px_16px_-2px_rgba(0,0,0,0.04),inset_0_2px_1px_0_rgba(255,255,255,0.95)] hover:-translate-y-1 hover:shadow-[0_20px_40px_-6px_rgba(26,35,86,0.25)] transition-all duration-300 flex-1 flex flex-col justify-between overflow-hidden">
-            <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[40%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+          <p className="relative z-10 text-[10px] text-slate-500 italic font-medium text-center mt-2">
+            *Absence of alternate source (IS 10500:2012)
+          </p>
+        </div>
 
-            <div className={`relative z-10 text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-[0_6px_14px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.3)] tracking-wide mb-3 ${activeTheme.cardHeader}`}>
-              Top 5 {toProperCase(top5PluralLabel)} {isStateSelected ? (isDistrictSelected ? `in ${toProperCase(selectedDistrict)}` : `in ${toProperCase(selectedState)}`) : ""} by {selectedParamKey} Exceedance
-            </div>
+        {/* CARD B: DONUT 3D CHART CARD */}
+        <div className="relative bg-gradient-to-b from-white via-slate-50/80 to-indigo-50/30 rounded-2xl p-4 border border-slate-200/80 shadow-[0_16px_36px_-6px_rgba(26,35,86,0.16),0_6px_16px_-2px_rgba(0,0,0,0.04),inset_0_2px_1px_0_rgba(255,255,255,0.95)] hover:-translate-y-1 hover:shadow-[0_20px_40px_-6px_rgba(26,35,86,0.25)] transition-all duration-300 overflow-hidden flex flex-col justify-between">
+          <div className="absolute top-0 left-0 right-0 h-[40%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
 
-            <div className="relative z-10 space-y-3 py-1">
-              {paramMetrics.top5ChartData.length > 0 ? (
-                paramMetrics.top5ChartData.map((item) => (
-                  <div key={item.name} className="space-y-1.5 overflow-visible">
-                    <div className="flex items-center justify-between text-xs font-bold text-slate-800 leading-normal py-0.5 overflow-visible">
-                      <span className="truncate max-w-[170px] inline-block leading-normal py-0.5">{item.name}</span>
-                      <span className="font-black text-slate-900 leading-normal shrink-0">{item.exceedPct}%</span>
-                    </div>
-                    <div className="w-full bg-slate-100/90 rounded-full h-3.5 p-0.5 overflow-hidden shadow-[inset_0_2px_4px_rgba(0,0,0,0.1)] border border-slate-200/80">
-                      <div
-                        className="h-2.5 rounded-full transition-all duration-500 shadow-[0_2px_6px_rgba(0,0,0,0.15)]"
-                        style={{
-                          width: `${Math.min(100, (item.exceedPct / (paramMetrics.topRegionPct || 100)) * 100)}%`,
-                          backgroundColor: item.fill
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="text-center text-xs text-slate-400 py-4">
-                  No {top5LevelLabel.toLowerCase()} exceedances recorded
+          <div className={`relative z-10 text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-[0_6px_14px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.3)] tracking-wide mb-2 ${activeTheme.cardHeader}`}>
+            Compliance Status: {toProperCase(paramName)} ({selectedParamKey})
+          </div>
+
+          <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-3 py-1">
+            <Compliance3DDonutChart
+              withinCount={paramMetrics.withinCount}
+              exceedCount={paramMetrics.exceedanceCount}
+              withinPct={paramMetrics.withinPct}
+              exceedPct={paramMetrics.exceedancePct}
+              b2={b2}
+              unit={unit}
+            />
+
+            <div className="space-y-2 flex-1 text-xs w-full">
+              <div className="flex items-center justify-between font-bold border-b border-slate-200/80 pb-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-md bg-emerald-500 border border-emerald-600 shrink-0" />
+                  <span className="text-slate-700 text-[11px]">Within (≤{b2})</span>
                 </div>
-              )}
-            </div>
+                <span className="text-slate-900 font-black text-[11px]">
+                  {paramMetrics.withinCount}{" "}
+                  <span className="text-emerald-700">({paramMetrics.withinPct.toFixed(1)}%)</span>
+                </span>
+              </div>
 
-            <p className="relative z-10 text-[10px] text-slate-400 font-bold text-center mt-3 uppercase tracking-wider">
-              Top {top5PluralLabel} non-compliant against BIS limits
-            </p>
+              <div className="flex items-center justify-between font-bold">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-md bg-amber-500 border border-amber-600 shrink-0" />
+                  <span className="text-slate-700 text-[11px]">Exceeding (&gt;{b2})</span>
+                </div>
+                <span className="text-slate-900 font-black text-[11px]">
+                  {paramMetrics.exceedanceCount}{" "}
+                  <span className="text-amber-600">({paramMetrics.exceedancePct.toFixed(1)}%)</span>
+                </span>
+              </div>
+
+              <div className="p-2 bg-white/90 rounded-xl border border-slate-200/90 text-[11px] text-slate-600 font-semibold flex items-center justify-between">
+                <span>Evaluated:</span>
+                <span className="font-black text-slate-900">{paramMetrics.withinCount + paramMetrics.exceedanceCount}</span>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* RIGHT COLUMN: DEDICATED KPI CHOROPLETH SPATIAL MAP */}
-        <div className={`${showGisAnalysis ? "lg:col-span-7" : "lg:col-span-12"} ${activeTheme.mapWrapperBg} rounded-2xl p-3.5 transition-all duration-300`}>
+        {/* CARD C: TOP 5 STATES / DISTRICTS / BLOCKS BY EXCEEDANCE BAR CHART */}
+        <div className="relative bg-gradient-to-b from-white via-slate-50/80 to-indigo-50/30 rounded-2xl p-4 border border-slate-200/80 shadow-[0_16px_36px_-6px_rgba(26,35,86,0.16),0_6px_16px_-2px_rgba(0,0,0,0.04),inset_0_2px_1px_0_rgba(255,255,255,0.95)] hover:-translate-y-1 hover:shadow-[0_20px_40px_-6px_rgba(26,35,86,0.25)] transition-all duration-300 flex flex-col justify-between overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-[40%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
+
+          <div className={`relative z-10 text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-[0_6px_14px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.3)] tracking-wide mb-3 ${activeTheme.cardHeader}`}>
+            Top 5 {toProperCase(top5PluralLabel)} {isStateSelected ? (isDistrictSelected ? `in ${toProperCase(selectedDistrict)}` : `in ${toProperCase(selectedState)}`) : ""} by {selectedParamKey} Exceedance
+          </div>
+
+          <div className="relative z-10 space-y-2.5 py-1">
+            {paramMetrics.top5ChartData.length > 0 ? (
+              paramMetrics.top5ChartData.map((item) => (
+                <div key={item.name} className="space-y-1 overflow-visible">
+                  <div className="flex items-center justify-between gap-2 text-xs font-bold text-slate-800 leading-normal py-0.5 overflow-visible">
+                    <span className="inline-block leading-normal break-words">{item.name}</span>
+                    <span className="font-black text-slate-900 leading-normal shrink-0">{item.exceedPct}%</span>
+                  </div>
+                  <div className="w-full bg-slate-100/90 rounded-full h-3 p-0.5 overflow-hidden shadow-[inset_0_2px_4px_rgba(0,0,0,0.1)] border border-slate-200/80">
+                    <div
+                      className="h-2 rounded-full transition-all duration-500 shadow-[0_2px_6px_rgba(0,0,0,0.15)]"
+                      style={{
+                        width: `${Math.min(100, (item.exceedPct / (paramMetrics.topRegionPct || 100)) * 100)}%`,
+                        backgroundColor: item.fill
+                      }}
+                    />
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center text-xs text-slate-400 py-4">
+                No {top5LevelLabel.toLowerCase()} exceedances recorded
+              </div>
+            )}
+          </div>
+
+          <p className="relative z-10 text-[10px] text-slate-400 font-bold text-center mt-2 uppercase tracking-wider">
+            Top {top5PluralLabel} non-compliant against BIS limits
+          </p>
+        </div>
+      </div>
+
+      {/* SIDE-BY-SIDE PUBLICATION MAPS ROW: CHOROPLETH MAP (LEFT) + IDW CONTOUR / EXCEEDANCE POINT MAP (RIGHT) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch transition-all">
+        <div className="bg-white rounded-2xl p-2 border border-slate-300/90 shadow-sm flex flex-col">
           <KpiChoroplethMap
             rawData={rawData}
             setRawData={setRawData}
@@ -1396,6 +1374,24 @@ export default function KpiView({
             isRangeModalOpen={isRangeModalOpen}
             setIsRangeModalOpen={setIsRangeModalOpen}
             externalFileInputRef={fileInputRef}
+          />
+        </div>
+
+        <div className="bg-white rounded-2xl p-2 border border-slate-300/90 shadow-sm flex flex-col">
+          <KpiSpatialSupplementMap
+            rawData={rawData}
+            headers={headers}
+            headerMap={headerMap}
+            activeParam={selectedParamKey}
+            activeConfig={paramConfig}
+            reportingLevel={effectiveReportingLevel}
+            selectedState={selectedState}
+            selectedDistrict={selectedDistrict}
+            sharedLayers={sharedLayers}
+            showGisAnalysis={showGisAnalysis}
+            baseMapType={baseMapType}
+            setBaseMapType={setBaseMapType}
+            showToast={showToast}
           />
         </div>
       </div>
