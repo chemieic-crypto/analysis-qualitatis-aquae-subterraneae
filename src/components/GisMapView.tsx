@@ -20,6 +20,7 @@ import {
   EyeOff,
   Maximize2,
   LayoutGrid,
+  Layout,
   FileText,
   Image as ImageIcon,
   Upload,
@@ -48,8 +49,12 @@ import { PARAM_CONFIG, hasBisLimit } from "../data/config";
 import { INDIA_BOUNDARY } from "../data/india_boundary";
 import {
   createPointShapefileZip,
-  createPolygonShapefileZip,
   createShapefileFromGeoJson,
+  createGisPackageZip,
+  buildMapInfoRasterTab,
+  WGS84_PRJ,
+  GisPackageLayerInput,
+  GisPackageExtraFile,
   downloadBlob
 } from "../utils/shapefileWriter";
 import { 
@@ -57,8 +62,42 @@ import {
   getFilteredGeoJson, 
   buildDistrictStateMap, 
   isStateAll, 
-  isDistrictAll 
+  isDistrictAll,
+  norm,
+  toProperCase
 } from "../utils/shapefileFilter";
+
+import {
+  ShapefileLayer,
+  DEFAULT_AQUIFER_COLORS,
+  getDpr,
+  getInitialColorMapping,
+  getFeatureFillColor,
+  COLOR_SCHEMES,
+  BASEMAP_STYLES,
+  lngToTileX,
+  latToTileY,
+  tileXToLng,
+  tileYToLat,
+  createGeoTiffBlob,
+  darkenColor,
+  getDistanceKm,
+  getPolygonCentroid,
+  getFeatureBbox,
+  doBboxesOverlap,
+  getAdminFeatureLabel,
+  getFeatureAttributeLabel,
+  createInterpolationWorker
+} from "../utils/gisMapHelpers";
+import GisAttributeTable from "./gis/GisAttributeTable";
+
+export type { ShapefileLayer };
+export {
+  getFeatureBbox,
+  doBboxesOverlap,
+  getAdminFeatureLabel,
+  getFeatureAttributeLabel
+};
 
 interface GisMapViewProps {
   rawData: any[];
@@ -75,912 +114,6 @@ interface GisMapViewProps {
   choroplethClasses?: { limit: number; color: string; label: string }[];
   setChoroplethClasses?: React.Dispatch<React.SetStateAction<{ limit: number; color: string; label: string }[]>>;
 }
-
-export interface ShapefileLayer {
-  id: string;
-  name: string;
-  geoJson: any;
-  visible: boolean;
-  strokeColor: string;
-  strokeWidth: number;
-  fillColor: string;
-  fillOpacity: number;
-  showLabels: boolean;
-  labelKey: string;
-  labelColor: string;
-  labelSize: number;
-  colorAttribute?: string;
-  colorMapping?: Record<string, string>;
-  showStroke?: boolean;
-  showInLegend?: boolean;
-  isAoi?: boolean;
-}
-
-// Default colors for principal aquifer shapefile
-const DEFAULT_AQUIFER_COLORS: Record<string, string> = {
-  "alluvium": "#ffffd0",     // 255 255 208
-  "laterite": "#ff9e30",     // 255 158 48
-  "basalt": "#d0ffe8",       // 208 255 232
-  "sandstone": "#b0ffb0",    // 176 255 176
-  "shale": "#ffb0b0",        // 255 176 176
-  "limestone": "#ffd040",    // 255 208 64
-  "granite": "#70a0ff",      // 112 160 255
-  "schist": "#dee000",       // 222 224 0
-  "quartzite": "#c890ff",    // 200 144 255
-  "charnockite": "#ffd0ff",  // 255 208 255
-  "khondalite": "#7dd000",   // 125 208 0
-  "bgc": "#ffd8b0",          // 255 216 176
-  "gneiss": "#d0d0ff",       // 208 208 255
-  "intrusives": "#60cbff"    // 96 203 255
-};
-
-const getDpr = (): number => {
-  if (typeof window === "undefined") return 3.0;
-  const isMobile = window.innerWidth < 768 || (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0);
-  const baseDpr = window.devicePixelRatio || 2.0;
-  if (isMobile) {
-    return Math.max(baseDpr, 2.0);
-  }
-  return Math.max(baseDpr * 1.5, 3.5);
-};
-
-const getInitialColorMapping = (geojson: any, attribute: string): Record<string, string> => {
-  const mapping: Record<string, string> = {};
-  const features = geojson.features || (geojson.type === "Feature" ? [geojson] : []);
-  
-  const defaultPalette = [
-    "#60a5fa", "#34d399", "#f87171", "#fbbf24", "#a78bfa", "#2dd4bf", "#f472b6",
-    "#93c5fd", "#6ee7b7", "#fca5a5", "#fde047", "#c084fc", "#5eead4", "#f9a8d4"
-  ];
-  let paletteIdx = 0;
-
-  features.forEach((f: any) => {
-    if (f && f.properties && f.properties[attribute] !== undefined) {
-      const val = String(f.properties[attribute]).trim();
-      if (!val || mapping[val]) return;
-
-      const valLower = val.toLowerCase();
-      const foundKey = Object.keys(DEFAULT_AQUIFER_COLORS).find(k => 
-        valLower === k || valLower.includes(k) || k.includes(valLower)
-      );
-      if (foundKey) {
-        mapping[val] = DEFAULT_AQUIFER_COLORS[foundKey];
-      } else {
-        mapping[val] = defaultPalette[paletteIdx % defaultPalette.length];
-        paletteIdx++;
-      }
-    }
-  });
-  return mapping;
-};
-
-const getFeatureFillColor = (layer: ShapefileLayer, feature: any): string => {
-  if (layer.colorAttribute && feature && feature.properties) {
-    const val = String(feature.properties[layer.colorAttribute] || "").trim();
-    if (layer.colorMapping && layer.colorMapping[val]) {
-      return layer.colorMapping[val];
-    }
-    // Check if there is any case-insensitive or partial match in default colors
-    const valLower = val.toLowerCase();
-    const foundKey = Object.keys(DEFAULT_AQUIFER_COLORS).find(k => 
-      valLower === k || valLower.includes(k) || k.includes(valLower)
-    );
-    if (foundKey) {
-      return DEFAULT_AQUIFER_COLORS[foundKey];
-    }
-  }
-  return layer.fillColor || "#3b82f6";
-};
-
-// Color schemes definitions
-const COLOR_SCHEMES = {
-  "Single Red Shades": ["#fee2e2", "#fca5a5", "#f87171", "#dc2626", "#881337"],
-  "Single Blue Shades": ["#dbeafe", "#93c5fd", "#3b82f6", "#1d4ed8", "#172554"],
-  "Single Orange Shades": ["#fff7ed", "#fed7aa", "#f97316", "#c2410c", "#431407"],
-  "Single Green Shades": ["#dcfce7", "#86efac", "#22c55e", "#15803d", "#052e16"],
-  "Single Purple Shades": ["#f3e8ff", "#d8b4fe", "#a855f7", "#7e22ce", "#3b0764"],
-  "Single Teal Shades": ["#f0fdf4", "#99f6e4", "#14b8a6", "#0f766e", "#042f2e"],
-  "Single Amber Shades": ["#fef9c3", "#fde047", "#eab308", "#ca8a04", "#422006"],
-  "Single Gray Shades": ["#f3f4f6", "#d1d5db", "#6b7280", "#374151", "#030712"],
-  "Blue-Yellow-Red": ["#005ce6", "#ffff00", "#ff0000"],
-  "Green-Yellow-Red": ["#22c55e", "#facc15", "#ef4444"],
-  "Spectral": ["#d53e4f", "#fdae61", "#abdda4", "#2b83ba"],
-  "Viridis": ["#440154", "#31688e", "#35b779", "#fde725"],
-  "Plasma": ["#0d0887", "#7e03a8", "#cc4778", "#f0f921"],
-  "Chroma Aqua": ["#e0f2fe", "#7dd3fc", "#0284c7", "#0369a1"],
-  "Terrain": ["#313695", "#74add1", "#fee090", "#d73027", "#a50026"],
-  "Grey Scale": ["#f3f4f6", "#9ca3af", "#1f2937"]
-};
-
-// Basemaps definition with high-quality procedural styling
-const BASEMAP_STYLES = {
-  "No Basemap": { bg: "#ffffff", grid: "#f1f5f9", outline: "#cbd5e1" },
-  "ESRI Terrain": { bg: "#faf5ec", grid: "rgba(120, 113, 108, 0.08)", outline: "#d6ccc2" },
-  "ESRI Topographic": { bg: "#f4f8f4", grid: "rgba(15, 23, 42, 0.04)", outline: "#cbd5e1" },
-  "ESRI Satellite": { bg: "#0b1220", grid: "rgba(255,255,255,0.06)", outline: "#1e293b" },
-  "Google Road Map": { bg: "#f5f5f5", grid: "rgba(0,0,0,0.04)", outline: "#cbd5e1" },
-  "Google Satellite": { bg: "#050a12", grid: "rgba(255,255,255,0.08)", outline: "#334155" },
-  "Google Hybrid": { bg: "#060b14", grid: "rgba(255,255,255,0.1)", outline: "#475569" },
-  "OpenStreetMap": { bg: "#fdfbfa", grid: "rgba(0,0,0,0.05)", outline: "#94a3b8" }
-};
-
-// Web Mercator Tile conversions
-function lngToTileX(lng: number, zoom: number): number {
-  return ((lng + 180) / 360) * Math.pow(2, zoom);
-}
-
-function latToTileY(lat: number, zoom: number): number {
-  const latRad = (lat * Math.PI) / 180;
-  return (
-    ((1 - Math.log(Math.tan(latRad) + 1.0 / Math.cos(latRad)) / Math.PI) / 2.0) *
-    Math.pow(2, zoom)
-  );
-}
-
-function tileXToLng(x: number, zoom: number): number {
-  return (x / Math.pow(2, zoom)) * 360.0 - 180.0;
-}
-
-function tileYToLat(y: number, zoom: number): number {
-  const n = Math.PI - (2.0 * Math.PI * y) / Math.pow(2, zoom);
-  return (180.0 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
-}
-
-function createGeoTiffBlob(
-  width: number,
-  height: number,
-  rgbaData: Uint8ClampedArray,
-  bounds: { minLng: number; maxLng: number; minLat: number; maxLat: number }
-): Blob {
-  const numPixels = width * height;
-  const pixelDataOffset = 8;
-  const pixelDataSize = numPixels * 3;
-  
-  const tiepointsOffset = pixelDataOffset + pixelDataSize;
-  const tiepointsSize = 6 * 8; // 6 doubles
-  
-  const pixelScaleOffset = tiepointsOffset + tiepointsSize;
-  const pixelScaleSize = 3 * 8; // 3 doubles
-  
-  const geoKeysOffset = pixelScaleOffset + pixelScaleSize;
-  const geoKeys = [
-    1, 1, 0, 4,       // Header: KeyDirectoryVersion, KeyRevision, MinorRevision, NumberOfKeys
-    1024, 0, 1, 2,    // GTModelTypeGeoKey: 2 (ModelTypeGeographic)
-    1025, 0, 1, 1,    // GTRasterTypeGeoKey: 1 (RasterPixelIsArea)
-    2048, 0, 1, 4326  // GeographicTypeGeoKey: 4326 (GCS_WGS_84)
-  ];
-  const geoKeysSize = geoKeys.length * 2; // 12 shorts = 24 bytes
-  
-  const bitsPerSampleOffset = geoKeysOffset + geoKeysSize;
-  const bitsPerSampleSize = 3 * 2; // 3 shorts = 6 bytes
-  
-  const ifdOffset = bitsPerSampleOffset + bitsPerSampleSize;
-  
-  // Create an array buffer for the entire TIFF file
-  const totalSize = ifdOffset + 2 + (14 * 12) + 4; // header + pixels + metadata + IFD size (14 tags) + nextIFD offset
-  const buffer = new ArrayBuffer(totalSize);
-  const view = new DataView(buffer);
-  
-  // 1. Write Header
-  view.setUint16(0, 0x4949, true); // Little endian "II"
-  view.setUint16(2, 42, true);     // TIFF Magic Number
-  view.setUint32(4, ifdOffset, true); // Offset to IFD
-  
-  // 2. Write Pixel Data (RGB)
-  let dstChan = pixelDataOffset;
-  for (let i = 0; i < numPixels; i++) {
-    const srcChan = i * 4;
-    view.setUint8(dstChan, rgbaData[srcChan]);     // R
-    view.setUint8(dstChan + 1, rgbaData[srcChan + 1]); // G
-    view.setUint8(dstChan + 2, rgbaData[srcChan + 2]); // B
-    dstChan += 3;
-  }
-  
-  // 3. Write Model Tiepoints (Doubles)
-  const tiepoints = [0.0, 0.0, 0.0, bounds.minLng, bounds.maxLat, 0.0];
-  for (let i = 0; i < 6; i++) {
-    view.setFloat64(tiepointsOffset + i * 8, tiepoints[i], true);
-  }
-  
-  // 4. Write Model Pixel Scale (Doubles)
-  const scaleLng = (bounds.maxLng - bounds.minLng) / width;
-  const scaleLat = (bounds.maxLat - bounds.minLat) / height;
-  const pixelScale = [scaleLng, scaleLat, 0.0];
-  for (let i = 0; i < 3; i++) {
-    view.setFloat64(pixelScaleOffset + i * 8, pixelScale[i], true);
-  }
-  
-  // 5. Write GeoKey Directory (Shorts)
-  for (let i = 0; i < geoKeys.length; i++) {
-    view.setUint16(geoKeysOffset + i * 2, geoKeys[i], true);
-  }
-  
-  // 6. Write Bits Per Sample (Shorts)
-  view.setUint16(bitsPerSampleOffset, 8, true);
-  view.setUint16(bitsPerSampleOffset + 2, 8, true);
-  view.setUint16(bitsPerSampleOffset + 4, 8, true);
-  
-  // 7. Write IFD Entries
-  let curIfd = ifdOffset;
-  const numEntries = 14;
-  view.setUint16(curIfd, numEntries, true);
-  curIfd += 2;
-  
-  const entries = [
-    { tag: 256, type: 4, count: 1, val: width },            // ImageWidth
-    { tag: 257, type: 4, count: 1, val: height },           // ImageLength
-    { tag: 258, type: 3, count: 3, val: bitsPerSampleOffset }, // BitsPerSample
-    { tag: 259, type: 3, count: 1, val: 1 },                // Compression (1 = uncompressed)
-    { tag: 262, type: 3, count: 1, val: 2 },                // PhotometricInterpretation (2 = RGB)
-    { tag: 273, type: 4, count: 1, val: pixelDataOffset },  // StripOffsets
-    { tag: 277, type: 3, count: 1, val: 3 },                // SamplesPerPixel
-    { tag: 278, type: 4, count: 1, val: height },           // RowsPerStrip
-    { tag: 279, type: 4, count: 1, val: pixelDataSize },     // StripByteCounts
-    { tag: 282, type: 5, count: 1, val: 0 },                // XResolution placeholder
-    { tag: 283, type: 5, count: 1, val: 0 },                // YResolution placeholder
-    { tag: 33550, type: 12, count: 3, val: pixelScaleOffset }, // ModelPixelScaleTag
-    { tag: 33922, type: 12, count: 6, val: tiepointsOffset },  // ModelTiepointTag
-    { tag: 34735, type: 3, count: geoKeys.length, val: geoKeysOffset } // GeoKeyDirectoryTag
-  ];
-  
-  entries.sort((a, b) => a.tag - b.tag);
-  
-  entries.forEach(e => {
-    view.setUint16(curIfd, e.tag, true);
-    view.setUint16(curIfd + 2, e.type, true);
-    view.setUint32(curIfd + 4, e.count, true);
-    
-    if (e.type === 3 && e.count === 1) {
-      view.setUint16(curIfd + 8, e.val, true);
-      view.setUint16(curIfd + 10, 0, true);
-    } else if (e.type === 4 && e.count === 1) {
-      view.setUint32(curIfd + 8, e.val, true);
-    } else {
-      view.setUint32(curIfd + 8, e.val, true);
-    }
-    curIfd += 12;
-  });
-  
-  view.setUint32(curIfd, 0, true); // Offset to next IFD
-  
-  return new Blob([buffer], { type: "image/tiff" });
-}
-
-function darkenColor(hex: string, percent: number): string {
-  hex = hex.replace(/^\s*#|\s*$/g, '');
-  if (hex.length === 3) {
-    hex = hex.replace(/(.)/g, '$1$1');
-  }
-  let r = parseInt(hex.substring(0, 2), 16) || 0;
-  let g = parseInt(hex.substring(2, 4), 16) || 0;
-  let b = parseInt(hex.substring(4, 6), 16) || 0;
-  
-  r = Math.max(0, Math.floor(r * (1 - percent)));
-  g = Math.max(0, Math.floor(g * (1 - percent)));
-  b = Math.max(0, Math.floor(b * (1 - percent)));
-  
-  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-}
-
-function getDistanceKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const dLat = (lat2 - lat1) * 111.32;
-  const meanLat = (lat1 + lat2) / 2;
-  const dLng = (lng2 - lng1) * 111.32 * Math.cos(meanLat * Math.PI / 180);
-  return Math.hypot(dLat, dLng);
-}
-
-function getPolygonCentroid(coordinates: any): { lng: number; lat: number } | null {
-  let sumLng = 0;
-  let sumLat = 0;
-  let count = 0;
-
-  const traverse = (coords: any) => {
-    if (Array.isArray(coords) && typeof coords[0] === "number" && typeof coords[1] === "number") {
-      sumLng += coords[0];
-      sumLat += coords[1];
-      count++;
-    } else if (Array.isArray(coords)) {
-      coords.forEach(traverse);
-    }
-  };
-
-  traverse(coordinates);
-  if (count === 0) return null;
-  return { lng: sumLng / count, lat: sumLat / count };
-}
-
-// Ultra-fast Bounding Box extraction & overlap check for lightning-fast auto-clipping
-export function getFeatureBbox(f: any): [number, number, number, number] | null {
-  if (!f || !f.geometry) return null;
-  if (f.bbox && f.bbox.length === 4) return f.bbox;
-  try {
-    const coords = f.geometry.coordinates;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    const scan = (c: any) => {
-      if (!c) return;
-      if (typeof c[0] === "number" && typeof c[1] === "number") {
-        if (c[0] < minX) minX = c[0];
-        if (c[0] > maxX) maxX = c[0];
-        if (c[1] < minY) minY = c[1];
-        if (c[1] > maxY) maxY = c[1];
-      } else if (Array.isArray(c)) {
-        for (let i = 0; i < c.length; i++) scan(c[i]);
-      }
-    };
-    scan(coords);
-    if (minX !== Infinity && maxX !== -Infinity) {
-      const b: [number, number, number, number] = [minX, minY, maxX, maxY];
-      f.bbox = b;
-      return b;
-    }
-  } catch {}
-  return null;
-}
-
-export function doBboxesOverlap(b1: [number, number, number, number], b2: [number, number, number, number]): boolean {
-  return !(b1[2] < b2[0] || b1[0] > b2[2] || b1[3] < b2[1] || b1[1] > b2[3]);
-}
-
-export function getAdminFeatureLabel(f: any): { name: string; type: string } {
-  if (!f || !f.properties) return { name: "Unit", type: "Boundary" };
-  const p = f.properties;
-  const keys = Object.keys(p);
-
-  const findProp = (patterns: string[]) => {
-    for (const pattern of patterns) {
-      const found = keys.find(k => k.toLowerCase() === pattern || k.toLowerCase().includes(pattern));
-      if (found && p[found] !== undefined && p[found] !== null && String(p[found]).trim() !== "") {
-        return String(p[found]).trim();
-      }
-    }
-    return "";
-  };
-
-  const blockName = findProp(["block_name", "block", "tehsil", "taluk", "sub_district", "subdist"]);
-  const distName = findProp(["dt_nm", "district_name", "district", "dist_name", "dist"]);
-  const stateName = findProp(["st_nm", "state_name", "state"]);
-
-  if (blockName) {
-    const full = distName ? `${blockName} (${distName})` : blockName;
-    return { name: full, type: "Block" };
-  }
-  if (distName) {
-    const full = stateName ? `${distName} (${stateName})` : distName;
-    return { name: full, type: "District" };
-  }
-  if (stateName) {
-    return { name: stateName, type: "State" };
-  }
-
-  const generalName = findProp(["name", "label", "title", "id", "village"]);
-  return { name: generalName || "Unit", type: "Boundary" };
-}
-
-export function getFeatureAttributeLabel(f: any, attributeChoice: string = "auto", fallbackKey?: string): string {
-  if (!f || !f.properties) return "";
-  const p = f.properties;
-  const keys = Object.keys(p);
-
-  const findPropVal = (patterns: string[]): string => {
-    for (const pattern of patterns) {
-      const found = keys.find(k => k.toLowerCase() === pattern || k.toLowerCase().includes(pattern));
-      if (found && p[found] !== undefined && p[found] !== null && String(p[found]).trim() !== "") {
-        return String(p[found]).trim();
-      }
-    }
-    return "";
-  };
-
-  const choice = (attributeChoice || "auto").toLowerCase().trim();
-
-  if (choice === "district") {
-    // Return district name directly without state in parenthesis
-    const dist = findPropVal(["dt_nm", "district_name", "district", "dist_name", "dist", "dtname", "d_name"]);
-    if (dist) return dist;
-  } else if (choice === "block") {
-    // Return block name directly without district in parenthesis
-    const block = findPropVal(["block_name", "block", "tehsil", "taluk", "sub_district", "subdist", "blk_nm", "tahsil"]);
-    if (block) return block;
-  } else if (choice === "state") {
-    const state = findPropVal(["st_nm", "state_name", "state", "statename", "s_name"]);
-    if (state) return state;
-  } else if (choice !== "auto") {
-    // Specific attribute key chosen from DBF / GeoJSON properties
-    if (p[attributeChoice] !== undefined && p[attributeChoice] !== null && String(p[attributeChoice]).trim() !== "") {
-      return String(p[attributeChoice]).trim();
-    }
-    // Case-insensitive fallback
-    const matchKey = keys.find(k => k.toLowerCase() === choice);
-    if (matchKey && p[matchKey] !== undefined && p[matchKey] !== null && String(p[matchKey]).trim() !== "") {
-      return String(p[matchKey]).trim();
-    }
-  }
-
-  // Fallback if fallbackKey is provided
-  if (fallbackKey && p[fallbackKey] !== undefined && p[fallbackKey] !== null && String(p[fallbackKey]).trim() !== "") {
-    return String(p[fallbackKey]).trim();
-  }
-
-  // Fallback to smart admin label
-  const admin = getAdminFeatureLabel(f);
-  return (admin.name && admin.name !== "Unit" && admin.name !== "Unknown") ? admin.name : "";
-}
-
-const createInterpolationWorker = () => {
-  const workerCode = `
-    function projectLatToY(lat) {
-      const r_major = 6378137.0; // Equatorial radius in meters
-      const latRad = lat * Math.PI / 180;
-      return r_major * Math.log(Math.tan(Math.PI / 4 + latRad / 2));
-    }
-
-    function projectLngToX(lng) {
-      const r_major = 6378137.0; // Equatorial radius in meters
-      return r_major * (lng * Math.PI / 180);
-    }
-
-    function evaluateSemivariogram(d, model, nugget, sill, range) {
-      if (d === 0) return 0;
-      const h = d;
-      const a = range;
-      const c = sill - nugget;
-      if (model === "spherical") {
-        if (h < a) {
-          return nugget + c * (1.5 * (h / a) - 0.5 * Math.pow(h / a, 3));
-        }
-        return sill;
-      } else if (model === "exponential") {
-        return nugget + c * (1 - Math.exp(-3 * h / a));
-      } else {
-        if (h === 0) return nugget;
-        return nugget + c * (1 - Math.exp(-3 * Math.pow(h / a, 2)));
-      }
-    }
-
-    function evaluateRbfKernel(d, kernel, parameter) {
-      if (kernel === "multiquadric") {
-        return Math.sqrt(d * d + parameter * parameter);
-      } else if (kernel === "inverse_multiquadric" || kernel === "inverse-multiquadric") {
-        return 1 / Math.sqrt(d * d + parameter * parameter);
-      } else if (kernel === "gaussian") {
-        return Math.exp(-d * d / (parameter * parameter));
-      } else {
-        if (d === 0) return 0;
-        return d * d * Math.log(d);
-      }
-    }
-
-    function solveLinearSystem(A, b) {
-      const n = b.length;
-      for (let i = 0; i < n; i++) {
-        let maxRow = i;
-        for (let k = i + 1; k < n; k++) {
-          if (Math.abs(A[k][i]) > Math.abs(A[maxRow][i])) {
-            maxRow = k;
-          }
-        }
-        const tempRow = A[i];
-        A[i] = A[maxRow];
-        A[maxRow] = tempRow;
-        const tempB = b[i];
-        b[i] = b[maxRow];
-        b[maxRow] = tempB;
-
-        if (Math.abs(A[i][i]) < 1e-12) return null;
-
-        for (let k = i + 1; k < n; k++) {
-          const factor = A[k][i] / A[i][i];
-          b[k] -= factor * b[i];
-          for (let j = i; j < n; j++) {
-            A[k][j] -= factor * A[i][j];
-          }
-        }
-      }
-
-      const x = new Array(n).fill(0);
-      for (let i = n - 1; i >= 0; i--) {
-        let sum = 0;
-        for (let j = i + 1; j < n; j++) {
-          sum += A[i][j] * x[j];
-        }
-        x[i] = (b[i] - sum) / A[i][i];
-      }
-      return x;
-    }
-
-    self.onmessage = function(e) {
-      const {
-        validPoints,
-        rowStep,
-        colStep,
-        baseMapExtent,
-        clippingRadius,
-        extendInterpolationToBoundary,
-        interpolationMethod,
-        idwPower,
-        useAllPoints,
-        searchRadius,
-        krigingModel,
-        krigingNugget,
-        krigingSill,
-        krigingRange,
-        krigingNeighbors,
-        rbfKernel,
-        rbfParameter,
-        enableGaussianSmoothing,
-        enableAnisotropy,
-        anisotropyAngle,
-        anisotropyRatio
-      } = e.data;
-
-      const minLng = baseMapExtent.mapMinLng;
-      const maxLng = baseMapExtent.mapMaxLng;
-      const minLat = baseMapExtent.mapMinLat;
-      const maxLat = baseMapExtent.mapMaxLat;
-
-      // 10. Projection-aware Interpolation: Pre-project valid points to meters
-      const projectedPoints = validPoints.map(p => ({
-        lat: p.lat,
-        lng: p.lng,
-        val: p.val,
-        projX: projectLngToX(p.lng),
-        projY: projectLatToY(p.lat)
-      }));
-
-      // 4. Automatic Virtual Corner Points
-      const corners = [
-        { lat: maxLat, lng: minLng },
-        { lat: maxLat, lng: maxLng },
-        { lat: minLat, lng: minLng },
-        { lat: minLat, lng: maxLng }
-      ];
-
-      corners.forEach(corner => {
-        let nearestPt = null;
-        let minDist = Infinity;
-        const cornerX = projectLngToX(corner.lng);
-        const cornerY = projectLatToY(corner.lat);
-        for (let i = 0; i < projectedPoints.length; i++) {
-          const pt = projectedPoints[i];
-          const dx = pt.projX - cornerX;
-          const dy = pt.projY - cornerY;
-          const d = Math.sqrt(dx * dx + dy * dy) / 1000.0; // km
-          if (d < minDist) {
-            minDist = d;
-            nearestPt = pt;
-          }
-        }
-        if (nearestPt) {
-          projectedPoints.push({
-            lat: corner.lat,
-            lng: corner.lng,
-            val: nearestPt.val,
-            projX: cornerX,
-            projY: cornerY,
-            isVirtual: true
-          });
-        }
-      });
-
-      const grid = [];
-      const cosLatVal = Math.cos(baseMapExtent.centerLat * Math.PI / 180);
-
-      // Fast projection-aware distance calculator
-      function getProjDistanceKmFast(projX1, projY1, projX2, projY2) {
-        let dx = projX1 - projX2;
-        let dy = projY1 - projY2;
-
-        if (enableAnisotropy) {
-          const angleRad = (anisotropyAngle * Math.PI) / 180;
-          const cosA = Math.cos(angleRad);
-          const sinA = Math.sin(angleRad);
-          const rotX = dx * cosA + dy * sinA;
-          const rotY = -dx * sinA + dy * cosA;
-          dx = rotX;
-          dy = rotY * anisotropyRatio;
-        }
-
-        return Math.sqrt(dx * dx + dy * dy) / 1000.0; // meters to kilometers
-      }
-
-      const idwPow = idwPower || 2;
-      const dLatMax = searchRadius / 111.32;
-      const dLngMax = searchRadius / (111.32 * cosLatVal);
-
-      // Map Mercator meter limits to grid coordinates for ultra-fast distance checks
-      const minX = projectLngToX(minLng);
-      const maxX = projectLngToX(maxLng);
-      const minY = projectLatToY(minLat);
-      const maxY = projectLatToY(maxLat);
-      const spanX = maxX - minX;
-      const spanY = maxY - minY;
-
-      const gridPoints = projectedPoints.map((p, idx) => {
-        const pctX = (p.lng - minLng) / (baseMapExtent.finalLngSpan || 1e-6);
-        const pctY = (p.lat - minLat) / (baseMapExtent.finalLatSpan || 1e-6);
-        return {
-          x: pctX * colStep,
-          y: pctY * rowStep,
-          val: p.val,
-          isVirtual: p.isVirtual,
-          idx: idx
-        };
-      });
-
-      // Spatial bucketing for O(1) local neighbor search
-      const bucketSize = 40; // block size in pixels
-      const numBucketsX = Math.ceil(colStep / bucketSize);
-      const numBucketsY = Math.ceil(rowStep / bucketSize);
-      const buckets = Array.from({ length: numBucketsY }, () => 
-        Array.from({ length: numBucketsX }, () => [])
-      );
-
-      for (let i = 0; i < gridPoints.length; i++) {
-        const gp = gridPoints[i];
-        const bx = Math.max(0, Math.min(numBucketsX - 1, Math.floor(gp.x / bucketSize)));
-        const by = Math.max(0, Math.min(numBucketsY - 1, Math.floor(gp.y / bucketSize)));
-        buckets[by][bx].push(gp);
-      }
-
-      // Convert clipping radius in km to pixels squared
-      const kmPerPixel = baseMapExtent.finalLngSpan * 111.32 * cosLatVal / colStep;
-      const clippingRadiusPixelsSq = Math.pow(clippingRadius / (kmPerPixel || 1e-6), 2);
-
-      // Analytical Global Kriging Pre-computation
-      let krigingBeta = null;
-      let computedKrigingRange = krigingRange || (colStep * 0.4);
-      let computedKrigingSill = krigingSill || 1.0;
-      let computedKrigingNugget = krigingNugget !== undefined ? krigingNugget : 0.01;
-      let krigingGammaFn = function(d) { return 0.01; };
-
-      if (interpolationMethod === "kriging" || interpolationMethod === "ordinary_kriging") {
-        const N = gridPoints.length;
-        const vals = gridPoints.map(gp => gp.val);
-        const mean = vals.reduce((a, b) => a + b, 0) / (vals.length || 1);
-        const variance = vals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / (vals.length || 1);
-        
-        if (!krigingSill) {
-          computedKrigingSill = Math.max(0.1, variance);
-        }
-        if (!krigingRange) {
-          computedKrigingRange = colStep * 0.4;
-        }
-        
-        krigingGammaFn = function(d) {
-          return computedKrigingNugget + computedKrigingSill * (1 - Math.exp(-d / computedKrigingRange));
-        };
-
-        const gammaMatrix = [];
-        for (let i = 0; i < N + 1; i++) {
-          gammaMatrix.push(new Float64Array(N + 1));
-        }
-        for (let i = 0; i < N; i++) {
-          const gpi = gridPoints[i];
-          for (let j = 0; j < N; j++) {
-            const gpj = gridPoints[j];
-            const dx = gpi.x - gpj.x;
-            const dy = gpi.y - gpj.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            gammaMatrix[i][j] = krigingGammaFn(dist);
-          }
-          gammaMatrix[i][N] = 1.0;
-          gammaMatrix[N][i] = 1.0;
-        }
-        gammaMatrix[N][N] = 0.0;
-
-        const bVector = new Float64Array(N + 1);
-        for (let i = 0; i < N; i++) {
-          bVector[i] = gridPoints[i].val;
-        }
-        bVector[N] = 1.0;
-
-        krigingBeta = solveLinearSystem(gammaMatrix, bVector);
-      }
-
-      for (let r = 0; r < rowStep; r++) {
-        const rowVals = new Float32Array(colStep);
-
-        for (let c = 0; c < colStep; c++) {
-          const bx = Math.max(0, Math.min(numBucketsX - 1, Math.floor(c / bucketSize)));
-          const by = Math.max(0, Math.min(numBucketsY - 1, Math.floor(r / bucketSize)));
-
-          // 1. Fast clipping check: find closest point using spatial buckets
-          let nearestGP = null;
-          let minDistSq = Infinity;
-          let searchRad = 0;
-          
-          while (nearestGP === null && searchRad < Math.max(numBucketsX, numBucketsY)) {
-            for (let dy = -searchRad; dy <= searchRad; dy++) {
-              for (let dx = -searchRad; dx <= searchRad; dx++) {
-                if (searchRad > 0 && Math.abs(dy) !== searchRad && Math.abs(dx) !== searchRad) continue;
-                const ny = by + dy;
-                const nx = bx + dx;
-                if (ny >= 0 && ny < numBucketsY && nx >= 0 && nx < numBucketsX) {
-                  const b = buckets[ny][nx];
-                  for (let i = 0; i < b.length; i++) {
-                    const gp = b[i];
-                    const dc = c - gp.x;
-                    const dr = r - gp.y;
-                    const dSq = dc * dc + dr * dr;
-                    if (dSq < minDistSq) {
-                      minDistSq = dSq;
-                      nearestGP = gp;
-                    }
-                  }
-                }
-              }
-            }
-            searchRad++;
-          }
-
-          if (!extendInterpolationToBoundary) {
-            if (nearestGP === null || minDistSq > clippingRadiusPixelsSq) {
-              rowVals[c] = NaN;
-              continue;
-            }
-          }
-
-          if (interpolationMethod === "nearest") {
-            rowVals[c] = nearestGP ? nearestGP.val : 0;
-            continue;
-          }
-
-          // Collect local candidate points for interpolation
-          let candidates = [];
-          let rad = 0;
-          while (candidates.length < 15 && rad < Math.max(numBucketsX, numBucketsY)) {
-            for (let dy = -rad; dy <= rad; dy++) {
-              for (let dx = -rad; dx <= rad; dx++) {
-                if (rad > 0 && Math.abs(dy) !== rad && Math.abs(dx) !== rad) continue;
-                const ny = by + dy;
-                const nx = bx + dx;
-                if (ny >= 0 && ny < numBucketsY && nx >= 0 && nx < numBucketsX) {
-                  const b = buckets[ny][nx];
-                  for (let i = 0; i < b.length; i++) {
-                    candidates.push(b[i]);
-                  }
-                }
-              }
-            }
-            rad++;
-          }
-
-          let val = 0;
-
-          if (interpolationMethod === "natural" || interpolationMethod === "spline") {
-            const ptsWithGridDist = candidates.map(gp => {
-              const dx = c - gp.x;
-              const dy = r - gp.y;
-              return { gp, dSq: dx * dx + dy * dy };
-            });
-            ptsWithGridDist.sort((a, b) => a.dSq - b.dSq);
-
-            let n1 = ptsWithGridDist[0]?.gp.idx ?? -1;
-            let d1 = ptsWithGridDist[0]?.dSq ?? Infinity;
-            let n2 = ptsWithGridDist[1]?.gp.idx ?? -1;
-            let d2 = ptsWithGridDist[1]?.dSq ?? Infinity;
-            let n3 = ptsWithGridDist[2]?.gp.idx ?? -1;
-            let d3 = ptsWithGridDist[2]?.dSq ?? Infinity;
-            let n4 = ptsWithGridDist[3]?.gp.idx ?? -1;
-            let d4 = ptsWithGridDist[3]?.dSq ?? Infinity;
-            let n5 = ptsWithGridDist[4]?.gp.idx ?? -1;
-            let d5 = ptsWithGridDist[4]?.dSq ?? Infinity;
-            let n6 = ptsWithGridDist[5]?.gp.idx ?? -1;
-            let d6 = ptsWithGridDist[5]?.dSq ?? Infinity;
-
-            if (d1 < 0.05) {
-              val = gridPoints[n1].val;
-            } else if (n6 >= 0) {
-              const R = Math.sqrt(d6);
-              let sumWeights = 0;
-              let sumWeightedValues = 0;
-
-              const addWeight = (idx, dSq) => {
-                if (idx < 0) return;
-                const dist = Math.sqrt(dSq);
-                const w = Math.pow((R - dist) / (R * dist + 0.001), 2);
-                sumWeights += w;
-                sumWeightedValues += w * gridPoints[idx].val;
-              };
-
-              addWeight(n1, d1);
-              addWeight(n2, d2);
-              addWeight(n3, d3);
-              addWeight(n4, d4);
-              addWeight(n5, d5);
-
-              if (sumWeights > 0) {
-                val = sumWeightedValues / sumWeights;
-              } else {
-                val = gridPoints[n1].val;
-              }
-            } else {
-              val = n1 >= 0 ? gridPoints[n1].val : 0;
-            }
-          } else if ((interpolationMethod === "kriging" || interpolationMethod === "ordinary_kriging") && krigingBeta) {
-            let krigVal = 0;
-            const N_pts = gridPoints.length;
-            for (let j = 0; j < N_pts; j++) {
-              const gp = gridPoints[j];
-              const dx = c - gp.x;
-              const dy = r - gp.y;
-              const dist = Math.sqrt(dx * dx + dy * dy);
-              krigVal += krigingGammaFn(dist) * krigingBeta[j];
-            }
-            krigVal += 1.0 * krigingBeta[N_pts];
-            val = krigVal;
-          } else {
-            // IDW or RBF fallback using local candidates
-            let weightedSum = 0;
-            let weightTotal = 0;
-            let exact = false;
-            
-            for (let i = 0; i < candidates.length; i++) {
-              const gp = candidates[i];
-              const dx = c - gp.x;
-              const dy = r - gp.y;
-              const dSq = dx * dx + dy * dy;
-              
-              if (dSq < 0.05) {
-                val = gp.val;
-                exact = true;
-                break;
-              }
-              const d = Math.sqrt(dSq);
-              const w = 1 / (dSq * d + 0.01);
-              weightedSum += w * gp.val;
-              weightTotal += w;
-            }
-            if (!exact) {
-              val = weightTotal > 0 ? weightedSum / weightTotal : 0;
-            }
-          }
-
-          rowVals[c] = val;
-        }
-        grid.push(rowVals);
-      }
-
-      if (enableGaussianSmoothing && grid.length > 2) {
-        const smoothedGrid = [];
-        const kernel = [
-          [1/16, 2/16, 1/16],
-          [2/16, 4/16, 2/16],
-          [1/16, 2/16, 1/16]
-        ];
-        for (let r = 0; r < rowStep; r++) {
-          const rowVals = new Float32Array(colStep);
-          for (let c = 0; c < colStep; c++) {
-            if (isNaN(grid[r][c])) {
-              rowVals[c] = NaN;
-              continue;
-            }
-            let sum = 0;
-            let wTotal = 0;
-            for (let kr = -1; kr <= 1; kr++) {
-              for (let kc = -1; kc <= 1; kc++) {
-                const nr = r + kr;
-                const nc = c + kc;
-                if (nr >= 0 && nr < rowStep && nc >= 0 && nc < colStep && !isNaN(grid[nr][nc])) {
-                  const kw = kernel[kr + 1][kc + 1];
-                  sum += grid[nr][nc] * kw;
-                  wTotal += kw;
-                }
-              }
-            }
-            rowVals[c] = wTotal > 0 ? sum / wTotal : grid[r][c];
-          }
-          smoothedGrid.push(rowVals);
-        }
-        self.postMessage({ grid: smoothedGrid });
-      } else {
-        self.postMessage({ grid: grid });
-      }
-    };
-  `;
-  const blob = new Blob([workerCode], { type: "application/javascript" });
-  return new Worker(URL.createObjectURL(blob));
-};
 
 export default function GisMapView({
   rawData,
@@ -1043,11 +176,15 @@ export default function GisMapView({
   const [autoCutAdminToAoi, setAutoCutAdminToAoi] = useState<boolean>(true);
   const [adminCutMode, setAdminCutMode] = useState<"intersect" | "exact">("intersect");
   const [showAdminNamesOnMap, setShowAdminNamesOnMap] = useState<boolean>(true);
+  const [showNeighbourLabels, setShowNeighbourLabels] = useState<boolean>(false);
   const [adminLabelAttribute, setAdminLabelAttribute] = useState<string>("auto");
+  const [adminLabelFontFamily, setAdminLabelFontFamily] = useState<string>("Times New Roman"); // Requirement 1 & 3: Default Times New Roman
+  const [adminLabelItalic, setAdminLabelItalic] = useState<boolean>(false);
   const [adminLabelColor, setAdminLabelColor] = useState<string>("#0f172a");
   const [adminLabelSize, setAdminLabelSize] = useState<number>(11);
   const [adminLabelShowHalo, setAdminLabelShowHalo] = useState<boolean>(false); // Default false: "dont show whaite background beind name simple name it should be"
   const [adminLabelWeight, setAdminLabelWeight] = useState<"bold" | "normal">("bold");
+  const [interpolationTrigger, setInterpolationTrigger] = useState<number>(0);
   const [isClippingAdmin, setIsClippingAdmin] = useState<boolean>(false);
   
   // Ultra-fast memoized spatial clipping: pre-filters 98%+ of features using BBox before running exact Turf intersection
@@ -1757,36 +894,6 @@ export default function GisMapView({
     setDraggedPanelId(null);
   };
 
-  useEffect(() => {
-    const handleWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const zoomFactor = e.deltaY < 0 ? 0.85 : 1.15;
-      setZoomScaleFactor(z => {
-        const newZ = z * zoomFactor;
-        return Math.max(0.005, Math.min(20.0, newZ));
-      });
-    };
-
-    const canvasLeft = canvasRefLeft.current;
-    const canvasRight = canvasRefRight.current;
-
-    if (canvasLeft) {
-      canvasLeft.addEventListener("wheel", handleWheel, { passive: false });
-    }
-    if (canvasRight) {
-      canvasRight.addEventListener("wheel", handleWheel, { passive: false });
-    }
-
-    return () => {
-      if (canvasLeft) {
-        canvasLeft.removeEventListener("wheel", handleWheel);
-      }
-      if (canvasRight) {
-        canvasRight.removeEventListener("wheel", handleWheel);
-      }
-    };
-  }, [canvasRefLeft.current, canvasRefRight.current]);
-
   const handleCanvasDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     // Zoom in on double click
     setZoomScaleFactor(z => Math.max(0.005, z * 0.7));
@@ -1923,11 +1030,6 @@ export default function GisMapView({
   const canvasWidth = sheetLayout === "a4-portrait" ? 595 : 640;
   const canvasHeight = sheetLayout === "a4-portrait" ? 758 : 360;
   const canvasAspectClass = sheetLayout === "a4-portrait" ? "aspect-[595/758]" : "aspect-[640/360]";
-
-  // Simulated generated folder outputs
-  const [exportQueue, setExportQueue] = useState<{ name: string; status: "idle" | "done" }[]>([]);
-  const [batchProgress, setBatchProgress] = useState<number>(0);
-  const [batchGenerating, setBatchGenerating] = useState<boolean>(false);
 
   // Parse raw data into coordinates
   const parsedData = useMemo(() => {
@@ -2139,6 +1241,36 @@ export default function GisMapView({
   }, [parsedData]);
 
   const isComparisonActive = generateComparisonMode && seasonalPresence.hasPre && seasonalPresence.hasPost;
+
+  useEffect(() => {
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const zoomFactor = e.deltaY < 0 ? 0.85 : 1.15;
+      setZoomScaleFactor(z => {
+        const newZ = z * zoomFactor;
+        return Math.max(0.005, Math.min(20.0, newZ));
+      });
+    };
+
+    const canvasLeft = canvasRefLeft.current;
+    const canvasRight = canvasRefRight.current;
+
+    if (canvasLeft) {
+      canvasLeft.addEventListener("wheel", handleWheel, { passive: false });
+    }
+    if (canvasRight) {
+      canvasRight.addEventListener("wheel", handleWheel, { passive: false });
+    }
+
+    return () => {
+      if (canvasLeft) {
+        canvasLeft.removeEventListener("wheel", handleWheel);
+      }
+      if (canvasRight) {
+        canvasRight.removeEventListener("wheel", handleWheel);
+      }
+    };
+  }, [isComparisonActive, isVisible, sheetLayout]);
 
   // Centroid/feature zooming helper
   const zoomToCentroid = useCallback((lng: number, lat: number, targetBounds?: { minLng: number; maxLng: number; minLat: number; maxLat: number }) => {
@@ -2661,6 +1793,7 @@ export default function GisMapView({
       ? { b1: 0, b2: 0, unit: "", name: "Ground Water Quality Monitoring Station", keywords: [] }
       : (PARAM_CONFIG[activeParamName] || { b1: 1, b2: 10, unit: "mg/L", name: activeParamName, keywords: [] });
     const paramCol = headerMap[activeParamName] || activeParamName;
+    const drawnAttributeLabelsAcrossLayers = new Set<string>();
 
     const draw3dText = (
       ctx: CanvasRenderingContext2D,
@@ -2850,9 +1983,12 @@ export default function GisMapView({
 
     // 1. Clear background & draw Basemap Base
     ctx.clearRect(0, 0, w, h);
+    const isTransparentBg = basemap === "Transparent (No Background)";
     const style = BASEMAP_STYLES[basemap as keyof typeof BASEMAP_STYLES] || BASEMAP_STYLES["No Basemap"];
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, w, h);
+    if (!isTransparentBg) {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, w, h);
+    }
 
     // Render Tile-Based Basemap inside neatline boundaries
     ctx.save();
@@ -2860,10 +1996,12 @@ export default function GisMapView({
     ctx.rect(margin, margin, mw, mh);
     ctx.clip();
 
-    ctx.fillStyle = style.bg;
-    ctx.fillRect(margin, margin, mw, mh);
+    if (!isTransparentBg && style.bg !== "transparent") {
+      ctx.fillStyle = style.bg;
+      ctx.fillRect(margin, margin, mw, mh);
+    }
 
-    if (basemap !== "No Basemap") {
+    if (basemap !== "No Basemap" && !isTransparentBg) {
       ctx.save();
       ctx.globalAlpha = basemapOpacity / 100;
 
@@ -2928,12 +2066,16 @@ export default function GisMapView({
 
     // 2. Render Interpolation Raster Surface with pre-computed memoized grid
     if (showRaster && isInterpolatedType) {
-      let cacheObj = panelId === "left" ? leftInterpolatedGrid : rightInterpolatedGrid;
+      let cacheObj = (panelId === "left" && (!paramOverride || paramOverride === selectedParam))
+        ? leftInterpolatedGrid
+        : (panelId === "right" && (!paramOverride || paramOverride === selectedParam))
+          ? rightInterpolatedGrid
+          : null;
 
-      if (paramOverride && data.length > 0) {
-        // Build a synchronous IDW grid on-the-fly for the programmatically requested parameter
-        const syncColStep = 100;
-        const syncRowStep = 100;
+      if ((!cacheObj || (paramOverride && paramOverride !== selectedParam)) && data.length > 0) {
+        // Build a high-density IDW grid on-the-fly (360x360 smooth raster)
+        const syncColStep = 360;
+        const syncRowStep = Math.max(60, Math.round(syncColStep * (finalLatSpan / finalLngSpan)));
         const syncGrid: number[][] = Array.from({ length: syncRowStep }, () => new Array(syncColStep).fill(NaN));
         
         const pts: { lat: number; lng: number; val: number }[] = [];
@@ -3131,6 +2273,9 @@ export default function GisMapView({
 
     // 5b. Render Custom Shapefile / GeoJSON Boundaries (Drawn above base layers but below points)
     if (showShapefile) {
+      drawnAttributeLabelsAcrossLayers.clear();
+      const drawnLabelPixelPositions: { x: number; y: number }[] = [];
+
       if (layers && Array.isArray(layers) && layers.length > 0) {
         layers.forEach(layer => {
           try {
@@ -3227,13 +2372,67 @@ export default function GisMapView({
                 drawFeatureGeometry(f.geometry, f);
               });
 
-              // Draw labels with state, district, or block names
+              // Draw labels with state, district, or block names (Deduplicated to prevent doubling)
               const isLabelActive = shouldAutoCut 
                 ? showAdminNamesOnMap 
                 : (layer.showLabels && showShapefileLabels);
               if (isLabelActive) {
+                const datasetDistrictSet = new Set(
+                  data.map(d => norm(String(d[headerMap["district"] || "District"] || d.district || ""))).filter(Boolean)
+                );
+                const selStateNorm = !isStateAll(selectedState) ? norm(selectedState || "") : "";
+                const aoiLayerObj = shouldAutoCut ? layers.find(l => l.id === aoiLayerId) : null;
+                const aoiFeatures = aoiLayerObj?.geoJson
+                  ? (aoiLayerObj.geoJson.features || (aoiLayerObj.geoJson.type === "Feature" ? [aoiLayerObj.geoJson] : []))
+                  : [];
+
+                const isFeatureInScope = (f: any): boolean => {
+                  const p = f.properties || {};
+                  const fState = String(
+                    p.state || p.STATE || p.State || p.ST_NM || p.st_nm || p.NAME_1 || p.state_name || p.statename || p.st_name || ""
+                  ).trim();
+                  const fDist = String(
+                    p.district || p.DISTRICT || p.District || p.NAME_2 || p.DT_NM || p.dist_name || p.DIST_NAME || p.district_name || ""
+                  ).trim();
+
+                  if (selStateNorm) {
+                    if (fState) {
+                      const fs = norm(fState);
+                      if (fs !== selStateNorm && !fs.includes(selStateNorm) && !selStateNorm.includes(fs)) {
+                        return false;
+                      }
+                    } else if (fDist) {
+                      const fd = norm(fDist);
+                      const mapped = districtStateMap[fDist.toLowerCase()] || districtStateMap[fd] || districtStateMap[fDist];
+                      if (mapped) {
+                        const ms = norm(mapped);
+                        if (ms !== selStateNorm && !ms.includes(selStateNorm) && !selStateNorm.includes(ms)) {
+                          return false;
+                        }
+                      } else if (datasetDistrictSet.size > 0 && !datasetDistrictSet.has(fd)) {
+                        return false;
+                      }
+                    }
+                  }
+
+                  if (shouldAutoCut && aoiFeatures.length > 0 && layer.id !== aoiLayerId) {
+                    try {
+                      const pt = turf.pointOnFeature(f);
+                      const insideAoi = aoiFeatures.some((af: any) => af?.geometry && turf.booleanPointInPolygon(pt, af));
+                      if (!insideAoi) return false;
+                    } catch {
+                      // keep if topology check fails
+                    }
+                  }
+                  return true;
+                };
+
+                // Group features by label text to eliminate duplicate/doubled names
+                const featuresByLabelText: Record<string, { f: any; fIdx: number; rawLabel: string }[]> = {};
+
                 featuresToRender.forEach((f: any, fIdx: number) => {
                   if (!f || !f.geometry) return;
+                  if (!showNeighbourLabels && !isFeatureInScope(f)) return;
 
                   let labelText = "";
                   if (shouldAutoCut) {
@@ -3246,6 +2445,39 @@ export default function GisMapView({
                   }
 
                   if (!labelText || labelText === "Unknown" || labelText === "Unit") return;
+
+                  const normKey = norm(labelText);
+                  if (!featuresByLabelText[normKey]) {
+                    featuresByLabelText[normKey] = [];
+                  }
+                  featuresByLabelText[normKey].push({ f, fIdx, rawLabel: labelText });
+                });
+
+                // Render each unique label text EXACTLY ONCE
+                Object.entries(featuresByLabelText).forEach(([normKey, items]) => {
+                  // Prevent duplicate rendering across multiple shapefile layers
+                  if (drawnAttributeLabelsAcrossLayers.has(normKey)) return;
+                  drawnAttributeLabelsAcrossLayers.add(normKey);
+
+                  // Pick custom dragged position if present, or feature with largest polygon area
+                  let chosenItem = items[0];
+                  const customItem = items.find(it => customLabelPositions[layer.id]?.[it.fIdx]);
+                  if (customItem) {
+                    chosenItem = customItem;
+                  } else if (items.length > 1) {
+                    let maxArea = -Infinity;
+                    items.forEach(it => {
+                      try {
+                        const a = turf.area(it.f);
+                        if (a > maxArea) {
+                          maxArea = a;
+                          chosenItem = it;
+                        }
+                      } catch {}
+                    });
+                  }
+
+                  const { f, fIdx, rawLabel: labelText } = chosenItem;
 
                   let lng = 0, lat = 0;
                   const customPos = customLabelPositions[layer.id]?.[fIdx];
@@ -3267,35 +2499,34 @@ export default function GisMapView({
 
                   if (lx < margin - 15 || lx > w - margin + 15 || ly < margin - 15 || ly > h - margin + 15) return;
 
+                  // Collision detection: prevent overlapping text from different administrative units
+                  const collides = drawnLabelPixelPositions.some(p => Math.hypot(p.x - lx, p.y - ly) < 18 * scale);
+                  if (collides && !customPos) return;
+
                   ctx.save();
                   const targetSize = shouldAutoCut ? adminLabelSize : (layer.labelSize || 11);
                   const fontSize = Math.max(8, targetSize * scale);
                   const fontWeight = shouldAutoCut ? adminLabelWeight : "bold";
-                  ctx.font = `${fontWeight} ${fontSize}px ${mapFontFamily}`;
+                  const fontStyle = (shouldAutoCut && adminLabelItalic) ? "italic " : "";
+                  const fontFamily = shouldAutoCut ? adminLabelFontFamily : mapFontFamily;
+                  ctx.font = `${fontStyle}${fontWeight} ${fontSize}px "${fontFamily}", sans-serif`;
                   ctx.textAlign = "center";
                   ctx.textBaseline = "middle";
 
-                  // Text stroke / halo:
-                  // For cut features: DO NOT show white background behind name ("dont show whaite background beind name simple name it should be")
-                  // unless explicitly enabled by user via adminLabelShowHalo
-                  if (shouldAutoCut) {
-                    if (adminLabelShowHalo) {
-                      ctx.strokeStyle = "#ffffff";
-                      ctx.lineWidth = Math.max(2, 3 * scale);
-                      ctx.lineJoin = "round";
-                      ctx.strokeText(labelText, lx, ly);
-                    }
-                  } else {
+                  // Text stroke / halo: only show if explicitly enabled by user
+                  if (adminLabelShowHalo) {
                     ctx.strokeStyle = "#ffffff";
-                    ctx.lineWidth = Math.max(2.5, 3.5 * scale);
+                    ctx.lineWidth = Math.max(2, 2.5 * scale);
                     ctx.lineJoin = "round";
                     ctx.strokeText(labelText, lx, ly);
                   }
 
-                  // Fill text color
+                  // Fill text color directly without background box/halo
                   ctx.fillStyle = shouldAutoCut ? adminLabelColor : (layer.labelColor || adminLabelColor || "#0f172a");
                   ctx.fillText(labelText, lx, ly);
                   ctx.restore();
+
+                  drawnLabelPixelPositions.push({ x: lx, y: ly });
                 });
               }
             }
@@ -3484,8 +2715,11 @@ export default function GisMapView({
           ctx.globalAlpha = 1.0;
           ctx.fillStyle = "#475569";
           ctx.font = `${6 * scale}px ${mapFontFamily}`;
-          const labelTxt = pt.location || pt.district || "Pt";
-          ctx.fillText(labelTxt.substring(0, 8), px + rad + 2 * scale, py + 2 * scale);
+          const isDistDrawn = pt.district && drawnAttributeLabelsAcrossLayers.has(norm(pt.district));
+          const labelTxt = pt.location || pt["Well ID"] || pt.station || (isDistDrawn ? "" : pt.district) || "Pt";
+          if (labelTxt && labelTxt !== "Pt") {
+            ctx.fillText(labelTxt.substring(0, 10), px + rad + 2 * scale, py + 2 * scale);
+          }
         }
       });
       ctx.restore();
@@ -4064,93 +3298,62 @@ export default function GisMapView({
       ctx.restore();
     }
 
-    // 12. Render Shapefile / GeoJSON Feature Labels
-    if (showShapefileLabels) {
-      if (layers.length > 0) {
-        layers.forEach(layer => {
-          if (!layer.visible || !layer.showLabels) return;
-          ctx.save();
-          ctx.globalAlpha = 1.0;
-          ctx.fillStyle = layer.labelColor;
-          ctx.font = `${layer.labelSize * scale}px ${mapFontFamily}`;
-          ctx.textBaseline = "middle";
-          ctx.textAlign = "center";
+    // 12. Render Shapefile / GeoJSON Feature Labels (Deduplicated - skip layers already labeled in Section 4)
+    if (showShapefileLabels && layers.length === 0 && effectiveClipGeoJson) {
+      ctx.save();
+      ctx.globalAlpha = 1.0;
+      ctx.fillStyle = shapefileLabelColor;
+      ctx.font = `${adminLabelItalic ? "italic " : ""}${adminLabelWeight} ${shapefileLabelSize * scale}px "${adminLabelFontFamily}", sans-serif`;
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "center";
 
-          const gj = layer.geoJson;
-          if (gj) {
-            const features = gj.features || (gj.type === "Feature" ? [gj] : []);
-            features.forEach((f: any, idx: number) => {
-              if (!f || !f.properties) return;
-              if (!featureMatchesSelection(f, selectedState, selectedDistrict, districtStateMap)) return;
-              const textVal = String(f.properties[layer.labelKey] || "");
-              if (!textVal || textVal.trim().toLowerCase() === "india") return;
+      const features = effectiveClipGeoJson.features || 
+                       (effectiveClipGeoJson.type === "Feature" ? [effectiveClipGeoJson] : []);
 
-              let lng = 0, lat = 0;
-              const customPos = customLabelPositions[layer.id]?.[idx];
-              if (customPos) {
-                lng = customPos.lng;
-                lat = customPos.lat;
-              } else {
-                const centroid = getPolygonCentroid(f.geometry?.coordinates);
-                if (centroid) {
-                  lng = centroid.lng;
-                  lat = centroid.lat;
-                } else {
-                  return;
-                }
-              }
-
-              const px = getX(lng);
-              const py = getY(lat);
-
-              if (px >= margin && px <= w - margin && py >= margin && py <= h - margin) {
-                ctx.fillText(textVal, px, py);
-              }
-            });
+      features.forEach((f: any, idx: number) => {
+        if (!f || !f.properties) return;
+        if (!featureMatchesSelection(f, selectedState, selectedDistrict, districtStateMap)) return;
+        if (!showNeighbourLabels && !isStateAll(selectedState)) {
+          const p = f.properties;
+          const fState = String(p.state || p.STATE || p.State || p.ST_NM || p.st_nm || p.NAME_1 || p.state_name || "").trim();
+          const fDist = String(p.district || p.DISTRICT || p.District || p.NAME_2 || p.DT_NM || p.dist_name || "").trim();
+          const selNorm = norm(selectedState || "");
+          if (fState) {
+            const fs = norm(fState);
+            if (fs !== selNorm && !fs.includes(selNorm) && !selNorm.includes(fs)) return;
+          } else if (fDist && districtStateMap) {
+            const mapped = districtStateMap[fDist.toLowerCase()] || districtStateMap[norm(fDist)] || districtStateMap[fDist];
+            if (mapped && norm(mapped) !== selNorm && !norm(mapped).includes(selNorm)) return;
           }
-          ctx.restore();
-        });
-      } else if (effectiveClipGeoJson) {
-        ctx.save();
-        ctx.globalAlpha = 1.0;
-        ctx.fillStyle = shapefileLabelColor;
-        ctx.font = `${shapefileLabelSize * scale}px ${mapFontFamily}`;
-        ctx.textBaseline = "middle";
-        ctx.textAlign = "center";
+        }
+        const textVal = String(f.properties[shapefileLabelKey] || "");
+        if (!textVal || textVal.trim().toLowerCase() === "india") return;
+        if (drawnAttributeLabelsAcrossLayers.has(norm(textVal))) return;
+        drawnAttributeLabelsAcrossLayers.add(norm(textVal));
 
-        const features = effectiveClipGeoJson.features || 
-                         (effectiveClipGeoJson.type === "Feature" ? [effectiveClipGeoJson] : []);
-
-        features.forEach((f: any, idx: number) => {
-          if (!f || !f.properties) return;
-          if (!featureMatchesSelection(f, selectedState, selectedDistrict, districtStateMap)) return;
-          const textVal = String(f.properties[shapefileLabelKey] || "");
-          if (!textVal || textVal.trim().toLowerCase() === "india") return;
-
-          let lng = 0, lat = 0;
-          const customPos = (customLabelPositions as any)[idx];
-          if (customPos) {
-            lng = customPos.lng;
-            lat = customPos.lat;
+        let lng = 0, lat = 0;
+        const customPos = (customLabelPositions as any)[idx];
+        if (customPos) {
+          lng = customPos.lng;
+          lat = customPos.lat;
+        } else {
+          const centroid = getPolygonCentroid(f.geometry?.coordinates);
+          if (centroid) {
+            lng = centroid.lng;
+            lat = centroid.lat;
           } else {
-            const centroid = getPolygonCentroid(f.geometry?.coordinates);
-            if (centroid) {
-              lng = centroid.lng;
-              lat = centroid.lat;
-            } else {
-              return;
-            }
+            return;
           }
+        }
 
-          const px = getX(lng);
-          const py = getY(lat);
+        const px = getX(lng);
+        const py = getY(lat);
 
-          if (px >= margin && px <= w - margin && py >= margin && py <= h - margin) {
-            ctx.fillText(textVal, px, py);
-          }
-        });
-        ctx.restore();
-      }
+        if (px >= margin && px <= w - margin && py >= margin && py <= h - margin) {
+          ctx.fillText(textVal, px, py);
+        }
+      });
+      ctx.restore();
     }
   };
 
@@ -4265,18 +3468,27 @@ export default function GisMapView({
     const rowStep = Math.round(colStep * (baseMapExtent.finalLatSpan / baseMapExtent.finalLngSpan));
 
     const delay = isDragging ? 50 : 200;
+    let activeWorker: Worker | null = null;
+    let revokeWorkerUrl: (() => void) | null = null;
+
     const timer = setTimeout(() => {
       setIsLeftLoading(true);
-      const worker = createInterpolationWorker();
+      const { worker, revoke } = createInterpolationWorker();
+      activeWorker = worker;
+      revokeWorkerUrl = revoke;
       worker.onmessage = (e) => {
         setLeftInterpolatedGrid({ grid: e.data.grid, colStep, rowStep });
         setIsLeftLoading(false);
         worker.terminate();
+        revoke();
+        activeWorker = null;
       };
       worker.onerror = (err) => {
         console.error("Left Interpolation Worker failed:", err);
         setIsLeftLoading(false);
         worker.terminate();
+        revoke();
+        activeWorker = null;
       };
       worker.postMessage({
         validPoints: pts,
@@ -4303,13 +3515,24 @@ export default function GisMapView({
       });
     }, delay);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      if (activeWorker) {
+        activeWorker.terminate();
+        activeWorker = null;
+      }
+      if (revokeWorkerUrl) {
+        revokeWorkerUrl();
+        revokeWorkerUrl = null;
+      }
+    };
   }, [
     selectedParam, parsedData, leftPanelData, isComparisonActive, isInterpolatedType,
     baseMapExtent, gridSmoothingRes, gridResolutionMultiplier, searchRadius, clippingRadius,
     idwPower, extendInterpolationToBoundary, interpolationMethod, isDragging, useAllPoints,
     krigingModel, krigingNugget, krigingSill, krigingRange, krigingNeighbors, rbfKernel, rbfParameter,
-    enableGaussianSmoothing, enableAnisotropy, anisotropyAngle, anisotropyRatio
+    enableGaussianSmoothing, enableAnisotropy, anisotropyAngle, anisotropyRatio,
+    interpolationTrigger
   ]);
 
   // Background-Worker Powered Right Panel Interpolation Grid
@@ -4363,18 +3586,27 @@ export default function GisMapView({
     const rowStep = Math.round(colStep * (baseMapExtent.finalLatSpan / baseMapExtent.finalLngSpan));
 
     const delay = isDragging ? 50 : 200;
+    let activeWorker: Worker | null = null;
+    let revokeWorkerUrl: (() => void) | null = null;
+
     const timer = setTimeout(() => {
       setIsRightLoading(true);
-      const worker = createInterpolationWorker();
+      const { worker, revoke } = createInterpolationWorker();
+      activeWorker = worker;
+      revokeWorkerUrl = revoke;
       worker.onmessage = (e) => {
         setRightInterpolatedGrid({ grid: e.data.grid, colStep, rowStep });
         setIsRightLoading(false);
         worker.terminate();
+        revoke();
+        activeWorker = null;
       };
       worker.onerror = (err) => {
         console.error("Right Interpolation Worker failed:", err);
         setIsRightLoading(false);
         worker.terminate();
+        revoke();
+        activeWorker = null;
       };
       worker.postMessage({
         validPoints,
@@ -4401,13 +3633,24 @@ export default function GisMapView({
       });
     }, delay);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      if (activeWorker) {
+        activeWorker.terminate();
+        activeWorker = null;
+      }
+      if (revokeWorkerUrl) {
+        revokeWorkerUrl();
+        revokeWorkerUrl = null;
+      }
+    };
   }, [
     selectedParam, parsedData, rightPanelData, leftPanelData, isComparisonActive, showDifferenceMap, isInterpolatedType,
     baseMapExtent, gridSmoothingRes, gridResolutionMultiplier, searchRadius, clippingRadius,
     idwPower, extendInterpolationToBoundary, interpolationMethod, isDragging, useAllPoints,
     krigingModel, krigingNugget, krigingSill, krigingRange, krigingNeighbors, rbfKernel, rbfParameter,
-    enableGaussianSmoothing, enableAnisotropy, anisotropyAngle, anisotropyRatio
+    enableGaussianSmoothing, enableAnisotropy, anisotropyAngle, anisotropyRatio,
+    interpolationTrigger
   ]);
 
   // Difference matrix mapping helper
@@ -4588,13 +3831,17 @@ export default function GisMapView({
     aoiLayerId,
     adminCutMode,
     showAdminNamesOnMap,
+    showNeighbourLabels,
     adminLabelAttribute,
     adminLabelSize,
     adminLabelColor,
     adminLabelShowHalo,
+    adminLabelFontFamily,
     adminLabelWeight,
-    clippedFeaturesMap
+    adminLabelItalic
   ]);
+
+  // Fact Sheet map integration is powered directly by high-resolution exports and Fact Sheet's dedicated 2400x1400 engine
 
   // Vector SVG Exporter (Generates real, clean scalable vector graphic file!)
   const exportToSvgString = (side: "left" | "right") => {
@@ -5188,8 +4435,9 @@ export default function GisMapView({
       `;
     }
 
+    const isSvgTransparent = basemap === "Transparent (No Background)";
     let svg = `<?xml version="1.0" encoding="utf-8"?>
-<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}px" height="${h}px" style="background:#ffffff; font-family:${mapFontFamily};">
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}px" height="${h}px" style="background:${isSvgTransparent ? "none" : "#ffffff"}; font-family:${mapFontFamily};">
   <defs>
     <filter id="3d-emboss" x="-20%" y="-20%" width="140%" height="140%">
       <feGaussianBlur in="SourceAlpha" stdDeviation="0.6" result="blur" />
@@ -5210,8 +4458,8 @@ export default function GisMapView({
   </defs>
   
   <!-- 1. Background base layout -->
-  <rect x="0" y="0" width="${w}" height="${h}" fill="#f8fafc" />
-  <rect x="${margin}" y="${margin}" width="${mw}" height="${mh}" fill="#ffffff" />
+  ${isSvgTransparent ? "" : `<rect x="0" y="0" width="${w}" height="${h}" fill="#f8fafc" />
+  <rect x="${margin}" y="${margin}" width="${mw}" height="${mh}" fill="#ffffff" />`}
 
   <!-- 2. True Scalable Vector Raster Surface -->
   <g id="vector-interpolation-raster" opacity="${rasterOpacity / 100}">
@@ -5395,10 +4643,12 @@ ${svgStatsPanel}
     if (exportFormat === "svg") {
       const svgString = exportToSvgString("left");
       const blob = new Blob([svgString], { type: "image/svg+xml" });
+      const svgUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
+      link.href = svgUrl;
       link.download = `${selectedParam}_HighRes_Map.svg`;
       link.click();
+      setTimeout(() => URL.revokeObjectURL(svgUrl), 1000);
       showToast(`Exported vector ${selectedParam}_HighRes_Map.svg successfully!`, "success");
       return;
     }
@@ -5416,10 +4666,12 @@ ${svgStatsPanel}
         
         // 1. Generate and download the GeoTIFF binary Blob
         const geoTiffBlob = createGeoTiffBlob(w, h, imgData.data, bounds);
+        const geoTiffUrl = URL.createObjectURL(geoTiffBlob);
         const geoTiffLink = document.createElement("a");
-        geoTiffLink.href = URL.createObjectURL(geoTiffBlob);
+        geoTiffLink.href = geoTiffUrl;
         geoTiffLink.download = `${selectedParam}_GroundwaterMap_Georeferenced.tif`;
         geoTiffLink.click();
+        setTimeout(() => URL.revokeObjectURL(geoTiffUrl), 2000);
 
         // 2. Generate and download the companion Sidecar World File (.tfw)
         const scaleX = (bounds.maxLng - bounds.minLng) / w;
@@ -5437,10 +4689,12 @@ ${svgStatsPanel}
         ].join("\n") + "\n";
 
         const tfwBlob = new Blob([tfwContent], { type: "text/plain" });
+        const tfwUrl = URL.createObjectURL(tfwBlob);
         const tfwLink = document.createElement("a");
-        tfwLink.href = URL.createObjectURL(tfwBlob);
+        tfwLink.href = tfwUrl;
         tfwLink.download = `${selectedParam}_GroundwaterMap_Georeferenced.tfw`;
         tfwLink.click();
+        setTimeout(() => URL.revokeObjectURL(tfwUrl), 2000);
 
         showToast(`Successfully exported Georeferenced GeoTIFF and companion World File (.tfw)!`, "success");
         return;
@@ -5464,85 +4718,874 @@ ${svgStatsPanel}
     showToast(`Successfully exported high-quality ${Math.round(multiplier * 96)} DPI map!`, "success");
   };
 
-  // Export current map features (stations, boundaries, or both) as ESRI Shapefile (.zip)
-  const exportMapAsShapefile = async (type: "stations" | "boundaries" | "all" = "all") => {
-    try {
-      showToast("Generating ESRI Shapefile (.zip) package of map...", "info");
-      const activeData = isComparisonActive ? (leftPanelData || parsedData) : parsedData;
+  // Helper: normalize CSS color (#hex or rgb(r,g,b)) to uppercase #RRGGBB and R,G,B
+  const normalizeExportColor = (colorStr: string): { hex: string; rgb: string } => {
+    const str = (colorStr || "#3b82f6").trim();
+    if (str.startsWith("#")) {
+      let h = str.slice(1);
+      if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+      const r = parseInt(h.substring(0, 2), 16) || 0;
+      const g = parseInt(h.substring(2, 4), 16) || 0;
+      const b = parseInt(h.substring(4, 6), 16) || 0;
+      return { hex: `#${h.toUpperCase().padEnd(6, "0").slice(0, 6)}`, rgb: `${r},${g},${b}` };
+    }
+    const nums = str.match(/\d+/g);
+    if (nums && nums.length >= 3) {
+      const r = Math.min(255, Math.max(0, parseInt(nums[0], 10) || 0));
+      const g = Math.min(255, Math.max(0, parseInt(nums[1], 10) || 0));
+      const b = Math.min(255, Math.max(0, parseInt(nums[2], 10) || 0));
+      const hex = `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("").toUpperCase()}`;
+      return { hex, rgb: `${r},${g},${b}` };
+    }
+    return { hex: "#3B82F6", rgb: "59,130,246" };
+  };
 
-      if (type === "stations" || (type === "all" && (!layers || layers.length === 0))) {
-        if (!activeData || activeData.length === 0) {
+  // Helper: resolve clean station field value across raw columns and headerMap
+  const getStationFieldValue = (row: any, canonicalKey: string, fallbacks: string[]): string => {
+    if (!row) return "";
+    const mapped = headerMap?.[canonicalKey] || headers?.[canonicalKey];
+    if (mapped && row[mapped] !== undefined && row[mapped] !== null && String(row[mapped]).trim() !== "") {
+      return String(row[mapped]).trim();
+    }
+    for (const k of Object.keys(row)) {
+      const low = k.toLowerCase().trim();
+      if (fallbacks.some((fb) => low === fb || low.includes(fb))) {
+        const v = row[k];
+        if (v !== undefined && v !== null && String(v).trim() !== "") {
+          return String(v).trim();
+        }
+      }
+    }
+    return "";
+  };
+
+  // Helper: compute active interpolated grid synchronously if background grid is not yet populated
+  const getActiveRasterGridForExport = (
+    activeData: any[],
+    activeParamName: string
+  ): { grid: number[][]; colStep: number; rowStep: number } | null => {
+    if (!activeParamName || activeParamName === "STATIONS") return null;
+
+    if (!isComparisonActive && leftInterpolatedGrid && leftInterpolatedGrid.grid.length > 1) {
+      return leftInterpolatedGrid;
+    }
+    if (isComparisonActive && leftInterpolatedGrid && leftInterpolatedGrid.grid.length > 1) {
+      return leftInterpolatedGrid;
+    }
+
+    const paramCol = headerMap[activeParamName] || activeParamName;
+    const pts = (activeData || [])
+      .map((d) => ({ lat: d.lat, lng: d.lng, val: parseFloat(d[paramCol]) }))
+      .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng) && Number.isFinite(p.val));
+
+    if (pts.length === 0) return null;
+
+    const { mapMinLat, mapMinLng, finalLatSpan, finalLngSpan } = baseMapExtent;
+    const colStep = 96;
+    const rowStep = Math.max(36, Math.min(140, Math.round(colStep * (finalLatSpan / Math.max(1e-6, finalLngSpan)))));
+    const grid: number[][] = Array.from({ length: rowStep }, () => new Array(colStep).fill(NaN));
+    const power = idwPower || 2;
+
+    for (let r = 0; r < rowStep; r++) {
+      const cellLat = mapMinLat + ((r + 0.5) / rowStep) * finalLatSpan;
+      for (let c = 0; c < colStep; c++) {
+        const cellLng = mapMinLng + ((c + 0.5) / colStep) * finalLngSpan;
+        let exactVal: number | null = null;
+        let numer = 0;
+        let denom = 0;
+
+        for (let i = 0; i < pts.length; i++) {
+          const pt = pts[i];
+          const dLat = cellLat - pt.lat;
+          const dLng = cellLng - pt.lng;
+          const distSq = dLat * dLat + dLng * dLng;
+          if (distSq < 1e-10) {
+            exactVal = pt.val;
+            break;
+          }
+          const w = 1 / Math.pow(distSq, power / 2);
+          numer += w * pt.val;
+          denom += w;
+        }
+
+        grid[r][c] = exactVal !== null ? exactVal : denom > 0 ? numer / denom : NaN;
+      }
+    }
+
+    return { grid, colStep, rowStep };
+  };
+
+  // Helper: vectorize active interpolated raster into Polygon Classification Zones & PolyLine Contours
+  const buildVectorizedZonesAndContours = (
+    activeData: any[],
+    activeParamName: string,
+    clipGeoJson: any
+  ): {
+    zonesGeoJson: any | null;
+    contoursGeoJson: any | null;
+    classSummary: { zoneId: number; label: string; rangeText: string; hex: string; rgb: string; areaSqKm: number; areaPct: number }[];
+  } => {
+    const emptyRes = { zonesGeoJson: null, contoursGeoJson: null, classSummary: [] };
+    if (!showRaster || !isInterpolatedType || activeParamName === "STATIONS") return emptyRes;
+
+    const rasterObj = getActiveRasterGridForExport(activeData, activeParamName);
+    if (!rasterObj || !rasterObj.grid || rasterObj.grid.length < 2 || rasterObj.colStep < 2) {
+      return emptyRes;
+    }
+
+    const activeParamConfig = PARAM_CONFIG[activeParamName] || {
+      b1: 1,
+      b2: 10,
+      unit: "mg/L",
+      name: activeParamName
+    };
+
+    const { grid, colStep, rowStep } = rasterObj;
+    const { mapMinLat, mapMinLng, finalLatSpan, finalLngSpan } = baseMapExtent;
+
+    // Downsample grid smoothly for responsive marching-squares polygonization (<= 115 cols/rows)
+    const maxDim = 115;
+    const stride = Math.max(1, Math.ceil(Math.max(colStep, rowStep) / maxDim));
+    const sampledRows: number[] = [];
+    for (let r = 0; r < rowStep; r += stride) sampledRows.push(r);
+    if (sampledRows[sampledRows.length - 1] !== rowStep - 1) sampledRows.push(rowStep - 1);
+
+    const sampledCols: number[] = [];
+    for (let c = 0; c < colStep; c += stride) sampledCols.push(c);
+    if (sampledCols[sampledCols.length - 1] !== colStep - 1) sampledCols.push(colStep - 1);
+
+    if (sampledRows.length < 2 || sampledCols.length < 2) return emptyRes;
+
+    // Collect valid point fallback values for filling edge NaN cells prior to clipping
+    let sumValid = 0;
+    let countValid = 0;
+    let gridMin = Infinity;
+    let gridMax = -Infinity;
+    const validGridCoords: { r: number; c: number; val: number }[] = [];
+
+    for (let rIdx = 0; rIdx < sampledRows.length; rIdx++) {
+      const r = sampledRows[rIdx];
+      for (let cIdx = 0; cIdx < sampledCols.length; cIdx++) {
+        const c = sampledCols[cIdx];
+        const v = grid[r]?.[c];
+        if (typeof v === "number" && Number.isFinite(v)) {
+          sumValid += v;
+          countValid++;
+          if (v < gridMin) gridMin = v;
+          if (v > gridMax) gridMax = v;
+          validGridCoords.push({ r: rIdx, c: cIdx, val: v });
+        }
+      }
+    }
+
+    if (countValid === 0) return emptyRes;
+    const fallbackMean = sumValid / countValid;
+
+    // Build strictly rectangular Turf PointGrid with identical rounded latitude rows
+    const gridPoints: any[] = [];
+    for (let rIdx = 0; rIdx < sampledRows.length; rIdx++) {
+      const r = sampledRows[rIdx];
+      const lat = Number((mapMinLat + ((r + 0.5) / rowStep) * finalLatSpan).toFixed(7));
+      for (let cIdx = 0; cIdx < sampledCols.length; cIdx++) {
+        const c = sampledCols[cIdx];
+        const lng = Number((mapMinLng + ((c + 0.5) / colStep) * finalLngSpan).toFixed(7));
+        let val = grid[r]?.[c];
+        if (typeof val !== "number" || !Number.isFinite(val)) {
+          // Nearest valid neighbor in downsampled grid keeps boundary edges seamless
+          let bestDist = Infinity;
+          let nearestVal = fallbackMean;
+          for (let k = 0; k < validGridCoords.length; k++) {
+            const vc = validGridCoords[k];
+            const d2 = (vc.r - rIdx) * (vc.r - rIdx) + (vc.c - cIdx) * (vc.c - cIdx);
+            if (d2 < bestDist) {
+              bestDist = d2;
+              nearestVal = vc.val;
+            }
+          }
+          val = nearestVal;
+        }
+        gridPoints.push(turf.point([lng, lat], { val }));
+      }
+    }
+
+    const pointGrid = turf.featureCollection(gridPoints);
+
+    // Prepare strictly increasing breaks and matching colors/labels
+    const rawClass = getClassColorsAndBreaks(activeParamConfig);
+    const cleanBreaks: number[] = [];
+    const cleanColors: string[] = [];
+    const cleanLabels: string[] = [];
+
+    for (let i = 0; i < rawClass.breaks.length; i++) {
+      const brk = rawClass.breaks[i];
+      if (cleanBreaks.length === 0 || brk > cleanBreaks[cleanBreaks.length - 1]) {
+        cleanBreaks.push(brk);
+        cleanColors.push(rawClass.colors[i] || rawClass.colors[0]);
+        cleanLabels.push(rawClass.labels[i] || `Class ${i + 1}`);
+      }
+    }
+    cleanColors.push(rawClass.colors[rawClass.colors.length - 1] || "#ff0000");
+    cleanLabels.push(rawClass.labels[rawClass.labels.length - 1] || "Exceeded");
+
+    const firstBreak = cleanBreaks[0] ?? 0;
+    const lastBreak = cleanBreaks[cleanBreaks.length - 1] ?? 1;
+    const lowBound = Math.min(gridMin - Math.max(1, Math.abs(gridMin) * 0.25), firstBreak - Math.max(10, Math.abs(firstBreak) * 0.5));
+    const highBound = Math.max(gridMax + Math.max(1, Math.abs(gridMax) * 0.25), lastBreak * 2 + 1000);
+    const isoBreaks = [lowBound, ...cleanBreaks, highBound];
+
+    const clipFeatures: any[] = [];
+    const clipBboxes: ([number, number, number, number] | null)[] = [];
+    if (clipGeoJson) {
+      const rawClip = clipGeoJson.features || (clipGeoJson.type === "Feature" ? [clipGeoJson] : []);
+      rawClip.forEach((cf: any) => {
+        if (cf && cf.geometry && (cf.geometry.type === "Polygon" || cf.geometry.type === "MultiPolygon")) {
+          clipFeatures.push(cf);
+          clipBboxes.push(getFeatureBbox(cf));
+        }
+      });
+    }
+
+    // 1. Isobands -> Polygon Zones clipped to boundary
+    let bandsFc: any = null;
+    try {
+      bandsFc = turf.isobands(pointGrid as any, isoBreaks, { zProperty: "val" });
+    } catch (e) {
+      console.warn("Isobands vectorization fallback:", e);
+    }
+
+    const zoneFeatures: any[] = [];
+    const classSummary: { zoneId: number; label: string; rangeText: string; hex: string; rgb: string; areaSqKm: number; areaPct: number }[] = [];
+
+    if (bandsFc && Array.isArray(bandsFc.features)) {
+      let totalAreaSqKm = 0;
+
+      bandsFc.features.forEach((bandFeat: any, bIdx: number) => {
+        if (!bandFeat || !bandFeat.geometry) return;
+        const coords = bandFeat.geometry.coordinates;
+        if (!coords || coords.length === 0) return;
+
+        const rMin = isoBreaks[bIdx];
+        const rMax = isoBreaks[bIdx + 1];
+        const colorMeta = normalizeExportColor(cleanColors[bIdx] || "#3b82f6");
+        const label = cleanLabels[bIdx] || `Zone ${bIdx + 1}`;
+        const rangeText = bIdx === 0
+          ? `<= ${cleanBreaks[0] ?? rMax}`
+          : bIdx >= cleanBreaks.length
+            ? `> ${cleanBreaks[cleanBreaks.length - 1] ?? rMin}`
+            : `${cleanBreaks[bIdx - 1]} - ${cleanBreaks[bIdx]}`;
+
+        let finalGeom: any = bandFeat.geometry;
+
+        if (clipFeatures.length > 0) {
+          const bandBbox = getFeatureBbox(bandFeat);
+          const clippedPolygons: number[][][][] = [];
+
+          for (let ci = 0; ci < clipFeatures.length; ci++) {
+            const cb = clipBboxes[ci];
+            if (bandBbox && cb && !doBboxesOverlap(bandBbox, cb)) continue;
+            try {
+              const clipped = turf.intersect(turf.featureCollection([bandFeat, clipFeatures[ci]]) as any);
+              if (clipped && clipped.geometry) {
+                if (clipped.geometry.type === "Polygon") {
+                  clippedPolygons.push(clipped.geometry.coordinates);
+                } else if (clipped.geometry.type === "MultiPolygon") {
+                  clipped.geometry.coordinates.forEach((polyCoords: any) => clippedPolygons.push(polyCoords));
+                }
+              }
+            } catch {
+              // Skip invalid degenerate ring intersections safely
+            }
+          }
+
+          if (clippedPolygons.length === 0) return;
+          finalGeom =
+            clippedPolygons.length === 1
+              ? { type: "Polygon", coordinates: clippedPolygons[0] }
+              : { type: "MultiPolygon", coordinates: clippedPolygons };
+        }
+
+        let areaSqKm = 0;
+        try {
+          areaSqKm = turf.area({ type: "Feature", geometry: finalGeom, properties: {} } as any) / 1_000_000;
+        } catch {}
+        totalAreaSqKm += areaSqKm;
+
+        const roundedArea = Number(areaSqKm.toFixed(2));
+        zoneFeatures.push({
+          type: "Feature",
+          geometry: finalGeom,
+          properties: {
+            ZONE_ID: bIdx + 1,
+            ZONE_NAME: label,
+            RANGE_TXT: rangeText,
+            RANGE_MIN: Number((bIdx === 0 ? gridMin : rMin).toFixed(4)),
+            RANGE_MAX: Number((bIdx >= cleanBreaks.length ? gridMax : rMax).toFixed(4)),
+            AREA_SQKM: roundedArea,
+            AREA_PCT: 0,
+            COLOR_HEX: colorMeta.hex,
+            RGB_COLOR: colorMeta.rgb,
+            PARAM: activeParamName,
+            UNIT: activeParamConfig.unit || "",
+            METHOD: interpolationMethod.toUpperCase()
+          }
+        });
+
+        classSummary.push({
+          zoneId: bIdx + 1,
+          label,
+          rangeText,
+          hex: colorMeta.hex,
+          rgb: colorMeta.rgb,
+          areaSqKm: roundedArea,
+          areaPct: 0
+        });
+      });
+
+      if (totalAreaSqKm > 0) {
+        zoneFeatures.forEach((zf, idx) => {
+          const pct = Number(((zf.properties.AREA_SQKM / totalAreaSqKm) * 100).toFixed(2));
+          zf.properties.AREA_PCT = pct;
+          if (classSummary[idx]) classSummary[idx].areaPct = pct;
+        });
+      }
+    }
+
+    // 2. Isolines -> PolyLine Iso-Concentration Contours clipped to boundary
+    const contourSet = new Set<number>(cleanBreaks.filter((b) => b >= gridMin && b <= gridMax));
+    if (gridMax > gridMin) {
+      const span = gridMax - gridMin;
+      const numSteps = 8;
+      for (let i = 1; i < numSteps; i++) {
+        contourSet.add(Number((gridMin + (span * i) / numSteps).toFixed(2)));
+      }
+    }
+    const contourBreaks = Array.from(contourSet).filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+
+    const contourFeatures: any[] = [];
+    if (contourBreaks.length > 0) {
+      try {
+        const linesFc = turf.isolines(pointGrid as any, contourBreaks, { zProperty: "val" });
+        (linesFc.features || []).forEach((lineFeat: any) => {
+          if (!lineFeat || !lineFeat.geometry) return;
+          const levelVal = Number(lineFeat.properties?.val);
+          const colorMeta = normalizeExportColor(getValueColor(levelVal, false, activeParamName));
+          const isBisThresh = cleanBreaks.some((b) => Math.abs(b - levelVal) < 1e-6);
+
+          const rawParts: [number, number][][] =
+            lineFeat.geometry.type === "LineString"
+              ? [lineFeat.geometry.coordinates]
+              : lineFeat.geometry.type === "MultiLineString"
+                ? lineFeat.geometry.coordinates
+                : [];
+
+          let keptParts: [number, number][][] = [];
+          if (clipFeatures.length > 0) {
+            rawParts.forEach((part) => {
+              let seg: [number, number][] = [];
+              for (let pi = 0; pi < part.length; pi++) {
+                const pt = part[pi];
+                const inside = clipFeatures.some((cf) => {
+                  try {
+                    return turf.booleanPointInPolygon(pt as any, cf);
+                  } catch {
+                    return false;
+                  }
+                });
+                if (inside) {
+                  seg.push(pt);
+                } else if (seg.length >= 2) {
+                  keptParts.push(seg);
+                  seg = [];
+                } else {
+                  seg = [];
+                }
+              }
+              if (seg.length >= 2) keptParts.push(seg);
+            });
+          } else {
+            keptParts = rawParts.filter((p) => p.length >= 2);
+          }
+
+          if (keptParts.length > 0) {
+            contourFeatures.push({
+              type: "Feature",
+              geometry:
+                keptParts.length === 1
+                  ? { type: "LineString", coordinates: keptParts[0] }
+                  : { type: "MultiLineString", coordinates: keptParts },
+              properties: {
+                CONTOUR: Number.isFinite(levelVal) ? levelVal : 0,
+                IS_BIS_LMT: isBisThresh ? "Yes" : "No",
+                COLOR_HEX: colorMeta.hex,
+                PARAM: activeParamName,
+                UNIT: activeParamConfig.unit || ""
+              }
+            });
+          }
+        });
+      } catch (e) {
+        console.warn("Isolines contour generation warning:", e);
+      }
+    }
+
+    return {
+      zonesGeoJson: zoneFeatures.length > 0 ? { type: "FeatureCollection", features: zoneFeatures } : null,
+      contoursGeoJson: contourFeatures.length > 0 ? { type: "FeatureCollection", features: contourFeatures } : null,
+      classSummary
+    };
+  };
+
+  // Helper: render borderless WGS84 Georeferenced GeoTIFF + .tfw + .prj + MapInfo .tab aligned to baseMapExtent
+  const buildGeoreferencedRasterFiles = (
+    activeData: any[],
+    activeParamName: string,
+    filePrefix: string
+  ): GisPackageExtraFile[] => {
+    const files: GisPackageExtraFile[] = [];
+    const { mapMinLng, mapMaxLng, mapMinLat, mapMaxLat, finalLngSpan, finalLatSpan, centerLat } = baseMapExtent;
+    const cosLat = Math.max(0.2, Math.cos((centerLat * Math.PI) / 180));
+    const geoAspect = (finalLngSpan * cosLat) / Math.max(1e-6, finalLatSpan);
+
+    const rasterW = 1400;
+    const rasterH = Math.max(360, Math.min(2100, Math.round(rasterW / Math.max(0.25, geoAspect))));
+
+    const offCanvas = document.createElement("canvas");
+    offCanvas.width = rasterW;
+    offCanvas.height = rasterH;
+    const oCtx = offCanvas.getContext("2d");
+    if (!oCtx) return files;
+
+    oCtx.fillStyle = "#ffffff";
+    oCtx.fillRect(0, 0, rasterW, rasterH);
+
+    const getRx = (lng: number) => ((lng - mapMinLng) / finalLngSpan) * rasterW;
+    const getRy = (lat: number) => ((mapMaxLat - lat) / finalLatSpan) * rasterH;
+
+    // 1. Interpolated raster surface aligned pixel-for-pixel to WGS84 extent
+    if (showRaster && isInterpolatedType && activeParamName !== "STATIONS") {
+      const rasterObj = getActiveRasterGridForExport(activeData, activeParamName);
+      if (rasterObj) {
+        const { grid, colStep, rowStep } = rasterObj;
+        const mathCanvas = document.createElement("canvas");
+        mathCanvas.width = colStep;
+        mathCanvas.height = rowStep;
+        const mCtx = mathCanvas.getContext("2d");
+        if (mCtx) {
+          const imgData = mCtx.createImageData(colStep, rowStep);
+          const buf = imgData.data;
+          for (let r = 0; r < rowStep; r++) {
+            const imgY = rowStep - 1 - r;
+            for (let c = 0; c < colStep; c++) {
+              const val = grid[r]?.[c];
+              const idx = (imgY * colStep + c) * 4;
+              if (val === undefined || isNaN(val)) {
+                buf[idx + 3] = 0;
+                continue;
+              }
+              const rgb = normalizeExportColor(getValueColor(val, false, activeParamName));
+              const parts = rgb.rgb.split(",").map(Number);
+              buf[idx] = parts[0] || 0;
+              buf[idx + 1] = parts[1] || 0;
+              buf[idx + 2] = parts[2] || 0;
+              buf[idx + 3] = 255;
+            }
+          }
+          mCtx.putImageData(imgData, 0, 0);
+
+          oCtx.save();
+          if (effectiveClipGeoJson) {
+            oCtx.beginPath();
+            const traceRing = (ring: number[][]) => {
+              if (!ring || ring.length === 0) return;
+              oCtx.moveTo(getRx(ring[0][0]), getRy(ring[0][1]));
+              for (let i = 1; i < ring.length; i++) oCtx.lineTo(getRx(ring[i][0]), getRy(ring[i][1]));
+              oCtx.closePath();
+            };
+            const traceGeom = (g: any) => {
+              if (!g) return;
+              if (g.type === "Polygon") g.coordinates.forEach(traceRing);
+              else if (g.type === "MultiPolygon") g.coordinates.forEach((p: any) => p.forEach(traceRing));
+            };
+            const feats = effectiveClipGeoJson.features || (effectiveClipGeoJson.type === "Feature" ? [effectiveClipGeoJson] : []);
+            feats.forEach((f: any) => traceGeom(f?.geometry));
+            oCtx.clip();
+          }
+          oCtx.globalAlpha = Math.max(0.1, rasterOpacity / 100);
+          oCtx.imageSmoothingEnabled = smoothBlending;
+          oCtx.imageSmoothingQuality = "high";
+          oCtx.drawImage(mathCanvas, 0, 0, rasterW, rasterH);
+          oCtx.restore();
+        }
+      }
+    }
+
+    // 2. Crisp boundary strokes in borderless GeoTIFF
+    const drawClipOutlines = (fc: any, stroke: string, lw: number) => {
+      if (!fc) return;
+      const feats = fc.features || (fc.type === "Feature" ? [fc] : []);
+      oCtx.save();
+      oCtx.strokeStyle = stroke;
+      oCtx.lineWidth = lw;
+      const strokeRing = (ring: number[][]) => {
+        if (!ring || ring.length === 0) return;
+        oCtx.beginPath();
+        oCtx.moveTo(getRx(ring[0][0]), getRy(ring[0][1]));
+        for (let i = 1; i < ring.length; i++) oCtx.lineTo(getRx(ring[i][0]), getRy(ring[i][1]));
+        oCtx.closePath();
+        oCtx.stroke();
+      };
+      feats.forEach((f: any) => {
+        const g = f?.geometry;
+        if (!g) return;
+        if (g.type === "Polygon") g.coordinates.forEach(strokeRing);
+        else if (g.type === "MultiPolygon") g.coordinates.forEach((p: any) => p.forEach(strokeRing));
+      });
+      oCtx.restore();
+    };
+
+    const visibleLayers = (layers || []).filter((l) => l.visible && l.geoJson);
+    if (visibleLayers.length > 0) {
+      visibleLayers.forEach((layer) => {
+        const useClipped = autoCutAdminToAoi && Boolean(aoiLayerId) && layer.id !== aoiLayerId && clippedFeaturesMap[layer.id];
+        const fc = useClipped
+          ? { type: "FeatureCollection", features: clippedFeaturesMap[layer.id] }
+          : layer.geoJson;
+        drawClipOutlines(fc, layer.strokeColor || "#334155", Math.max(1.2, (layer.strokeWidth || 1) * 1.4));
+      });
+    } else if (effectiveClipGeoJson) {
+      drawClipOutlines(effectiveClipGeoJson, "#334155", 1.5);
+    }
+
+    const imgData = oCtx.getImageData(0, 0, rasterW, rasterH);
+    const bounds = { minLng: mapMinLng, maxLng: mapMaxLng, minLat: mapMinLat, maxLat: mapMaxLat };
+    const tifName = `${filePrefix}.tif`;
+    const geoTiffBlob = createGeoTiffBlob(rasterW, rasterH, imgData.data, bounds);
+
+    const scaleX = (bounds.maxLng - bounds.minLng) / rasterW;
+    const scaleY = -(bounds.maxLat - bounds.minLat) / rasterH;
+    const tfwContent =
+      [
+        scaleX.toFixed(12),
+        "0.000000000000",
+        "0.000000000000",
+        scaleY.toFixed(12),
+        (bounds.minLng + scaleX / 2).toFixed(12),
+        (bounds.maxLat + scaleY / 2).toFixed(12)
+      ].join("\n") + "\n";
+
+    files.push({ fileName: tifName, content: geoTiffBlob });
+    files.push({ fileName: `${filePrefix}.tfw`, content: tfwContent });
+    files.push({ fileName: `${filePrefix}.prj`, content: WGS84_PRJ });
+    files.push({ fileName: `${filePrefix}.tab`, content: buildMapInfoRasterTab(tifName, rasterW, rasterH, bounds) });
+
+    return files;
+  };
+
+  // Export current prepared map (Zones, Contours, Stations, Boundaries, GeoTIFF Raster) as ArcGIS & MapInfo Package (.zip)
+  const exportMapAsShapefile = async (type: "stations" | "boundaries" | "zones" | "all" = "all") => {
+    try {
+      const labelMap: Record<string, string> = {
+        all: "Full ArcGIS & MapInfo GIS Package (.zip)",
+        zones: "Interpolated Zones & Contours Shapefile (.zip)",
+        stations: "Monitoring Stations Point Shapefile (.zip)",
+        boundaries: "Boundary Polygon Shapefile (.zip)"
+      };
+      showToast(`Preparing ${labelMap[type]}...`, "info");
+
+      const activeData = isComparisonActive ? (leftPanelData || parsedData) : parsedData;
+      const activeParamName = selectedParam;
+      const paramCol = headerMap[activeParamName] || activeParamName;
+      const activeParamConfig =
+        activeParamName === "STATIONS"
+          ? { b1: 0, b2: 0, unit: "", name: "Monitoring Stations" }
+          : PARAM_CONFIG[activeParamName] || { b1: 1, b2: 10, unit: "mg/L", name: activeParamName };
+      const { breaks, labels } = getClassColorsAndBreaks(activeParamConfig);
+
+      const getZoneLabelForVal = (val: number): { zoneName: string; exceeds: string } => {
+        if (activeParamName === "STATIONS") return { zoneName: "Monitoring Station", exceeds: "N/A" };
+        for (let i = 0; i < breaks.length; i++) {
+          if (val <= breaks[i]) {
+            return {
+              zoneName: labels[i] || `Class ${i + 1}`,
+              exceeds: val > activeParamConfig.b2 ? "Yes" : "No"
+            };
+          }
+        }
+        return {
+          zoneName: labels[labels.length - 1] || "Exceeded",
+          exceeds: val > activeParamConfig.b2 ? "Yes" : "No"
+        };
+      };
+
+      // Build clean station GeoJSON & raw point features
+      const excludedStationKeys = new Set([
+        "lat", "lng", "state", "district", "seasonGroup", "rawSeason", "year",
+        "_raw", "__EMPTY", "geom", "geometry"
+      ]);
+      const stationGeoFeatures = (activeData || [])
+        .filter((d) => Number.isFinite(d.lat) && Number.isFinite(d.lng))
+        .map((d, idx) => {
+          const numVal = activeParamName === "STATIONS" ? 1 : parseFloat(d[paramCol]);
+          const hasNum = Number.isFinite(numVal);
+          const colorMeta = normalizeExportColor(
+            hasNum ? getValueColor(numVal, false, activeParamName, true) : stationPointColor
+          );
+          const { zoneName, exceeds } = hasNum
+            ? getZoneLabelForVal(numVal)
+            : { zoneName: "Unmeasured", exceeds: "N/A" };
+
+          const props: Record<string, any> = {
+            ID: idx + 1,
+            WELL_ID: getStationFieldValue(d, "wellId", ["well_id", "well id", "well", "station_id", "site_id"]) || `STN_${idx + 1}`,
+            LOCATION: getStationFieldValue(d, "location", ["location", "village", "site", "place", "station"]),
+            BLOCK: getStationFieldValue(d, "block", ["block", "taluk", "tehsil", "mandal"]),
+            DISTRICT: d.district || getStationFieldValue(d, "district", ["district", "dist"]),
+            STATE: d.state || getStationFieldValue(d, "state", ["state", "st_nm"]),
+            SEASON: d.rawSeason || d.seasonGroup || "",
+            YEAR: d.year || "",
+            PARAM: activeParamName,
+            UNIT: activeParamConfig.unit || "",
+            VALUE: hasNum ? Number(numVal.toFixed(4)) : "",
+            ZONE_NAME: zoneName,
+            EXCEEDS: exceeds,
+            COLOR_HEX: colorMeta.hex,
+            LATITUDE: Number(d.lat.toFixed(6)),
+            LONGITUDE: Number(d.lng.toFixed(6))
+          };
+
+          // Append remaining clean primitive dataset attributes without overflowing DBF limits
+          Object.keys(d).forEach((k) => {
+            if (!excludedStationKeys.has(k) && !k.startsWith("_")) {
+              const v = d[k];
+              if (v === null || v === undefined || typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+                const up = k.replace(/[^a-zA-Z0-9_]/g, "_").toUpperCase();
+                if (!(up in props)) {
+                  props[k] = v;
+                }
+              }
+            }
+          });
+
+          return {
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [d.lng, d.lat] },
+            properties: props
+          };
+        });
+
+      const cleanParam = activeParamName.replace(/[^a-zA-Z0-9_-]/g, "_") || "Parameter";
+
+      // 1. Stations-only export
+      if (type === "stations") {
+        if (stationGeoFeatures.length === 0) {
           showToast("No sample stations available on the map to export as Shapefile.", "info");
           return;
         }
-        const pointFeatures = activeData.map((d) => ({
-          lng: d.lng,
-          lat: d.lat,
-          properties: {
-            WELL_ID: d.wellId || "",
-            LOCATION: d.location || "",
-            BLOCK: d.block || "",
-            DISTRICT: d.district || "",
-            STATE: d.state || "",
-            PARAM: selectedParam,
-            VALUE: d.val !== undefined ? d.val : "",
-            LATITUDE: d.lat,
-            LONGITUDE: d.lng,
-            ...(d.raw || {})
-          }
+        const pointFeatures = stationGeoFeatures.map((f) => ({
+          lng: f.geometry.coordinates[0],
+          lat: f.geometry.coordinates[1],
+          properties: f.properties
         }));
-        const baseName = `${selectedParam}_Stations_Shapefile`;
+        const baseName = `${cleanParam}_Stations_Shapefile`;
         const blob = await createPointShapefileZip(pointFeatures, baseName);
         downloadBlob(blob, `${baseName}.zip`);
-        showToast(`Exported ${pointFeatures.length} map stations as Shapefile (.zip)!`, "success");
+        showToast(`Exported ${pointFeatures.length} stations (.shp + MapInfo .tab + .prj) in ${baseName}.zip!`, "success");
         return;
       }
 
+      // Helper to collect active boundary layers (custom uploaded layers OR effective built-in boundary)
+      const getBoundaryExportLayers = (): GisPackageLayerInput[] => {
+        const result: GisPackageLayerInput[] = [];
+        const visibleLayers = (layers || []).filter((l) => l.visible && l.geoJson);
+        const layersToUse = visibleLayers.length > 0 ? visibleLayers : (layers || []).filter((l) => l.geoJson);
+
+        layersToUse.forEach((layer, idx) => {
+          const shouldAutoCut = autoCutAdminToAoi && Boolean(aoiLayerId) && layer.id !== aoiLayerId;
+          const allFeatures = layer.geoJson.features || (layer.geoJson.type === "Feature" ? [layer.geoJson] : []);
+          const kept =
+            shouldAutoCut && clippedFeaturesMap[layer.id]
+              ? clippedFeaturesMap[layer.id]
+              : allFeatures.filter((f: any) =>
+                  featureMatchesSelection(f, selectedState, selectedDistrict, districtStateMap)
+                );
+
+          const finalFeats = kept.length > 0 ? kept : allFeatures;
+          if (finalFeats.length > 0) {
+            const safeLayerName = (layer.name || `Boundary_${idx + 1}`).replace(/\.[^/.]+$/, "");
+            result.push({
+              fileBaseName: `04_Boundary_${safeLayerName}`,
+              geoJson: { type: "FeatureCollection", features: finalFeats }
+            });
+          }
+        });
+
+        // Fallback to active India / clipped State-District boundary if no custom boundary layers uploaded
+        if (result.length === 0 && effectiveClipGeoJson) {
+          const feats = effectiveClipGeoJson.features || (effectiveClipGeoJson.type === "Feature" ? [effectiveClipGeoJson] : []);
+          if (feats.length > 0) {
+            result.push({
+              fileBaseName: "04_Active_Admin_Boundary",
+              geoJson: { type: "FeatureCollection", features: feats }
+            });
+          }
+        }
+        return result;
+      };
+
+      // 2. Boundaries-only export
       if (type === "boundaries") {
-        const activeLayer = layers.find((l) => l.visible && l.geoJson) || layers[0];
-        if (!activeLayer || !activeLayer.geoJson) {
+        const bLayers = getBoundaryExportLayers();
+        if (bLayers.length === 0) {
           showToast("No active boundary shapefile layer available to export.", "info");
           return;
         }
-        const baseName = `${activeLayer.name || "Boundary"}_Shapefile`;
-        const blob = await createShapefileFromGeoJson(activeLayer.geoJson, baseName);
-        downloadBlob(blob, `${baseName}.zip`);
-        showToast(`Exported ${activeLayer.name} boundary as Shapefile (.zip)!`, "success");
+        if (bLayers.length === 1) {
+          const baseName = `${bLayers[0].fileBaseName.replace(/^04_/, "")}_Shapefile`;
+          const blob = await createShapefileFromGeoJson(bLayers[0].geoJson, baseName);
+          downloadBlob(blob, `${baseName}.zip`);
+          showToast(`Exported boundary shapefile + MapInfo .tab in ${baseName}.zip!`, "success");
+        } else {
+          const blob = await createGisPackageZip(bLayers, []);
+          const baseName = `${cleanParam}_Boundaries_GIS_Package`;
+          downloadBlob(blob, `${baseName}.zip`);
+          showToast(`Exported ${bLayers.length} boundary layers (.shp + .tab) in ${baseName}.zip!`, "success");
+        }
         return;
       }
 
-      // type === "all": Bundle both stations and boundary polygons together
-      const pointFeatures = (activeData || []).map((d) => ({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [d.lng, d.lat] },
-        properties: {
-          WELL_ID: d.wellId || "",
-          LOCATION: d.location || "",
-          BLOCK: d.block || "",
-          DISTRICT: d.district || "",
-          PARAM: selectedParam,
-          VALUE: d.val !== undefined ? d.val : "",
-          ...(d.raw || {})
+      // Vectorize interpolated classification zones & contour lines
+      const { zonesGeoJson, contoursGeoJson, classSummary } = buildVectorizedZonesAndContours(
+        activeData,
+        activeParamName,
+        effectiveClipGeoJson
+      );
+
+      // 3. Interpolated Zones + Contours only export
+      if (type === "zones") {
+        const zLayers: GisPackageLayerInput[] = [];
+        if (zonesGeoJson) zLayers.push({ fileBaseName: `${cleanParam}_Interpolated_Zones`, geoJson: zonesGeoJson });
+        if (contoursGeoJson) zLayers.push({ fileBaseName: `${cleanParam}_Contours`, geoJson: contoursGeoJson });
+
+        if (zLayers.length === 0) {
+          showToast("Enable Interpolated Raster Surface with numeric parameter data to export Zone polygons.", "info");
+          return;
         }
-      }));
 
-      const activeLayer = layers.find((l) => l.visible && l.geoJson) || layers[0];
-      const polyFeatures = activeLayer?.geoJson
-        ? (activeLayer.geoJson.features || (activeLayer.geoJson.type === "Feature" ? [activeLayer.geoJson] : []))
-        : [];
+        const legendCsv = [
+          "ZONE_ID,ZONE_NAME,RANGE,COLOR_HEX,RGB_COLOR,AREA_SQKM,AREA_PCT",
+          ...classSummary.map(
+            (c) => `${c.zoneId},"${c.label.replace(/"/g, '""')}","${c.rangeText}",${c.hex},"${c.rgb}",${c.areaSqKm},${c.areaPct}`
+          )
+        ].join("\r\n");
 
-      const combinedGeoJson = {
-        type: "FeatureCollection",
-        features: [...polyFeatures, ...pointFeatures]
-      };
+        const blob = await createGisPackageZip(zLayers, [
+          { fileName: `00_${cleanParam}_Symbology_Legend.csv`, content: legendCsv }
+        ]);
+        const zipName = `${cleanParam}_Interpolated_Zones_Shapefile.zip`;
+        downloadBlob(blob, zipName);
+        showToast(`Exported vectorized Zone Polygons & Contours (.shp + MapInfo .tab) in ${zipName}!`, "success");
+        return;
+      }
 
-      const baseName = `${selectedParam}_Map_Complete_GIS_Package`;
-      const blob = await createShapefileFromGeoJson(combinedGeoJson, baseName);
-      downloadBlob(blob, `${baseName}.zip`);
-      showToast(`Exported complete Map Shapefile package with stations and boundary (.zip)!`, "success");
+      // 4. type === "all": Full Prepared GIS Package (.zip) for ArcGIS & MapInfo
+      const packageLayers: GisPackageLayerInput[] = [];
+      const extraFiles: GisPackageExtraFile[] = [];
+
+      if (zonesGeoJson) {
+        packageLayers.push({ fileBaseName: `01_${cleanParam}_Zones`, geoJson: zonesGeoJson });
+      }
+      if (contoursGeoJson) {
+        packageLayers.push({ fileBaseName: `02_${cleanParam}_Contours`, geoJson: contoursGeoJson });
+      }
+      if (stationGeoFeatures.length > 0) {
+        packageLayers.push({
+          fileBaseName: `03_${cleanParam}_Stations`,
+          geoJson: { type: "FeatureCollection", features: stationGeoFeatures }
+        });
+      }
+
+      const boundaryLayers = getBoundaryExportLayers();
+      boundaryLayers.forEach((bl) => packageLayers.push(bl));
+
+      // Include borderless WGS84 GeoTIFF + World File (.tfw) + MapInfo Raster (.tab)
+      const rasterPrefix = `05_${cleanParam}_Georef_Surface`;
+      const rasterFiles = buildGeoreferencedRasterFiles(activeData, activeParamName, rasterPrefix);
+      extraFiles.push(...rasterFiles);
+
+      // Symbology reference CSV for exact color matching in ArcGIS / MapInfo
+      const legendCsvLines = [
+        "ZONE_ID,ZONE_NAME,RANGE,COLOR_HEX,RGB_COLOR,AREA_SQKM,AREA_PCT",
+        ...classSummary.map(
+          (c) => `${c.zoneId},"${c.label.replace(/"/g, '""')}","${c.rangeText}",${c.hex},"${c.rgb}",${c.areaSqKm},${c.areaPct}`
+        )
+      ];
+      extraFiles.push({
+        fileName: "00_Symbology_Legend.csv",
+        content: legendCsvLines.join("\r\n")
+      });
+
+      const areaSuffix = !isStateAll(selectedState)
+        ? `${selectedState}${!isDistrictAll(selectedDistrict) ? `_${selectedDistrict}` : ""}`
+        : "India";
+      const readmeText = [
+        "======================================================================",
+        `PREPARED GIS MAP PACKAGE - ${activeParamName} (${areaSuffix})`,
+        "Compatible with ArcGIS Desktop / ArcGIS Pro, MapInfo Pro, and QGIS",
+        "Coordinate Reference System: GCS_WGS_1984 (EPSG:4326)",
+        `Interpolation Method: ${interpolationMethod.toUpperCase()}`,
+        "======================================================================",
+        "",
+        "INCLUDED LAYERS:",
+        zonesGeoJson ? `1. 01_${cleanParam}_Zones.shp/.tab       -> Polygon classification zones (symbolize by ZONE_NAME / COLOR_HEX)` : "1. (Interpolated Zone Polygons omitted for Station-only / non-raster mode)",
+        contoursGeoJson ? `2. 02_${cleanParam}_Contours.shp/.tab    -> Iso-concentration PolyLine contours (attribute: CONTOUR)` : "",
+        stationGeoFeatures.length > 0 ? `3. 03_${cleanParam}_Stations.shp/.tab    -> Sample stations Point layer (${stationGeoFeatures.length} wells)` : "",
+        boundaryLayers.length > 0 ? `4. 04_Boundary_*.shp/.tab               -> Active administrative boundary polygons` : "",
+        rasterFiles.length > 0 ? `5. ${rasterPrefix}.tif / .tfw / .tab     -> Borderless WGS84 Georeferenced GeoTIFF raster` : "",
+        "6. 00_Symbology_Legend.csv              -> Exact class ranges, RGB/HEX colors & area sq.km breakdown",
+        "",
+        "HOW TO OPEN IN ARCGIS PRO / ARCMAP:",
+        " - Extract this .zip folder completely.",
+        " - Drag and drop the .shp files and .tif file into your Map view.",
+        " - Open Symbology -> Unique Values -> select field 'ZONE_NAME' and match colors using 00_Symbology_Legend.csv (or COLOR_HEX / RGB_COLOR).",
+        "",
+        "HOW TO OPEN IN MAPINFO PROFESSIONAL:",
+        " - Extract this .zip folder completely.",
+        " - Use Home > Open > Table and select all .tab files directly (every .shp and .tif includes a native .tab file).",
+        " - All layers share WGS84 (Earth Projection 1, 104) and stack with exact spatial alignment.",
+        ""
+      ]
+        .filter(Boolean)
+        .join("\r\n");
+
+      extraFiles.push({
+        fileName: "00_README_ArcGIS_MapInfo.txt",
+        content: readmeText
+      });
+
+      if (packageLayers.length === 0 && extraFiles.length === 0) {
+        showToast("No spatial layers or stations available to export.", "info");
+        return;
+      }
+
+      const blob = await createGisPackageZip(packageLayers, extraFiles);
+      const safeArea = areaSuffix.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 30);
+      const packageFileName = `${cleanParam}_${safeArea}_ArcGIS_MapInfo_Package.zip`;
+      downloadBlob(blob, packageFileName);
+
+      const summaryParts: string[] = [];
+      if (zonesGeoJson) summaryParts.push(`${zonesGeoJson.features.length} Zone Polygons`);
+      if (contoursGeoJson) summaryParts.push(`${contoursGeoJson.features.length} Contours`);
+      if (stationGeoFeatures.length > 0) summaryParts.push(`${stationGeoFeatures.length} Stations`);
+      if (boundaryLayers.length > 0) summaryParts.push(`${boundaryLayers.length} Boundary`);
+      if (rasterFiles.length > 0) summaryParts.push("GeoTIFF+TAB");
+
+      showToast(
+        `Exported Full ArcGIS/MapInfo GIS Package (${summaryParts.join(" + ")}) in ${packageFileName}!`,
+        "success"
+      );
     } catch (err: any) {
       console.error("Shapefile export error:", err);
-      showToast(err?.message || "Failed to export map as Shapefile.", "error");
+      showToast(err?.message || "Failed to export prepared map GIS package.", "error");
     }
   };
 
@@ -5681,6 +5724,20 @@ ${svgStatsPanel}
     }
   };
 
+  // Requirement 2: Explicitly execute/refresh spatial interpolation on the map
+  const handleRunInterpolation = useCallback(() => {
+    setShowRaster(true);
+    let targetParam = selectedParam;
+    if (targetParam === "STATIONS" || !targetParam) {
+      targetParam = "EC";
+      setSelectedParam("EC");
+    }
+    setInterpolationTrigger(prev => prev + 1);
+    if (showToast) {
+      showToast(`Generating ${targetParam} spatial interpolation raster surface...`, "info");
+    }
+  }, [selectedParam, showToast]);
+
   // Capture current high-quality map rendering and send to Bulletin report section
   const sendToBulletin = () => {
     const canvas = canvasRefLeft.current;
@@ -5756,6 +5813,73 @@ ${svgStatsPanel}
     } catch (err: any) {
       console.error(err);
       showToast("Failed to compile map for Annual Report: " + err.message, "error");
+    }
+  };
+
+  // Send high-density cropped map directly to State Fact Sheet dossier
+  const sendToFactSheet = () => {
+    try {
+      const canvas = canvasRefLeft.current;
+      if (!canvas) {
+        showToast("Map canvas not ready.", "error");
+        return;
+      }
+
+      const multiplier = 600 / 96;
+      const w = Math.round(canvasWidth * multiplier);
+      const h = Math.round(canvasHeight * multiplier);
+
+      const tempCanvas = document.createElement("canvas");
+      tempCanvas.width = w;
+      tempCanvas.height = h;
+      const tempCtx = tempCanvas.getContext("2d");
+
+      let highResUrl = "";
+      if (tempCtx) {
+        const title = customTitle || `Distribution of ${paramConfig.name} in ${selectedState || "State"}`;
+        const subtitle = customSubtitle || getMapDefaultTitleAndSubtitle("left").subtitle;
+        drawMapInstance(
+          tempCtx,
+          w,
+          h,
+          multiplier,
+          isComparisonActive ? leftPanelData : parsedData,
+          title,
+          subtitle,
+          isComparisonActive ? leftStats : (leftStats || rightStats),
+          false,
+          null,
+          "left",
+          selectedParam,
+          false
+        );
+
+        highResUrl = tempCanvas.toDataURL("image/png");
+      } else {
+        highResUrl = canvas.toDataURL("image/png");
+      }
+
+      if (setBulletinMaps) {
+        const isAll = isStateAll(selectedState || "");
+        setBulletinMaps(prev => ({
+          ...prev,
+          "FACT_SHEET_MAP": highResUrl,
+          "FACT_SHEET_PARAM": selectedParam,
+          "FACT_SHEET_STATE": selectedState || "",
+          "FACT_SHEET_TIME": new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          ...(selectedParam.toUpperCase() === "EC" ? {
+            "ALL_INDIA_EC": isAll ? highResUrl : (prev["ALL_INDIA_EC"] || highResUrl),
+            [`${norm(selectedState || "")}_EC`]: highResUrl,
+            "EC": highResUrl
+          } : {})
+        }));
+        showToast(`High-density ${selectedParam} map successfully sent to State Fact Sheet!`, "success");
+      } else {
+        showToast("Fact Sheet integration is currently inactive.", "error");
+      }
+    } catch (err: any) {
+      console.error(err);
+      showToast("Failed to send map to Fact Sheet: " + err.message, "error");
     }
   };
 
@@ -5974,36 +6098,6 @@ ${svgStatsPanel}
     showToast("Exported combined comparison sheet successfully!", "success");
   };
 
-  const runBatchGeneration = () => {
-    if (availableParams.length === 0) {
-      showToast("No parameters available for batch processing.", "error");
-      return;
-    }
-    setBatchGenerating(true);
-    setBatchProgress(0);
-
-    const queue: { name: string; status: "idle" | "done" }[] = availableParams.map(p => ({
-      name: `${p}_Comparison_CGWB_DPI600.png`,
-      status: "idle"
-    }));
-    setExportQueue(queue);
-
-    let idx = 0;
-    const interval = setInterval(() => {
-      if (idx >= availableParams.length) {
-        clearInterval(interval);
-        setBatchGenerating(false);
-        showToast("Batch processing completed! All maps compiled inside Results/Maps/", "success");
-        return;
-      }
-
-      queue[idx].status = "done";
-      setExportQueue([...queue]);
-      idx++;
-      setBatchProgress(Math.floor((idx / availableParams.length) * 100));
-    }, 600);
-  };
-
   return (
     <div className="flex flex-col gap-6 w-full items-stretch min-h-[780px]" id="professional-map-engine">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
@@ -6036,7 +6130,13 @@ ${svgStatsPanel}
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id as any)}
+                  onClick={() => {
+                    setActiveTab(tab.id as "layers" | "basemap" | "interpolation" | "classification" | "styling" | "decorations" | "batch" | "shapefile");
+                    if (tab.id === "interpolation") {
+                      setShowRaster(true);
+                      setInterpolationTrigger(prev => prev + 1);
+                    }
+                  }}
                   className={`cursor-pointer px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all duration-200 whitespace-nowrap ${
                     activeTab === tab.id
                       ? "bg-gradient-to-r from-slate-900 to-slate-850 text-white shadow-[0_4px_12px_rgba(15,23,42,0.18),inset_0_1px_1px_rgba(255,255,255,0.2)] border border-slate-950 scale-[1.02]"
@@ -6287,7 +6387,7 @@ ${svgStatsPanel}
                         <label className="block text-[10px] text-indigo-900 font-extrabold mb-1.5 uppercase">LAYOUT STYLE</label>
                         <select
                           value={comparisonLayout}
-                          onChange={(e) => setComparisonLayout(e.target.value as any)}
+                          onChange={(e) => setComparisonLayout(e.target.value as "horizontal" | "vertical")}
                           className="w-full text-xs font-bold bg-white border border-indigo-200/80 rounded-xl p-2 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
                         >
                           <option value="horizontal">Horizontal Split</option>
@@ -6313,18 +6413,42 @@ ${svgStatsPanel}
             {/* 2. Basemap Tab */}
             {activeTab === "basemap" && (
               <div className="flex flex-col gap-5">
-                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-1.5">
-                  <label className="block text-slate-700 text-xs font-bold mb-1 flex items-center gap-1.5">
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-2">
+                  <label className="block text-slate-700 text-xs font-bold mb-0.5 flex items-center gap-1.5">
                     <MapIcon className="w-3.5 h-3.5 text-indigo-500" />
-                    Select Basemap Style
+                    Select Map Background / Basemap
                   </label>
+                  <div className="grid grid-cols-2 gap-1.5 mb-1">
+                    <button
+                      type="button"
+                      onClick={() => setBasemap("No Basemap")}
+                      className={`py-2 px-2.5 rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${
+                        basemap === "No Basemap"
+                          ? "bg-indigo-600 text-white border-indigo-700 shadow-xs"
+                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      Clean White
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBasemap("Transparent (No Background)")}
+                      className={`py-2 px-2.5 rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${
+                        basemap === "Transparent (No Background)"
+                          ? "bg-indigo-600 text-white border-indigo-700 shadow-xs"
+                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      Transparent BG
+                    </button>
+                  </div>
                   <select
                     value={basemap}
                     onChange={(e) => setBasemap(e.target.value)}
                     className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-3 shadow-sm hover:border-indigo-500/80 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
                   >
                     {Object.keys(BASEMAP_STYLES).map(k => (
-                      <option key={k} value={k}>{k}</option>
+                      <option key={k} value={k}>{k === "No Basemap" ? "Clean White (No Basemap)" : k}</option>
                     ))}
                   </select>
                 </div>
@@ -6336,7 +6460,7 @@ ${svgStatsPanel}
                   </label>
                   <select
                     value={projection}
-                    onChange={(e) => setProjection(e.target.value as any)}
+                    onChange={(e) => setProjection(e.target.value as "wgs84" | "mercator" | "utm")}
                     className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-3 shadow-sm hover:border-indigo-500/80 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
                   >
                     <option value="wgs84">WGS 84 Geographic coordinate system</option>
@@ -6658,6 +6782,21 @@ ${svgStatsPanel}
                             />
                           </label>
 
+                          <label className="sm:col-span-2 flex items-center justify-between p-2.5 bg-white rounded-xl border border-indigo-100 cursor-pointer shadow-xs hover:border-indigo-300 transition-colors">
+                            <div className="flex flex-col">
+                              <span className="text-xs font-bold text-slate-900">Show Neighbouring State / District Names</span>
+                              <span className="text-[9.5px] text-slate-500">
+                                Off by default — enable only when neighbouring units outside selected state are required
+                              </span>
+                            </div>
+                            <input
+                              type="checkbox"
+                              checked={showNeighbourLabels}
+                              onChange={(e) => setShowNeighbourLabels(e.target.checked)}
+                              className="cursor-pointer h-4 w-4 text-indigo-600 rounded"
+                            />
+                          </label>
+
                           {/* Cutting Mode */}
                           <div className="flex flex-col justify-center p-2 bg-white rounded-xl border border-indigo-100 shadow-xs">
                             <span className="text-[9.5px] font-bold text-slate-500 uppercase mb-1">Cutting Mode</span>
@@ -6846,39 +6985,61 @@ ${svgStatsPanel}
                                 </div>
                               </div>
 
-                              {/* Font Weight and Halo Option */}
-                              <div className="flex flex-col gap-1.5 justify-center">
-                                <div className="flex items-center justify-between">
+                              {/* Font Family, Weight, Italic & Halo Option (User Requirements 1 & 3) */}
+                              <div className="flex flex-col gap-2 justify-center">
+                                {/* Font Family selector */}
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] font-extrabold text-slate-700 uppercase tracking-wider">
+                                    Label Font Family
+                                  </label>
+                                  <select
+                                    value={adminLabelFontFamily}
+                                    onChange={(e) => setAdminLabelFontFamily(e.target.value)}
+                                    className="w-full text-xs font-semibold bg-white border border-indigo-200 rounded-xl p-2 text-slate-800 cursor-pointer shadow-xs focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                                  >
+                                    <option value="Times New Roman">Times New Roman (Standard)</option>
+                                    <option value="Arial">Arial (Sans-Serif)</option>
+                                    <option value="Calibri">Calibri</option>
+                                    <option value="Georgia">Georgia (Serif)</option>
+                                    <option value="Trebuchet MS">Trebuchet MS</option>
+                                    <option value="Courier New">Courier Mono</option>
+                                    <option value="Verdana">Verdana</option>
+                                  </select>
+                                </div>
+
+                                <div className="flex items-center justify-between pt-1">
                                   <span className="text-[10px] font-extrabold text-slate-700 uppercase tracking-wider">
-                                    Font Weight
+                                    Style & Weight
                                   </span>
-                                  <div className="flex items-center gap-1">
+                                  <div className="flex items-center gap-1.5">
                                     <button
                                       type="button"
-                                      onClick={() => setAdminLabelWeight("bold")}
-                                      className={`px-2 py-0.5 text-[10px] font-bold rounded-lg border ${
+                                      onClick={() => setAdminLabelWeight(w => w === "bold" ? "normal" : "bold")}
+                                      className={`px-3 py-1 text-[10.5px] font-black rounded-lg border transition-all cursor-pointer ${
                                         adminLabelWeight === "bold"
-                                          ? "bg-indigo-600 text-white border-indigo-700"
-                                          : "bg-slate-100 text-slate-600 border-slate-200"
+                                          ? "bg-indigo-600 text-white border-indigo-700 shadow-xs"
+                                          : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
                                       }`}
+                                      title="Toggle Bold attribute labels"
                                     >
                                       Bold
                                     </button>
                                     <button
                                       type="button"
-                                      onClick={() => setAdminLabelWeight("normal")}
-                                      className={`px-2 py-0.5 text-[10px] font-normal rounded-lg border ${
-                                        adminLabelWeight === "normal"
-                                          ? "bg-indigo-600 text-white border-indigo-700"
-                                          : "bg-slate-100 text-slate-600 border-slate-200"
+                                      onClick={() => setAdminLabelItalic(i => !i)}
+                                      className={`px-3 py-1 text-[10.5px] font-bold italic rounded-lg border transition-all cursor-pointer ${
+                                        adminLabelItalic
+                                          ? "bg-indigo-600 text-white border-indigo-700 shadow-xs"
+                                          : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
                                       }`}
+                                      title="Toggle Italic attribute labels"
                                     >
-                                      Normal
+                                      Italic
                                     </button>
                                   </div>
                                 </div>
 
-                                <label className="flex items-center gap-1.5 cursor-pointer mt-1">
+                                <label className="flex items-center gap-1.5 cursor-pointer mt-0.5">
                                   <input
                                     type="checkbox"
                                     checked={adminLabelShowHalo}
@@ -7413,15 +7574,26 @@ ${svgStatsPanel}
                     <div className="border-t border-slate-100 pt-3 flex flex-col gap-3.5">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-slate-800">Boundary Feature Labels</span>
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={showShapefileLabels}
-                            onChange={(e) => setShowShapefileLabels(e.target.checked)}
-                            className="cursor-pointer"
-                          />
-                          <span className="text-[11px] font-bold text-slate-700">Show Labels</span>
-                        </label>
+                        <div className="flex items-center gap-3">
+                          <label className="flex items-center gap-1.5 cursor-pointer" title="Include labels for neighbouring states/districts outside selected state">
+                            <input
+                              type="checkbox"
+                              checked={showNeighbourLabels}
+                              onChange={(e) => setShowNeighbourLabels(e.target.checked)}
+                              className="cursor-pointer"
+                            />
+                            <span className="text-[11px] font-bold text-slate-600">Neighbours</span>
+                          </label>
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={showShapefileLabels}
+                              onChange={(e) => setShowShapefileLabels(e.target.checked)}
+                              className="cursor-pointer"
+                            />
+                            <span className="text-[11px] font-bold text-slate-700">Show Labels</span>
+                          </label>
+                        </div>
                       </div>
 
                       {showShapefileLabels && (
@@ -7486,7 +7658,27 @@ ${svgStatsPanel}
 
             {/* 3. Interpolation Tab */}
             {activeTab === "interpolation" && (
-              <div className="flex flex-col gap-5">
+              <div className="flex flex-col gap-4">
+                {/* Hero Trigger Action Button for Interpolation (User Requirement 2) */}
+                <div className="bg-gradient-to-r from-indigo-600 via-indigo-700 to-violet-700 p-4 rounded-3xl text-white shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border border-indigo-500/40">
+                  <div>
+                    <h4 className="text-xs font-black uppercase tracking-wider flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-amber-300" /> Spatial Interpolation Engine
+                    </h4>
+                    <p className="text-[10.5px] text-indigo-100 mt-0.5">
+                      Compute continuous raster surface for <b>{selectedParam}</b>
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRunInterpolation}
+                    className="cursor-pointer px-4 py-2 bg-white text-indigo-900 hover:bg-indigo-50 font-black text-xs rounded-xl shadow-md flex items-center gap-1.5 transition-all hover:scale-105 active:scale-95 shrink-0"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-indigo-700 text-indigo-700" />
+                    <span>Interpolate Now</span>
+                  </button>
+                </div>
+
                 <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-2">
                   <label className="block text-slate-700 text-xs font-bold mb-1 flex items-center gap-1.5">
                     <Sliders className="w-3.5 h-3.5 text-indigo-500" />
@@ -7494,7 +7686,7 @@ ${svgStatsPanel}
                   </label>
                   <select
                     value={interpolationMethod}
-                    onChange={(e) => setInterpolationMethod(e.target.value as any)}
+                    onChange={(e) => setInterpolationMethod(e.target.value as "idw" | "nearest" | "kriging" | "rbf" | "natural" | "spline" | "ordinary_kriging" | "universal_kriging" | "ebk")}
                     className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-3 shadow-sm hover:border-indigo-500/80 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
                   >
                     <option value="idw">Inverse Distance Weighting (IDW)</option>
@@ -7542,7 +7734,7 @@ ${svgStatsPanel}
                       <label className="block text-[10px] text-indigo-950 font-extrabold mb-1.5 uppercase">VARIOGRAM THEORETICAL MODEL</label>
                       <select
                         value={krigingModel}
-                        onChange={(e) => setKrigingModel(e.target.value as any)}
+                        onChange={(e) => setKrigingModel(e.target.value as "spherical" | "exponential" | "gaussian")}
                         className="w-full text-xs font-bold bg-white border border-indigo-100 rounded-xl p-2.5 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
                       >
                         <option value="spherical">Spherical Variogram (CGWB Publication Standard)</option>
@@ -7636,7 +7828,7 @@ ${svgStatsPanel}
                       <label className="block text-[10px] text-emerald-950 font-extrabold mb-1.5 uppercase">RBF BASIS KERNEL</label>
                       <select
                         value={rbfKernel}
-                        onChange={(e) => setRbfKernel(e.target.value as any)}
+                        onChange={(e) => setRbfKernel(e.target.value as "multiquadric" | "inverse-multiquadric" | "thin-plate-spline" | "gaussian")}
                         className="w-full text-xs font-bold bg-white border border-emerald-100 rounded-xl p-2.5 focus:outline-none focus:ring-4 focus:ring-emerald-500/10 transition-all cursor-pointer text-slate-800"
                       >
                         <option value="multiquadric">Multiquadric (Robust Global Fitting)</option>
@@ -7855,7 +8047,7 @@ ${svgStatsPanel}
                   </label>
                   <select
                     value={sheetLayout}
-                    onChange={(e) => setSheetLayout(e.target.value as any)}
+                    onChange={(e) => setSheetLayout(e.target.value as "landscape" | "a4-portrait")}
                     className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-3 shadow-sm hover:border-indigo-500/80 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
                   >
                     <option value="a4-portrait">A4 Portrait Sheet (CGWB Publication Standard)</option>
@@ -7900,7 +8092,7 @@ ${svgStatsPanel}
                     </label>
                     <select
                       value={symbolType}
-                      onChange={(e) => setSymbolType(e.target.value as any)}
+                      onChange={(e) => setSymbolType(e.target.value as "circle" | "square" | "triangle" | "diamond" | "star")}
                       className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-3 shadow-sm hover:border-indigo-500/80 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800"
                     >
                       <option value="circle">Circle Symbol</option>
@@ -8313,7 +8505,7 @@ ${svgStatsPanel}
                       <label className="block text-slate-600 text-xs font-bold mb-1">Map Title Placement</label>
                       <select
                         value={titlePos}
-                        onChange={(e) => setTitlePos(e.target.value as any)}
+                        onChange={(e) => setTitlePos(e.target.value as "top-center" | "top-left" | "top-right" | "bottom-center" | "bottom-left" | "bottom-right" | "none")}
                         className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-2.5 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800 shadow-sm"
                       >
                         <option value="top-center">Top Center position</option>
@@ -8331,7 +8523,7 @@ ${svgStatsPanel}
                         <label className="block text-slate-600 text-xs font-bold mb-1">North Arrow Type</label>
                         <select
                           value={northArrowType}
-                          onChange={(e) => setNorthArrowType(e.target.value as any)}
+                          onChange={(e) => setNorthArrowType(e.target.value as "classic" | "modern" | "simple")}
                           className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-2.5 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800 shadow-sm"
                         >
                           <option value="classic">Classic Compass Needle</option>
@@ -8343,7 +8535,7 @@ ${svgStatsPanel}
                         <label className="block text-slate-600 text-xs font-bold mb-1">North Arrow Position</label>
                         <select
                           value={northArrowPos}
-                          onChange={(e) => setNorthArrowPos(e.target.value as any)}
+                          onChange={(e) => setNorthArrowPos(e.target.value as "top-left" | "top-right" | "bottom-left" | "bottom-right")}
                           className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-2.5 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800 shadow-sm"
                         >
                           <option value="top-right">Top-Right corner</option>
@@ -8358,7 +8550,7 @@ ${svgStatsPanel}
                       <label className="block text-slate-600 text-xs font-bold mb-1">Legend Position Corner</label>
                       <select
                         value={legendPos}
-                        onChange={(e) => setLegendPos(e.target.value as any)}
+                        onChange={(e) => setLegendPos(e.target.value as "top-left" | "top-right" | "bottom-left" | "bottom-right")}
                         className="w-full text-xs font-semibold bg-white/95 border border-slate-200/80 rounded-xl p-2.5 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer text-slate-800 shadow-sm"
                       >
                         <option value="bottom-right">Bottom-Right corner</option>
@@ -8974,6 +9166,17 @@ ${svgStatsPanel}
                   Reset
                 </button>
               </div>
+
+
+              {/* Spatial Interpolation Engine Action Button (User Requirement 2) */}
+              <button
+                type="button"
+                onClick={handleRunInterpolation}
+                className="cursor-pointer bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white px-3.5 py-1.5 rounded-xl text-[10px] font-extrabold uppercase tracking-wider flex items-center gap-1.5 shadow-md border border-indigo-500/50 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                title="Run spatial interpolation engine and render continuous raster surface on map"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-300" /> Run Interpolation
+              </button>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
@@ -8990,7 +9193,7 @@ ${svgStatsPanel}
                   </select>
                   <select
                     value={exportFormat}
-                    onChange={(e) => setExportFormat(e.target.value as any)}
+                    onChange={(e) => setExportFormat(e.target.value as "jpeg" | "png" | "tiff" | "svg" | "shapefile")}
                     className="text-xs font-bold bg-transparent border-none text-indigo-600 focus:outline-none cursor-pointer"
                   >
                     <option value="png">PNG (Lossless)</option>
@@ -9017,6 +9220,14 @@ ${svgStatsPanel}
                 </button>
 
                 <button
+                  onClick={sendToFactSheet}
+                  className="cursor-pointer bg-gradient-to-r from-teal-700 to-cyan-800 hover:from-teal-800 hover:to-cyan-900 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md border border-teal-600/50 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                  title="Send current high-density cropped map directly to State Fact Sheet"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-cyan-200" /> Send to State Fact Sheet
+                </button>
+
+                <button
                   onClick={sendPointAndParameterMapsToBulletin}
                   className="cursor-pointer bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md border border-indigo-500/50 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                   title="Send BOTH Point Map (Stations) AND All Parameter Maps simultaneously to Annual Report once formatted"
@@ -9036,21 +9247,28 @@ ${svgStatsPanel}
                   <button
                     onClick={() => exportMapAsShapefile("all")}
                     className="cursor-pointer bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white px-3 py-2 text-xs font-bold flex items-center gap-1.5 transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
-                    title="Export all map stations and active boundaries as ESRI Shapefile (.zip)"
+                    title="Export complete ArcGIS & MapInfo GIS Package (.zip): Interpolated Zones, Contours, Stations, Boundaries, and Georeferenced GeoTIFF + .tab files"
                   >
-                    <Download className="w-3.5 h-3.5 text-teal-100" /> Export Shapefile (.zip)
+                    <Download className="w-3.5 h-3.5 text-teal-100" /> Full GIS Package (.zip)
+                  </button>
+                  <button
+                    onClick={() => exportMapAsShapefile("zones")}
+                    className="cursor-pointer bg-teal-700 hover:bg-teal-800 text-teal-100 hover:text-white px-2 py-2 text-[10px] font-bold border-l border-teal-500/40 transition-colors"
+                    title="Export Interpolated Classification Zones & Contours as Shapefile + MapInfo .tab (.zip)"
+                  >
+                    Zones
                   </button>
                   <button
                     onClick={() => exportMapAsShapefile("stations")}
                     className="cursor-pointer bg-teal-700 hover:bg-teal-800 text-teal-100 hover:text-white px-2 py-2 text-[10px] font-bold border-l border-teal-500/40 transition-colors"
-                    title="Export only sample stations as Point Shapefile (.zip)"
+                    title="Export sample stations as Point Shapefile + MapInfo .tab (.zip)"
                   >
                     Stations
                   </button>
                   <button
                     onClick={() => exportMapAsShapefile("boundaries")}
                     className="cursor-pointer bg-teal-700 hover:bg-teal-800 text-teal-100 hover:text-white px-2 py-2 text-[10px] font-bold border-l border-teal-500/40 transition-colors"
-                    title="Export active polygon boundaries as Polygon Shapefile (.zip)"
+                    title="Export active polygon boundaries as Polygon Shapefile + MapInfo .tab (.zip)"
                   >
                     Boundary
                   </button>
@@ -9086,7 +9304,20 @@ ${svgStatsPanel}
                 </span>
               </div>
 
-              <div className={`relative ${canvasAspectClass} w-full rounded-3xl overflow-hidden border-2 border-slate-200/85 ring-4 ring-slate-100/50 shadow-md bg-white transition-all duration-300 group-hover:shadow-lg group-hover:border-slate-300`}>
+              <div
+                className={`relative ${canvasAspectClass} w-full rounded-3xl overflow-hidden border-2 border-slate-200/85 ring-4 ring-slate-100/50 shadow-md bg-white transition-all duration-300 group-hover:shadow-lg group-hover:border-slate-300`}
+                style={
+                  basemap === "Transparent (No Background)"
+                    ? {
+                        backgroundColor: "#f8fafc",
+                        backgroundImage:
+                          "linear-gradient(45deg, #e2e8f0 25%, transparent 25%), linear-gradient(-45deg, #e2e8f0 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #e2e8f0 75%), linear-gradient(-45deg, transparent 75%, #e2e8f0 75%)",
+                        backgroundSize: "16px 16px",
+                        backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0px"
+                      }
+                    : undefined
+                }
+              >
                 <canvas
                   ref={canvasRefLeft}
                   width={canvasWidth * getDpr()}
@@ -9125,7 +9356,20 @@ ${svgStatsPanel}
                   </span>
                 </div>
 
-                <div className={`relative ${canvasAspectClass} w-full rounded-3xl overflow-hidden border-2 border-slate-200/85 ring-4 ring-slate-100/50 shadow-md bg-white transition-all duration-300 group-hover:shadow-lg group-hover:border-slate-300`}>
+                <div
+                  className={`relative ${canvasAspectClass} w-full rounded-3xl overflow-hidden border-2 border-slate-200/85 ring-4 ring-slate-100/50 shadow-md bg-white transition-all duration-300 group-hover:shadow-lg group-hover:border-slate-300`}
+                  style={
+                    basemap === "Transparent (No Background)"
+                      ? {
+                          backgroundColor: "#f8fafc",
+                          backgroundImage:
+                            "linear-gradient(45deg, #e2e8f0 25%, transparent 25%), linear-gradient(-45deg, #e2e8f0 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #e2e8f0 75%), linear-gradient(-45deg, transparent 75%, #e2e8f0 75%)",
+                          backgroundSize: "16px 16px",
+                          backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0px"
+                        }
+                      : undefined
+                  }
+                >
                   <canvas
                     ref={canvasRefRight}
                     width={canvasWidth * getDpr()}
@@ -9152,349 +9396,22 @@ ${svgStatsPanel}
           </div>
 
           {/* GIS Attribute Table Viewer */}
-          {selectedAttributeLayerId && (() => {
-            const activeLayer = layers.find(l => l.id === selectedAttributeLayerId);
-            if (!activeLayer) return null;
-
-            // Extract all feature properties
-            const features = activeLayer.geoJson.features || (activeLayer.geoJson.type === "Feature" ? [activeLayer.geoJson] : []);
-            const allKeys = new Set<string>();
-            features.forEach((f: any) => {
-              if (f && f.properties) {
-                Object.keys(f.properties).forEach(k => allKeys.add(k));
-              }
-            });
-            const propertyHeaders = Array.from(allKeys);
-
-            // Filter features based on search query
-            const filteredFeatures = features.filter((f: any) => {
-              if (!attributeSearchQuery) return true;
-              if (!f || !f.properties) return false;
-              const q = attributeSearchQuery.toLowerCase();
-              return Object.values(f.properties).some(val => 
-                val !== null && val !== undefined && String(val).toLowerCase().includes(q)
-              );
-            });
-
-            // Sort features if sortKey is set
-            if (attributeSortKey) {
-              filteredFeatures.sort((a: any, b: any) => {
-                const valA = a?.properties?.[attributeSortKey];
-                const valB = b?.properties?.[attributeSortKey];
-                if (valA === undefined || valA === null) return 1;
-                if (valB === undefined || valB === null) return -1;
-                
-                const isNum = typeof valA === "number" && typeof valB === "number";
-                if (isNum) {
-                  return attributeSortDesc ? (valB - valA) : (valA - valB);
-                } else {
-                  return attributeSortDesc
-                    ? String(valB).localeCompare(String(valA))
-                    : String(valA).localeCompare(String(valB));
-                }
-              });
-            }
-
-            // Pagination parameters
-            const itemsPerPage = 8;
-            const totalItems = filteredFeatures.length;
-            const totalPages = Math.ceil(totalItems / itemsPerPage) || 1;
-            const currentPage = Math.min(attributePage, totalPages);
-            const startIndex = (currentPage - 1) * itemsPerPage;
-            const paginatedFeatures = filteredFeatures.slice(startIndex, startIndex + itemsPerPage);
-
-            const handleHeaderClick = (key: string) => {
-              if (attributeSortKey === key) {
-                setAttributeSortDesc(!attributeSortDesc);
-              } else {
-                setAttributeSortKey(key);
-                setAttributeSortDesc(false);
-              }
-              setAttributePage(1);
-            };
-
-            // Download CSV helper
-            const downloadCsv = () => {
-              if (features.length === 0) return;
-              const headersRow = propertyHeaders.join(",");
-              const rows = features.map((f: any) => 
-                propertyHeaders.map(h => {
-                  const val = f?.properties?.[h];
-                  if (val === undefined || val === null) return "";
-                  // Escape commas and quotes
-                  const str = String(val).replace(/"/g, '""');
-                  return str.includes(",") || str.includes("\n") || str.includes('"') ? `"${str}"` : str;
-                }).join(",")
-              );
-              const csvContent = [headersRow, ...rows].join("\n");
-              const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-              const url = URL.createObjectURL(blob);
-              const link = document.createElement("a");
-              link.setAttribute("href", url);
-              link.setAttribute("download", `${activeLayer.name}_attributes.csv`);
-              link.style.visibility = "hidden";
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
-              showToast(`Exported ${features.length} attribute rows to CSV`, "success");
-            };
-
-            return (
-              <div
-                id="attribute-table-section"
-                className="bg-white rounded-[2rem] border border-slate-200 shadow-md p-6 flex flex-col gap-4 w-full transition-all duration-300 scroll-mt-6"
-              >
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2.5 bg-indigo-50 rounded-2xl">
-                      <Table className="w-5 h-5 text-indigo-600" />
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-extrabold text-slate-800">
-                        Attribute Table: <span className="text-indigo-600">{activeLayer.name}</span>
-                      </h4>
-                      <p className="text-[11px] text-slate-500 font-medium">
-                        Showing {startIndex + 1}–{Math.min(startIndex + itemsPerPage, totalItems)} of {totalItems} features ({features.length} total)
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    {/* Search bar */}
-                    <div className="relative w-full sm:w-60">
-                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="text"
-                        placeholder="Search attributes..."
-                        value={attributeSearchQuery}
-                        onChange={(e) => {
-                          setAttributeSearchQuery(e.target.value);
-                          setAttributePage(1);
-                        }}
-                        className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={downloadCsv}
-                      className="cursor-pointer bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold py-2 px-3 rounded-xl border border-slate-200 flex items-center gap-1.5 transition-colors"
-                      title="Download as CSV Spreadsheet"
-                    >
-                      <Download className="w-3.5 h-3.5 text-slate-500" /> Export CSV
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setSelectedAttributeLayerId("")}
-                      className="cursor-pointer text-slate-400 hover:text-red-500 hover:bg-red-50/50 p-2 rounded-xl text-xs transition-colors font-bold"
-                    >
-                      Close Table
-                    </button>
-                  </div>
-                </div>
-
-                {/* Table container */}
-                <div className="w-full overflow-x-auto border border-slate-150 rounded-2xl max-h-[360px] custom-scrollbar">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
-                        <th className="py-3 px-4 font-extrabold text-slate-500 text-[10px] uppercase tracking-wider w-16 text-center">
-                          Actions
-                        </th>
-                        <th className="py-3 px-2 font-extrabold text-slate-500 text-[10px] uppercase tracking-wider w-12 text-center">
-                          FID
-                        </th>
-                        {propertyHeaders.map(key => (
-                          <th
-                            key={key}
-                            onClick={() => handleHeaderClick(key)}
-                            className="py-3 px-4 font-extrabold text-slate-600 text-[10px] uppercase tracking-wider cursor-pointer hover:bg-slate-100 select-none transition-colors"
-                          >
-                            <div className="flex items-center gap-1">
-                              <span>{key}</span>
-                              <ArrowUpDown className={`w-3.5 h-3.5 text-slate-400 shrink-0 ${attributeSortKey === key ? "text-indigo-600" : ""}`} />
-                            </div>
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-150">
-                      {paginatedFeatures.length === 0 ? (
-                        <tr>
-                          <td colSpan={propertyHeaders.length + 2} className="py-12 text-center text-slate-400 font-medium">
-                            No features found matching "{attributeSearchQuery}"
-                          </td>
-                        </tr>
-                      ) : (
-                        paginatedFeatures.map((f: any, idx) => {
-                          const fid = startIndex + idx + 1;
-                          const properties = f.properties || {};
-                          
-                          // Calculate feature centroid for "Zoom to Feature" button
-                          let featureCentroid: [number, number] | null = null;
-                          let featureBounds: { minLng: number, maxLng: number, minLat: number, maxLat: number } | null = null;
-                          
-                          if (f.geometry && f.geometry.coordinates) {
-                            let minLng = Infinity, maxLng = -Infinity;
-                            let minLat = Infinity, maxLat = -Infinity;
-                            let sumLng = 0, sumLat = 0, count = 0;
-
-                            const traverseCoords = (coords: any) => {
-                              if (Array.isArray(coords) && typeof coords[0] === "number") {
-                                const [lng, lat] = coords;
-                                if (lng < minLng) minLng = lng;
-                                if (lng > maxLng) maxLng = lng;
-                                if (lat < minLat) minLat = lat;
-                                if (lat > maxLat) maxLat = lat;
-                                sumLng += lng;
-                                sumLat += lat;
-                                count++;
-                              } else if (Array.isArray(coords)) {
-                                coords.forEach(traverseCoords);
-                              }
-                            };
-
-                            traverseCoords(f.geometry.coordinates);
-                            if (count > 0) {
-                              featureCentroid = [sumLng / count, sumLat / count];
-                              featureBounds = { minLng, maxLng, minLat, maxLat };
-                            }
-                          }
-
-                          return (
-                            <tr key={idx} className="hover:bg-slate-50/70 transition-colors">
-                              <td className="py-2.5 px-4 text-center">
-                                {featureCentroid ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (featureCentroid && featureBounds) {
-                                        zoomToCentroid(featureCentroid[0], featureCentroid[1], featureBounds);
-                                        showToast(`Zoomed map to feature FID ${fid}`, "info");
-                                      }
-                                    }}
-                                    className="cursor-pointer bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-bold py-1 px-2.5 rounded-lg border border-indigo-100 transition-colors inline-flex items-center gap-1"
-                                    title="Center and Zoom to Feature Boundary"
-                                  >
-                                    <Maximize2 className="w-3 h-3" /> Zoom
-                                  </button>
-                                ) : (
-                                  <span className="text-[10px] text-slate-400 font-medium">—</span>
-                                )}
-                              </td>
-                              <td className="py-2.5 px-2 text-center text-slate-400 font-mono text-[10px] font-medium">
-                                {fid}
-                              </td>
-                              {propertyHeaders.map(key => {
-                                const val = properties[key];
-                                return (
-                                  <td key={key} className="py-1 px-2 text-slate-700 font-medium whitespace-nowrap overflow-hidden max-w-[200px]" title={String(val ?? "")}>
-                                    <input
-                                      type="text"
-                                      value={val === undefined || val === null ? "" : String(val)}
-                                      onChange={(e) => {
-                                        const newValue = e.target.value;
-                                        const updatedLayers = layers.map(layer => {
-                                          if (layer.id === selectedAttributeLayerId) {
-                                            const updatedFeatures = (layer.geoJson.features || []).map((feature: any, fIdx: number) => {
-                                              if (fIdx === (startIndex + idx)) {
-                                                return {
-                                                  ...feature,
-                                                  properties: {
-                                                    ...feature.properties,
-                                                    [key]: newValue
-                                                  }
-                                                };
-                                              }
-                                              return feature;
-                                            });
-                                            return {
-                                              ...layer,
-                                              geoJson: {
-                                                ...layer.geoJson,
-                                                features: updatedFeatures
-                                              }
-                                            };
-                                          }
-                                          return layer;
-                                        });
-                                        setLayers(updatedLayers);
-                                      }}
-                                      className="bg-transparent border border-transparent hover:border-slate-300 focus:border-indigo-500 focus:bg-white rounded px-1.5 py-0.5 text-xs font-semibold text-slate-700 w-full focus:outline-none transition-all"
-                                      placeholder="null"
-                                    />
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Pagination Controls */}
-                {totalPages > 1 && (
-                  <div className="flex items-center justify-between border-t border-slate-100 pt-4 text-xs">
-                    <span className="text-slate-500 font-medium">
-                      Page <strong className="text-slate-800">{currentPage}</strong> of <strong className="text-slate-800">{totalPages}</strong>
-                    </span>
-
-                    <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl p-1 shadow-inner">
-                      <button
-                        type="button"
-                        onClick={() => setAttributePage(p => Math.max(1, p - 1))}
-                        disabled={currentPage === 1}
-                        className="cursor-pointer bg-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 text-slate-700 font-bold px-3 py-1.5 rounded-lg border border-slate-200 transition-all shadow-sm"
-                      >
-                        Prev
-                      </button>
-
-                      {/* Dynamic page numbers */}
-                      {Array.from({ length: Math.min(5, totalPages) }).map((_, i) => {
-                        let pageNum = currentPage;
-                        if (currentPage <= 3) {
-                          pageNum = i + 1;
-                        } else if (currentPage >= totalPages - 2) {
-                          pageNum = totalPages - 4 + i;
-                        } else {
-                          pageNum = currentPage - 2 + i;
-                        }
-                        
-                        if (pageNum < 1 || pageNum > totalPages) return null;
-
-                        return (
-                          <button
-                            key={pageNum}
-                            type="button"
-                            onClick={() => setAttributePage(pageNum)}
-                            className={`cursor-pointer px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                              currentPage === pageNum
-                                ? "bg-slate-950 text-white shadow-md"
-                                : "text-slate-600 hover:bg-slate-150"
-                            }`}
-                          >
-                            {pageNum}
-                          </button>
-                        );
-                      })}
-
-                      <button
-                        type="button"
-                        onClick={() => setAttributePage(p => Math.min(totalPages, p + 1))}
-                        disabled={currentPage === totalPages}
-                        className="cursor-pointer bg-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 text-slate-700 font-bold px-3 py-1.5 rounded-lg border border-slate-200 transition-all shadow-sm"
-                      >
-                        Next
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
+          <GisAttributeTable
+            selectedAttributeLayerId={selectedAttributeLayerId}
+            setSelectedAttributeLayerId={setSelectedAttributeLayerId}
+            layers={layers}
+            setLayers={setLayers}
+            attributeSearchQuery={attributeSearchQuery}
+            setAttributeSearchQuery={setAttributeSearchQuery}
+            attributeSortKey={attributeSortKey}
+            setAttributeSortKey={setAttributeSortKey}
+            attributeSortDesc={attributeSortDesc}
+            setAttributeSortDesc={setAttributeSortDesc}
+            attributePage={attributePage}
+            setAttributePage={setAttributePage}
+            zoomToCentroid={zoomToCentroid}
+            showToast={showToast}
+          />
 
           {/* Quick interactive map key/guide */}
           <div className="bg-white p-5 rounded-3xl border border-slate-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">

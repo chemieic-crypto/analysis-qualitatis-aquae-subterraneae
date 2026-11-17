@@ -51,12 +51,13 @@ export function ensureExcelJSWorksheetNumbers(ws: ExcelJS.Worksheet, headerRowCo
     if (rowNumber <= headerRowCount) return; // Skip headers
 
     row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-      let rawVal = cell.value;
+      let rawVal: unknown = cell.value;
       if (typeof rawVal === "object" && rawVal !== null) {
-        if ((rawVal as any).result !== undefined) {
-          rawVal = (rawVal as any).result;
-        } else if ((rawVal as any).text !== undefined) {
-          rawVal = (rawVal as any).text;
+        const richOrFormula = rawVal as { result?: unknown; text?: unknown };
+        if (richOrFormula.result !== undefined) {
+          rawVal = richOrFormula.result;
+        } else if (richOrFormula.text !== undefined) {
+          rawVal = richOrFormula.text;
         }
       }
 
@@ -112,7 +113,7 @@ export function formatExcelJSWorksheet(
   ws.views = [{ showGridLines: true }];
 
   // If worksheet was already custom formatted by a specialized module, preserve custom colors/fonts
-  if ((ws as any)._customFormatted) {
+  if (ws._customFormatted) {
     return;
   }
 
@@ -121,9 +122,10 @@ export function formatExcelJSWorksheet(
     if (!col) return;
     let maxLen = 10;
     col.eachCell?.({ includeEmpty: true }, (cell) => {
-      let rawVal = cell.value;
+      let rawVal: unknown = cell.value;
       if (typeof rawVal === "object" && rawVal !== null) {
-        rawVal = (rawVal as any).result ?? (rawVal as any).text ?? (rawVal as any).formula ?? "";
+        const objVal = rawVal as { result?: unknown; text?: unknown; formula?: unknown };
+        rawVal = objVal.result ?? objVal.text ?? objVal.formula ?? "";
       }
       const valStr = rawVal !== undefined && rawVal !== null ? String(rawVal) : "";
       const lines = valStr.split("\n");
@@ -143,9 +145,10 @@ export function formatExcelJSWorksheet(
     // Check if cell or row contains "Total", "Grand Total", "Consolidated", "Overall"
     let isTotalRow = false;
     row.eachCell({ includeEmpty: true }, (cell) => {
-      let rawVal = cell.value;
+      let rawVal: unknown = cell.value;
       if (typeof rawVal === "object" && rawVal !== null) {
-        rawVal = (rawVal as any).result ?? (rawVal as any).text ?? "";
+        const objVal = rawVal as { result?: unknown; text?: unknown };
+        rawVal = objVal.result ?? objVal.text ?? "";
       }
       const cellValStr = String(rawVal || "").toUpperCase().trim();
       if (

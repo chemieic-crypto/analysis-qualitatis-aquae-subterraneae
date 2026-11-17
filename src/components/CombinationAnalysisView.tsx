@@ -32,7 +32,7 @@ export function CombinationAnalysisView({
   selectedSeason = "",
   layers
 }: CombinationAnalysisViewProps) {
-  const L = (window as any).L;
+  const L = window.L;
 
   // Active Tab
   const [activeTab, setActiveTab] = useState<string>("overview");
@@ -384,12 +384,14 @@ export function CombinationAnalysisView({
     if (mapInstanceRef.current) {
       try {
         mapInstanceRef.current.remove();
-      } catch {}
+      } catch (err) {
+        console.warn("Previous Leaflet map cleanup skipped:", err);
+      }
       mapInstanceRef.current = null;
     }
 
-    if ((mapRef.current as any)._leaflet_id) {
-      delete (mapRef.current as any)._leaflet_id;
+    if (mapRef.current._leaflet_id) {
+      delete mapRef.current._leaflet_id;
     }
     mapRef.current.innerHTML = "";
 
@@ -405,7 +407,9 @@ export function CombinationAnalysisView({
       if (mapInstanceRef.current) {
         try {
           mapInstanceRef.current.remove();
-        } catch {}
+        } catch (err) {
+          console.warn("Leaflet map unmount cleanup skipped:", err);
+        }
         mapInstanceRef.current = null;
       }
     };
@@ -543,7 +547,9 @@ export function CombinationAnalysisView({
     if (bounds.length > 0) {
       try {
         map.fitBounds(bounds, { padding: [40, 40] });
-      } catch (err) {}
+      } catch (err) {
+        console.warn("Map fitBounds skipped:", err);
+      }
     }
   }, [currentFilteredData, pointSize, mapStatusFilters, L, columnMapping, getDecimalForParam]);
 
@@ -1091,7 +1097,7 @@ export function CombinationAnalysisView({
               </span>
               <select
                 value={mapTheme}
-                onChange={e => setMapTheme(e.target.value as any)}
+                onChange={e => setMapTheme(e.target.value as "osm" | "satellite" | "terrain" | "topo")}
                 className="bg-slate-50 border border-slate-200 rounded-xl px-2 py-1 text-[9px] font-black uppercase tracking-wider outline-none text-slate-600"
               >
                 <option value="osm">OpenStreetMap</option>

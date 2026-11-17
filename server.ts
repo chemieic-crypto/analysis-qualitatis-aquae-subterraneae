@@ -88,15 +88,11 @@ async function startServer() {
   // Resilient multi-model executor with automatic retries and failover
   async function callGeminiWithFailover(
     contents: any,
-    systemInstruction: string,
-    temperature = 0.6
+    systemInstruction: string
   ): Promise<string> {
-    // We prioritize gemini-3.1-flash-lite (high throughput, lowest latency) and gemini-flash-latest
-    // followed by gemini-3.8-flash, which prevents 503 high demand spikes from failing the user request.
     const candidateModels = [
+      "gemini-4-hydrogen",
       "gemini-3.1-flash-lite",
-      "gemini-flash-latest",
-      "gemini-3.8-flash",
     ];
 
     let lastError: any = null;
@@ -109,7 +105,6 @@ async function startServer() {
             contents,
             config: {
               systemInstruction,
-              temperature,
             },
           });
 
@@ -197,8 +192,7 @@ ${lastPart.text}`;
     try {
       const replyText = await callGeminiWithFailover(
         formattedContents,
-        systemInstruction,
-        0.6
+        systemInstruction
       );
       res.json({ reply: replyText });
     } catch (err: any) {
@@ -232,8 +226,7 @@ Format with crisp headings, bullet points, and bold metric callouts.`;
     try {
       const reportText = await callGeminiWithFailover(
         prompt,
-        "You are an expert hydrogeologist and groundwater quality auditor. Provide a rigorous, professional, executive-ready groundwater report.",
-        0.5
+        "You are an expert hydrogeologist and groundwater quality auditor. Provide a rigorous, professional, executive-ready groundwater report."
       );
       res.json({ auditReport: reportText });
     } catch (err: any) {

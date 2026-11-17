@@ -266,6 +266,95 @@ const Compliance3DDonutChart: React.FC<Donut3DProps> = ({
   );
 };
 
+export type KpiThemeId =
+  | "royal-indigo"
+  | "emerald-biosphere"
+  | "obsidian-dark"
+  | "crimson-amber"
+  | "amethyst-purple"
+  | "titanium-slate";
+
+export interface KpiThemeConfig {
+  id: KpiThemeId;
+  name: string;
+  badge: string;
+  containerBg: string;
+  headerBanner: string;
+  headerAccentLine: string;
+  cardHeader: string;
+  footerBanner: string;
+  mapWrapperBg: string;
+}
+
+export const KPI_THEMES: Record<KpiThemeId, KpiThemeConfig> = {
+  "royal-indigo": {
+    id: "royal-indigo",
+    name: "Royal Indigo",
+    badge: "bg-indigo-600 text-white",
+    containerBg: "bg-slate-50/50",
+    headerBanner: "bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 border-indigo-800/80 shadow-[0_12px_30px_rgba(15,23,42,0.35),inset_0_1.5px_0_rgba(255,255,255,0.3)]",
+    headerAccentLine: "from-cyan-400 via-sky-300 to-indigo-400",
+    cardHeader: "bg-gradient-to-r from-[#1a2356] via-[#28357a] to-[#1a2356]",
+    footerBanner: "bg-gradient-to-r from-[#141b3d] via-[#1e295d] to-[#141b3d] border-indigo-900/80",
+    mapWrapperBg: "bg-gradient-to-b from-amber-50/50 via-amber-50/20 to-white border-amber-200/90 shadow-[0_16px_36px_-6px_rgba(217,119,6,0.18),inset_0_2px_1px_0_rgba(255,255,255,0.95)]"
+  },
+  "emerald-biosphere": {
+    id: "emerald-biosphere",
+    name: "Emerald Biosphere",
+    badge: "bg-emerald-600 text-white",
+    containerBg: "bg-emerald-50/30",
+    headerBanner: "bg-gradient-to-r from-slate-950 via-emerald-950 to-teal-950 border-emerald-800/80 shadow-[0_12px_30px_rgba(6,78,59,0.35),inset_0_1.5px_0_rgba(255,255,255,0.3)]",
+    headerAccentLine: "from-emerald-400 via-teal-300 to-emerald-400",
+    cardHeader: "bg-gradient-to-r from-[#064e3b] via-[#047857] to-[#064e3b]",
+    footerBanner: "bg-gradient-to-r from-[#022c22] via-[#064e3b] to-[#022c22] border-emerald-900/80",
+    mapWrapperBg: "bg-gradient-to-b from-emerald-50/50 via-teal-50/20 to-white border-emerald-200/90 shadow-[0_16px_36px_-6px_rgba(5,150,105,0.18),inset_0_2px_1px_0_rgba(255,255,255,0.95)]"
+  },
+  "obsidian-dark": {
+    id: "obsidian-dark",
+    name: "Obsidian Midnight",
+    badge: "bg-cyan-600 text-white",
+    containerBg: "bg-slate-950 text-slate-100",
+    headerBanner: "bg-gradient-to-r from-black via-slate-950 to-zinc-950 border-slate-700/80 shadow-[0_12px_30px_rgba(0,0,0,0.8),inset_0_1.5px_0_rgba(255,255,255,0.2)]",
+    headerAccentLine: "from-cyan-400 via-indigo-400 to-fuchsia-400",
+    cardHeader: "bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border border-slate-700",
+    footerBanner: "bg-gradient-to-r from-black via-slate-900 to-black border-slate-800",
+    mapWrapperBg: "bg-gradient-to-b from-slate-900/80 via-slate-950 to-slate-900 border-slate-800 shadow-[0_16px_36px_-6px_rgba(0,0,0,0.6),inset_0_2px_1px_0_rgba(255,255,255,0.1)]"
+  },
+  "crimson-amber": {
+    id: "crimson-amber",
+    name: "Sunset Amber",
+    badge: "bg-amber-600 text-white",
+    containerBg: "bg-amber-50/30",
+    headerBanner: "bg-gradient-to-r from-slate-950 via-rose-950 to-amber-950 border-rose-800/80 shadow-[0_12px_30px_rgba(136,19,55,0.35),inset_0_1.5px_0_rgba(255,255,255,0.3)]",
+    headerAccentLine: "from-amber-400 via-rose-400 to-yellow-300",
+    cardHeader: "bg-gradient-to-r from-[#881337] via-[#9f1239] to-[#881337]",
+    footerBanner: "bg-gradient-to-r from-[#4c0519] via-[#881337] to-[#4c0519] border-rose-900/80",
+    mapWrapperBg: "bg-gradient-to-b from-amber-50/60 via-rose-50/20 to-white border-rose-200/90 shadow-[0_16px_36px_-6px_rgba(225,29,72,0.18),inset_0_2px_1px_0_rgba(255,255,255,0.95)]"
+  },
+  "amethyst-purple": {
+    id: "amethyst-purple",
+    name: "Amethyst Violet",
+    badge: "bg-purple-600 text-white",
+    containerBg: "bg-purple-50/30",
+    headerBanner: "bg-gradient-to-r from-slate-950 via-purple-950 to-indigo-950 border-purple-800/80 shadow-[0_12px_30px_rgba(88,28,135,0.35),inset_0_1.5px_0_rgba(255,255,255,0.3)]",
+    headerAccentLine: "from-purple-400 via-fuchsia-300 to-pink-400",
+    cardHeader: "bg-gradient-to-r from-[#581c87] via-[#6b21a8] to-[#581c87]",
+    footerBanner: "bg-gradient-to-r from-[#3b0764] via-[#581c87] to-[#3b0764] border-purple-900/80",
+    mapWrapperBg: "bg-gradient-to-b from-purple-50/50 via-fuchsia-50/20 to-white border-purple-200/90 shadow-[0_16px_36px_-6px_rgba(147,51,234,0.18),inset_0_2px_1px_0_rgba(255,255,255,0.95)]"
+  },
+  "titanium-slate": {
+    id: "titanium-slate",
+    name: "Titanium Slate",
+    badge: "bg-slate-700 text-white",
+    containerBg: "bg-slate-100/60",
+    headerBanner: "bg-gradient-to-r from-slate-800 via-slate-900 to-zinc-800 border-slate-700/80 shadow-[0_12px_30px_rgba(15,23,42,0.25),inset_0_1.5px_0_rgba(255,255,255,0.2)]",
+    headerAccentLine: "from-slate-300 via-zinc-200 to-slate-400",
+    cardHeader: "bg-gradient-to-r from-[#1e293b] via-[#334155] to-[#1e293b]",
+    footerBanner: "bg-gradient-to-r from-[#0f172a] via-[#1e293b] to-[#0f172a] border-slate-800",
+    mapWrapperBg: "bg-gradient-to-b from-slate-50 via-white to-slate-50 border-slate-300 shadow-[0_16px_36px_-6px_rgba(15,23,42,0.12),inset_0_2px_1px_0_rgba(255,255,255,0.95)]"
+  }
+};
+
 export default function KpiView({
   rawData,
   setRawData,
@@ -299,6 +388,25 @@ export default function KpiView({
     if (availableParams.length > 0) return availableParams[0];
     return "EC";
   });
+
+  // KPI GUI Theme State (Stored in localStorage)
+  const [kpiTheme, setKpiTheme] = useState<KpiThemeId>(() => {
+    const saved = localStorage.getItem("kpi_gui_theme");
+    if (saved && KPI_THEMES[saved as KpiThemeId]) {
+      return saved as KpiThemeId;
+    }
+    return "royal-indigo";
+  });
+
+  const activeTheme = KPI_THEMES[kpiTheme] || KPI_THEMES["royal-indigo"];
+
+  const handleThemeChange = (themeId: KpiThemeId) => {
+    setKpiTheme(themeId);
+    localStorage.setItem("kpi_gui_theme", themeId);
+    if (showToast) {
+      showToast(`KPI Theme switched to ${KPI_THEMES[themeId].name}`, "success");
+    }
+  };
 
   // Map Controls State
   const [showGisAnalysis, setShowGisAnalysis] = useState<boolean>(true);
@@ -425,11 +533,12 @@ export default function KpiView({
     return reportingLevel || "State";
   }, [isDistrictSelected, isStateSelected, reportingLevel]);
 
-  // Derive Season and Year from uploaded data or props
+  // Derive Season and Year from uploaded data or props (LEAVE BLANK IF NO DATA UPLOADED)
   const derivedSeason = useMemo(() => {
     if (selectedSeason && selectedSeason !== "ALL" && selectedSeason !== "All Seasons" && !selectedSeason.toLowerCase().includes("all season")) {
       return selectedSeason;
     }
+    if (!rawData || rawData.length === 0) return "";
     const seasonCol = headers.season || "Season";
     const seasons = new Set<string>();
     rawData.forEach((r) => {
@@ -438,13 +547,14 @@ export default function KpiView({
     });
     if (seasons.size === 1) return Array.from(seasons)[0];
     if (seasons.size > 1) return Array.from(seasons).slice(0, 2).join("/");
-    return "Pre-Monsoon";
+    return "";
   }, [selectedSeason, rawData, headers.season]);
 
   const derivedYear = useMemo(() => {
     if (selectedYear && selectedYear !== "ALL" && selectedYear !== "All Years" && !selectedYear.toLowerCase().includes("all year")) {
       return selectedYear;
     }
+    if (!rawData || rawData.length === 0) return "";
     const yearCol = headers.year || "Year";
     const years = new Set<string>();
     rawData.forEach((r) => {
@@ -456,7 +566,7 @@ export default function KpiView({
       const sorted = Array.from(years).sort();
       return `${sorted[0]}-${sorted[sorted.length - 1]}`;
     }
-    return "2023-2024";
+    return "";
   }, [selectedYear, rawData, headers.year]);
 
   const assessmentPeriodText = `${derivedSeason} ${derivedYear}`.trim();
@@ -712,7 +822,7 @@ export default function KpiView({
     : "across India";
 
   return (
-    <div ref={kpiSectionRef} className="space-y-4 animate-fade-in pb-8 font-sans p-1 rounded-2xl bg-slate-50/50">
+    <div ref={kpiSectionRef} className={`space-y-4 animate-fade-in pb-8 font-sans p-1 rounded-2xl ${activeTheme.containerBg}`}>
       {/* PARAMETER SELECTOR TOP BAR WITH MAP CONTROLS */}
       <div data-export-hide="true" className="bg-white rounded-2xl p-3 border border-slate-200/90 shadow-xs flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
@@ -723,6 +833,24 @@ export default function KpiView({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap flex-1 justify-end">
+          {/* THEME SELECTOR DROPDOWN */}
+          <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-300/80 shadow-2xs">
+            <Palette className="w-3.5 h-3.5 text-slate-700 ml-1" />
+            <select
+              value={kpiTheme}
+              onChange={(e) => handleThemeChange(e.target.value as KpiThemeId)}
+              className="bg-white text-slate-900 font-extrabold text-xs px-2.5 py-1 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-xs"
+              title="Change KPI GUI Theme"
+            >
+              <option value="royal-indigo">Royal Indigo (Default)</option>
+              <option value="emerald-biosphere">Emerald Biosphere</option>
+              <option value="obsidian-dark">Obsidian Midnight</option>
+              <option value="crimson-amber">Sunset Amber</option>
+              <option value="amethyst-purple">Amethyst Violet</option>
+              <option value="titanium-slate">Titanium Slate</option>
+            </select>
+          </div>
+
           {/* PARAMETER DROPDOWN */}
           <div className="relative flex items-center">
             <select
@@ -872,11 +1000,11 @@ export default function KpiView({
         </div>
       </div>
 
-      {/* TOP DEEP BLUE GLOSSY HEADER BANNER */}
-      <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white py-4 px-6 rounded-2xl shadow-[0_12px_30px_rgba(15,23,42,0.35),inset_0_1.5px_0_rgba(255,255,255,0.3)] text-center flex items-center justify-center min-h-[56px] border border-indigo-800/80 relative overflow-hidden">
-        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-cyan-400 via-sky-300 to-indigo-400 opacity-90" />
+      {/* TOP GLOSSY HEADER BANNER */}
+      <div className={`py-4 px-6 rounded-2xl text-center flex items-center justify-center min-h-[56px] border relative overflow-hidden text-white ${activeTheme.headerBanner}`}>
+        <div className={`absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r ${activeTheme.headerAccentLine} opacity-90`} />
         <h1 className="text-lg sm:text-2xl font-black tracking-tight text-white text-center leading-snug drop-shadow-md relative z-10">
-          Key Indicators of {toProperCase(paramName)} ({selectedParamKey}) in Groundwater in {toProperCase(locationScopeText)} ({toProperCase(assessmentPeriodText)})
+          Key Indicators of {toProperCase(paramName)} ({selectedParamKey}) in Groundwater in {toProperCase(locationScopeText)}{assessmentPeriodText ? ` (${toProperCase(assessmentPeriodText)})` : ""}
         </h1>
       </div>
 
@@ -1117,7 +1245,7 @@ export default function KpiView({
           <div className="relative bg-gradient-to-b from-white via-slate-50/80 to-indigo-50/30 rounded-2xl p-4 border border-white/90 shadow-[0_16px_36px_-6px_rgba(26,35,86,0.18),0_6px_16px_-2px_rgba(0,0,0,0.04),inset_0_2px_1px_0_rgba(255,255,255,0.95)] hover:-translate-y-1 hover:shadow-[0_20px_40px_-6px_rgba(26,35,86,0.25)] transition-all duration-300 overflow-hidden">
             <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[40%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
             
-            <div className="relative z-10 bg-gradient-to-r from-[#1a2356] via-[#28357a] to-[#1a2356] text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-[0_6px_14px_rgba(26,35,86,0.4),inset_0_1px_0_rgba(255,255,255,0.3)] tracking-wide mb-3">
+            <div className={`relative z-10 text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-[0_6px_14px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.3)] tracking-wide mb-3 ${activeTheme.cardHeader}`}>
               BIS Standard: {toProperCase(paramName)} ({selectedParamKey})
             </div>
 
@@ -1155,7 +1283,7 @@ export default function KpiView({
           <div className="relative bg-gradient-to-b from-white via-slate-50/80 to-indigo-50/30 rounded-2xl p-4 border border-white/90 shadow-[0_16px_36px_-6px_rgba(26,35,86,0.18),0_6px_16px_-2px_rgba(0,0,0,0.04),inset_0_2px_1px_0_rgba(255,255,255,0.95)] hover:-translate-y-1 hover:shadow-[0_20px_40px_-6px_rgba(26,35,86,0.25)] transition-all duration-300 overflow-hidden">
             <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[40%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
 
-            <div className="relative z-10 bg-gradient-to-r from-[#1a2356] via-[#28357a] to-[#1a2356] text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-[0_6px_14px_rgba(26,35,86,0.4),inset_0_1px_0_rgba(255,255,255,0.3)] tracking-wide mb-2">
+            <div className={`relative z-10 text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-[0_6px_14px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.3)] tracking-wide mb-2 ${activeTheme.cardHeader}`}>
               Compliance Status: {toProperCase(paramName)} ({selectedParamKey})
             </div>
 
@@ -1206,7 +1334,7 @@ export default function KpiView({
           <div className="relative bg-gradient-to-b from-white via-slate-50/80 to-indigo-50/30 rounded-2xl p-4 border border-white/90 shadow-[0_16px_36px_-6px_rgba(26,35,86,0.18),0_6px_16px_-2px_rgba(0,0,0,0.04),inset_0_2px_1px_0_rgba(255,255,255,0.95)] hover:-translate-y-1 hover:shadow-[0_20px_40px_-6px_rgba(26,35,86,0.25)] transition-all duration-300 flex-1 flex flex-col justify-between overflow-hidden">
             <div data-export-hide="true" className="absolute top-0 left-0 right-0 h-[40%] bg-gradient-to-b from-white/90 via-white/30 to-transparent pointer-events-none rounded-t-2xl z-0" />
 
-            <div className="relative z-10 bg-gradient-to-r from-[#1a2356] via-[#28357a] to-[#1a2356] text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-[0_6px_14px_rgba(26,35,86,0.4),inset_0_1px_0_rgba(255,255,255,0.3)] tracking-wide mb-3">
+            <div className={`relative z-10 text-white font-extrabold text-xs py-2 px-4 rounded-xl text-center shadow-[0_6px_14px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.3)] tracking-wide mb-3 ${activeTheme.cardHeader}`}>
               Top 5 {toProperCase(top5PluralLabel)} {isStateSelected ? (isDistrictSelected ? `in ${toProperCase(selectedDistrict)}` : `in ${toProperCase(selectedState)}`) : ""} by {selectedParamKey} Exceedance
             </div>
 
@@ -1243,7 +1371,7 @@ export default function KpiView({
         </div>
 
         {/* RIGHT COLUMN: DEDICATED KPI CHOROPLETH SPATIAL MAP */}
-        <div className={`${showGisAnalysis ? "lg:col-span-7" : "lg:col-span-12"} bg-gradient-to-b from-amber-50/50 via-amber-50/20 to-white border border-amber-200/90 rounded-2xl p-3.5 shadow-[0_16px_36px_-6px_rgba(217,119,6,0.18),inset_0_2px_1px_0_rgba(255,255,255,0.95)] transition-all duration-300`}>
+        <div className={`${showGisAnalysis ? "lg:col-span-7" : "lg:col-span-12"} ${activeTheme.mapWrapperBg} rounded-2xl p-3.5 transition-all duration-300`}>
           <KpiChoroplethMap
             rawData={rawData}
             setRawData={setRawData}
@@ -1272,15 +1400,15 @@ export default function KpiView({
         </div>
       </div>
 
-      {/* BOTTOM DARK NAVY FOOTER BANNER WITH 3D DEPTH */}
-      <div className="bg-gradient-to-r from-[#141b3d] via-[#1e295d] to-[#141b3d] text-white rounded-2xl p-4 sm:p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 shadow-[0_12px_30px_rgba(20,27,61,0.4),inset_0_1px_0_rgba(255,255,255,0.15)] border border-indigo-900/80">
+      {/* BOTTOM FOOTER BANNER WITH 3D DEPTH */}
+      <div className={`rounded-2xl p-4 sm:p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 ${activeTheme.footerBanner} text-white`}>
         <div className="flex items-center gap-3 bg-white/5 p-2.5 rounded-xl border border-white/10 shadow-inner">
           <div className="p-2.5 bg-indigo-600/40 text-indigo-300 rounded-xl border border-indigo-400/40 shrink-0 shadow-[0_4px_10px_rgba(79,70,229,0.3)]">
             <Calendar className="w-5 h-5" />
           </div>
           <div>
             <span className="text-[10px] font-bold text-indigo-200 uppercase tracking-wider block">Assessment Period</span>
-            <span className="text-sm font-black text-white">{assessmentPeriodText}</span>
+            <span className="text-sm font-black text-white">{assessmentPeriodText || "—"}</span>
           </div>
         </div>
 

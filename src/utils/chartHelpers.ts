@@ -1,12 +1,8 @@
 import HighchartsImport from "highcharts";
 import HighchartsCore, { resolveHighchartsCore, safeInitPlugin } from "./initHighcharts";
-// @ts-ignore
 import Highcharts3D from "highcharts/highcharts-3d";
-// @ts-ignore
 import Cylinder from "highcharts/modules/cylinder";
-// @ts-ignore
 import Exporting from "highcharts/modules/exporting";
-// @ts-ignore
 import OfflineExporting from "highcharts/modules/offline-exporting";
 
 export function getHighchartsCore(raw?: any): any {
@@ -187,8 +183,8 @@ export function safeBase64ToString(str: string): string {
  */
 export function generateFallbackSvg(options: Highcharts.Options, width: number, height: number): string {
   const title = (options.title && options.title.text) ? options.title.text : "Water Quality Analytics Chart";
-  const series: any = options.series && options.series[0];
-  const isPie = options.chart?.type === "pie" || (options.series?.[0] as any)?.type === "pie";
+  const series = options.series?.[0] as (Highcharts.SeriesOptionsType & { data?: unknown[] }) | undefined;
+  const isPie = options.chart?.type === "pie" || series?.type === "pie";
 
   if (isPie) {
     // Generate an elegant fallback Donut Chart in clean vector markup
@@ -262,7 +258,8 @@ export function generateFallbackSvg(options: Highcharts.Options, width: number, 
     `;
   } else {
     // Generate an elegant fallback clean vector Column/Cylinder Chart
-    const categories: string[] = (options.xAxis && (options.xAxis as any).categories) || [];
+    const xAxisOpts = Array.isArray(options.xAxis) ? options.xAxis[0] : options.xAxis;
+    const categories: string[] = (xAxisOpts?.categories as string[] | undefined) || [];
     const dataPoints: any[] = series?.data || [];
     
     let columnsHtml = "";
@@ -656,7 +653,8 @@ export async function generateOfflineChartBase64(
       const coreH = getHighchartsCore(HighchartsImport);
       try {
         chart = coreH.chart(container, chartOptions);
-        svg = typeof (chart as any).getSVG === "function" ? (chart as any).getSVG() : "";
+        const chartWithExport = chart as Highcharts.Chart & { getSVG?: () => string };
+        svg = typeof chartWithExport.getSVG === "function" ? chartWithExport.getSVG() : "";
         if (chart) {
           try { chart.destroy(); } catch (_) {}
           chart = null;
@@ -698,7 +696,8 @@ export async function generateOfflineChartBase64(
 
         try {
           chart = coreH.chart(container, fallbackOptions);
-          svg = typeof (chart as any).getSVG === "function" ? (chart as any).getSVG() : "";
+          const fallbackChartWithExport = chart as Highcharts.Chart & { getSVG?: () => string };
+          svg = typeof fallbackChartWithExport.getSVG === "function" ? fallbackChartWithExport.getSVG() : "";
           if (chart) {
             try { chart.destroy(); } catch (_) {}
             chart = null;
@@ -875,10 +874,12 @@ export function buildDonutChartOptions(title: string, dataPoints: any[], size = 
           crop: false,
           overflow: "allow",
           softConnector: true,
-          formatter: function (this: any) {
-            const name = this.point.name || "";
-            const pct = this.point.percentage ? this.point.percentage.toFixed(1) : "0.0";
-            const count = this.point.y !== undefined ? this.point.y : 0;
+          formatter: function () {
+            const ctx = this as unknown as { point?: Highcharts.Point & { name?: string; percentage?: number; y?: number } };
+            const pt = ctx.point;
+            const name = pt?.name || "";
+            const pct = pt?.percentage ? pt.percentage.toFixed(1) : "0.0";
+            const count = pt?.y !== undefined ? pt.y : 0;
             return `<b>${name}</b><br/><b>${pct}%</b> (${count} samples)`;
           },
           distance: 20,
@@ -892,7 +893,7 @@ export function buildDonutChartOptions(title: string, dataPoints: any[], size = 
             color: isDarkTheme ? "#f8fafc" : "#0f172a",
             textOutline: "2.5px #ffffff", // White halo stroke around text for publication readability
           },
-        } as any,
+        } as Highcharts.SeriesPieDataLabelsOptionsObject,
         showInLegend: false,
       },
     },

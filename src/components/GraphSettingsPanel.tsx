@@ -257,7 +257,7 @@ export default function GraphSettingsPanel({
             ].map(themeOpt => (
               <button
                 key={themeOpt.id}
-                onClick={() => updateSetting("theme", themeOpt.id as any)}
+                onClick={() => updateSetting("theme", themeOpt.id as GraphSettings["theme"])}
                 className={`text-left p-3 rounded-xl border transition-all text-[11px] font-bold ${
                   settings.theme === themeOpt.id
                     ? "bg-indigo-50 border-indigo-500 text-indigo-900 ring-2 ring-indigo-200"
@@ -295,7 +295,7 @@ export default function GraphSettingsPanel({
               <label className="text-[9.5px] font-black text-slate-500 uppercase block">Marker Shape</label>
               <select
                 value={settings.markerShape}
-                onChange={(e) => updateSetting("markerShape", e.target.value as any)}
+                onChange={(e) => updateSetting("markerShape", e.target.value as GraphSettings["markerShape"])}
                 className="w-full text-xs p-2 rounded-xl bg-slate-50 border border-slate-200 font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               >
                 <option value="circle">● Circle</option>
@@ -607,7 +607,7 @@ export default function GraphSettingsPanel({
                 <label className="text-[9.5px] font-black text-slate-500 uppercase block">Tick Direction</label>
                 <select
                   value={settings.tickDirection}
-                  onChange={(e) => updateSetting("tickDirection", e.target.value as any)}
+                  onChange={(e) => updateSetting("tickDirection", e.target.value as GraphSettings["tickDirection"])}
                   className="w-full text-xs p-2 rounded-xl bg-slate-50 border border-slate-200 font-bold"
                 >
                   <option value="outward">↗ Outward</option>
@@ -909,7 +909,7 @@ export default function GraphSettingsPanel({
                 <label className="text-[9.5px] font-black text-slate-500 uppercase block">Gridline Style</label>
                 <select
                   value={settings.gridlineStyle}
-                  onChange={(e) => updateSetting("gridlineStyle", e.target.value as any)}
+                  onChange={(e) => updateSetting("gridlineStyle", e.target.value as GraphSettings["gridlineStyle"])}
                   className="w-full text-xs p-2 rounded-xl bg-slate-50 border border-slate-200 font-bold text-slate-700"
                 >
                   <option value="Solid">─ Solid</option>
@@ -1036,7 +1036,7 @@ export default function GraphSettingsPanel({
                 <label className="text-[9.5px] font-black text-slate-500 uppercase block">Legend Position</label>
                 <select
                   value={settings.legendPosition}
-                  onChange={(e) => updateSetting("legendPosition", e.target.value as any)}
+                  onChange={(e) => updateSetting("legendPosition", e.target.value as GraphSettings["legendPosition"])}
                   className="w-full text-xs p-2 rounded-xl bg-slate-50 border border-slate-200 font-bold text-slate-700"
                 >
                   <option value="bottom">⬇️ Bottom</option>

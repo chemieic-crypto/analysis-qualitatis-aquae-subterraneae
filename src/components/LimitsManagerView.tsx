@@ -9,6 +9,7 @@ interface LimitsManagerViewProps {
   uploadedHeaders?: string[];
   headerMap?: Record<string, string>;
   onUpdateHeaders?: (headers: DataHeaders, headerMap: Record<string, string>) => void;
+  showToast?: (message: string, type?: "success" | "error") => void;
 }
 
 export default function LimitsManagerView({
@@ -16,7 +17,8 @@ export default function LimitsManagerView({
   headers,
   uploadedHeaders,
   headerMap,
-  onUpdateHeaders
+  onUpdateHeaders,
+  showToast
 }: LimitsManagerViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const isExcluded = (key: string) => {
@@ -37,6 +39,7 @@ export default function LimitsManagerView({
 
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Custom Parameter Addition Form State
   const [showAddForm, setShowAddForm] = useState(false);
@@ -207,29 +210,36 @@ export default function LimitsManagerView({
       setShowSuccessToast(false);
     }, 3000);
 
-    alert(`Successfully added custom parameter "${cleanKey}" (${newParamName})!${matchedColumnMessage}`);
+    showToast?.(
+      `Successfully added custom parameter "${cleanKey}" (${newParamName})!${matchedColumnMessage}`,
+      "success"
+    );
   };
 
   const handleReset = () => {
-    if (window.confirm("Are you sure you want to restore all parameters to default Indian Standard (IS 10500:2012) limits?")) {
-      resetParamLimits();
-      const resetState: Record<string, { b1: string; b2: string }> = {};
-      Object.keys(DEFAULT_PARAM_CONFIG).forEach((key) => {
-        if (isExcluded(key)) return;
-        resetState[key] = {
-          b1: String(DEFAULT_PARAM_CONFIG[key].b1),
-          b2: String(DEFAULT_PARAM_CONFIG[key].b2),
-        };
-      });
-      setEditingLimits(resetState);
-      setValidationErrors({});
-      onLimitsChanged();
+    setShowResetConfirm(true);
+  };
 
-      setShowSuccessToast(true);
-      setTimeout(() => {
-        setShowSuccessToast(false);
-      }, 3000);
-    }
+  const confirmResetToDefaults = () => {
+    resetParamLimits();
+    const resetState: Record<string, { b1: string; b2: string }> = {};
+    Object.keys(DEFAULT_PARAM_CONFIG).forEach((key) => {
+      if (isExcluded(key)) return;
+      resetState[key] = {
+        b1: String(DEFAULT_PARAM_CONFIG[key].b1),
+        b2: String(DEFAULT_PARAM_CONFIG[key].b2),
+      };
+    });
+    setEditingLimits(resetState);
+    setValidationErrors({});
+    setShowResetConfirm(false);
+    onLimitsChanged();
+
+    setShowSuccessToast(true);
+    setTimeout(() => {
+      setShowSuccessToast(false);
+    }, 3000);
+    showToast?.("All parameter limits restored to IS 10500:2012 defaults.", "success");
   };
 
   const filteredKeys = Object.keys(PARAM_CONFIG).filter((key) => {
@@ -290,6 +300,34 @@ export default function LimitsManagerView({
           </button>
         </div>
       </div>
+
+      {showResetConfirm && (
+        <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50/90 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-start gap-2.5 text-amber-900 text-xs">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-extrabold">Restore default Indian Standard (IS 10500:2012) limits?</p>
+              <p className="text-amber-800/80 mt-0.5">This will overwrite custom edited limits across all standard parameters.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+            <button
+              type="button"
+              onClick={() => setShowResetConfirm(false)}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmResetToDefaults}
+              className="px-3.5 py-2 rounded-xl text-xs font-extrabold bg-amber-600 hover:bg-amber-700 text-white shadow-xs cursor-pointer"
+            >
+              Confirm Reset
+            </button>
+          </div>
+        </div>
+      )}
 
       {showAddForm && (
         <div className="bg-slate-50 border border-slate-200 rounded-3xl p-5 mb-6 space-y-4 shadow-inner relative">

@@ -1290,8 +1290,8 @@ export default function SectorAnalysisView({
     if (!mapContainerRef.current) return;
     if (mapRef.current) return;
 
-    if ((mapContainerRef.current as any)._leaflet_id) {
-      delete (mapContainerRef.current as any)._leaflet_id;
+    if (mapContainerRef.current._leaflet_id) {
+      delete mapContainerRef.current._leaflet_id;
     }
     mapContainerRef.current.innerHTML = "";
 
@@ -2384,7 +2384,7 @@ export default function SectorAnalysisView({
       let maxLat = -Infinity;
 
       if (gridScope === "origin_extent" && center && centerPoint) {
-        const spanKm = radii.length > 0 ? Math.max(...radii) : 10;
+        const spanKm = radii.length > 0 ? radii.reduce((m, r) => (r > m ? r : m), radii[0]) : 10;
         const northPt = turf.destination(center, spanKm, 0, { units: "kilometers" });
         const southPt = turf.destination(center, spanKm, 180, { units: "kilometers" });
         const eastPt = turf.destination(center, spanKm, 90, { units: "kilometers" });
@@ -2499,10 +2499,18 @@ export default function SectorAnalysisView({
           let unit = SECTOR_PARAM_CONFIG[activeParam]?.unit || "";
 
           if (cellPoints.length > 0) {
-            const vals = cellPoints.map((p) => p._val);
-            avg = vals.reduce((s, v) => s + v, 0) / vals.length;
-            min = Math.min(...vals);
-            max = Math.max(...vals);
+            let sum = 0;
+            let cellMin = Infinity;
+            let cellMax = -Infinity;
+            for (let k = 0; k < cellPoints.length; k++) {
+              const v = cellPoints[k]._val;
+              sum += v;
+              if (v < cellMin) cellMin = v;
+              if (v > cellMax) cellMax = v;
+            }
+            avg = sum / cellPoints.length;
+            min = cellMin;
+            max = cellMax;
             const rangeMatch = getRangeMatch(avg);
             if (rangeMatch) {
               color = rangeMatch.color;
@@ -2722,10 +2730,18 @@ export default function SectorAnalysisView({
         let unit = SECTOR_PARAM_CONFIG[activeParam]?.unit || "";
 
         if (cellPoints.length > 0) {
-          const vals = cellPoints.map((p) => p._val);
-          avg = vals.reduce((s, v) => s + v, 0) / vals.length;
-          min = Math.min(...vals);
-          max = Math.max(...vals);
+          let sum = 0;
+          let cellMin = Infinity;
+          let cellMax = -Infinity;
+          for (let k = 0; k < cellPoints.length; k++) {
+            const v = cellPoints[k]._val;
+            sum += v;
+            if (v < cellMin) cellMin = v;
+            if (v > cellMax) cellMax = v;
+          }
+          avg = sum / cellPoints.length;
+          min = cellMin;
+          max = cellMax;
           const rangeMatch = getRangeMatch(avg);
           if (rangeMatch) {
             color = rangeMatch.color;
@@ -4371,7 +4387,7 @@ export default function SectorAnalysisView({
                         </label>
                         <select
                           value={gridScope}
-                          onChange={(e) => setGridScope(e.target.value as any)}
+                          onChange={(e) => setGridScope(e.target.value as "data_bounds" | "origin_extent")}
                           className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-bold outline-none"
                         >
                           <option value="data_bounds">Data Wells Bounds</option>

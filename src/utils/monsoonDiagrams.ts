@@ -941,8 +941,13 @@ export const generateMonsoonChoroplethMapSVG = (
     regionMap[regionKey].postVals.push(item.postVal);
     regionMap[regionKey].itemsCount++;
 
-    const latRaw = item.lat ?? (item as any).latitude ?? (item as any).baseRow?.Latitude ?? (item as any).baseRow?.latitude;
-    const lonRaw = item.lng ?? (item as any).longitude ?? (item as any).baseRow?.Longitude ?? (item as any).baseRow?.longitude;
+    const itemExt = item as typeof item & {
+      latitude?: number | string;
+      longitude?: number | string;
+      baseRow?: Record<string, unknown>;
+    };
+    const latRaw = item.lat ?? itemExt.latitude ?? itemExt.baseRow?.Latitude ?? itemExt.baseRow?.latitude;
+    const lonRaw = item.lng ?? itemExt.longitude ?? itemExt.baseRow?.Longitude ?? itemExt.baseRow?.longitude;
     const lat = typeof latRaw === "number" ? latRaw : parseFloat(String(latRaw || ""));
     const lon = typeof lonRaw === "number" ? lonRaw : parseFloat(String(lonRaw || ""));
     if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0 && Number.isFinite(lat) && Number.isFinite(lon)) {

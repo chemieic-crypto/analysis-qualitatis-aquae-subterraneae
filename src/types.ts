@@ -61,6 +61,7 @@ export interface GroupedStatRow {
   nSarS4?: number;
   nPctSarS4?: number;
   periodStats?: Record<string, any>;
+  periods?: Record<string, any>;
 }
 
 export interface ExceedingLocationItem {

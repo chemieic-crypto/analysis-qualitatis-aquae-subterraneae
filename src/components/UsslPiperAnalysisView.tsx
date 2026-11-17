@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
-// @ts-ignore
-import ExcelJS from "exceljs/dist/exceljs.min.js";
+import ExcelJS from "exceljs";
 import {
   EQ_WEIGHTS,
   INITIAL_FACIES_NAMES,
@@ -1432,7 +1431,9 @@ export default function UsslPiperAnalysisView({
     if (pointsToRender.length > 0 && !shapefileGeoJson && !showIdw) {
       try {
         map.fitBounds(markersGroup.getBounds(), { padding: [40, 40] });
-      } catch (err) {}
+      } catch (err) {
+        console.warn("Piper map fitBounds skipped:", err);
+      }
     }
 
     const handleWindowResize = () => {
@@ -2246,7 +2247,9 @@ export default function UsslPiperAnalysisView({
     if (pointsToRender.length > 0 && !shapefileGeoJson && !showIdw && !lastMapStateRef.current) {
       try {
         map.fitBounds(markersGroup.getBounds(), { padding: [40, 40] });
-      } catch (err) {}
+      } catch (err) {
+        console.warn("USSL map fitBounds skipped:", err);
+      }
     }
 
     const handleWindowResize = () => {
@@ -2267,7 +2270,9 @@ export default function UsslPiperAnalysisView({
               zoom: mapInstanceRef.current.getZoom()
             };
           }
-        } catch (e) {}
+        } catch (e) {
+          console.warn("Unable to snapshot USSL map viewport:", e);
+        }
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
       }

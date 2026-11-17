@@ -220,8 +220,8 @@ export const sanitizeColorsForHtml2canvas = (clonedDoc: Document) => {
           if (el.style.backdropFilter) {
             el.style.backdropFilter = "none";
           }
-          if ((el.style as any).webkitBackdropFilter) {
-            (el.style as any).webkitBackdropFilter = "none";
+          if (el.style.webkitBackdropFilter) {
+            el.style.webkitBackdropFilter = "none";
           }
 
           // Strip CSS filters (e.g. drop-shadow) that cause text vertical offset or blur artifacting in html2canvas
@@ -242,14 +242,14 @@ export const sanitizeColorsForHtml2canvas = (clonedDoc: Document) => {
             el.style.boxShadow = "0 4px 12px rgba(0, 0, 0, 0.08)";
           }
 
-          // Prevent text clipping in html2canvas caused by tight line-heights or overflow:hidden/truncate
+          // Prevent text clipping in html2canvas caused by explicit collapsed line-height
           const tagName = el.tagName.toLowerCase();
           if (["span", "p", "h1", "h2", "h3", "h4", "h5", "h6", "div", "b", "strong", "a"].includes(tagName)) {
             el.style.setProperty("overflow", "visible", "important");
             el.style.setProperty("text-overflow", "clip", "important");
-            
+
             const lh = el.style.lineHeight;
-            if (!lh || lh === "1" || lh === "none" || lh.includes("none")) {
+            if (lh === "1" || lh === "none" || (lh && lh.includes("none"))) {
               el.style.setProperty("line-height", "1.35", "important");
             }
           }
@@ -259,14 +259,14 @@ export const sanitizeColorsForHtml2canvas = (clonedDoc: Document) => {
             el.style.setProperty("overflow", "visible", "important");
           }
 
-          const styleProps = ["color", "backgroundColor", "borderColor", "border", "background", "boxShadow"];
+          const styleProps = ["color", "backgroundColor", "borderColor", "border", "background", "boxShadow"] as const;
           styleProps.forEach((prop) => {
-            const val = el.style[prop as any];
+            const val = el.style[prop];
             if (val && typeof val === "string") {
               if (val.toLowerCase().includes("oklch") || val.toLowerCase().includes("oklab")) {
                 const newVal = replaceOklabAndOklchNested(val);
                 if (newVal !== val) {
-                  el.style[prop as any] = newVal;
+                  el.style[prop] = newVal;
                 }
               }
             }
@@ -439,19 +439,27 @@ export const safeHtml2canvas = async (
           current = current.parentElement;
         }
 
-        const effectiveW = Math.max(1600, targetWidth);
+        const effectiveW = finalOptions.windowWidth || Math.max(1600, targetWidth);
 
         if (clonedDoc.body) {
           clonedDoc.body.style.setProperty("overflow", "visible", "important");
           clonedDoc.body.style.setProperty("width", `${effectiveW}px`, "important");
           clonedDoc.body.style.setProperty("margin", "0", "important");
           clonedDoc.body.style.setProperty("padding", "0", "important");
+          if (finalOptions.backgroundColor === null) {
+            clonedDoc.body.style.setProperty("background", "transparent", "important");
+            clonedDoc.body.style.setProperty("background-color", "transparent", "important");
+          }
         }
         if (clonedDoc.documentElement) {
           clonedDoc.documentElement.style.setProperty("overflow", "visible", "important");
           clonedDoc.documentElement.style.setProperty("width", `${effectiveW}px`, "important");
           clonedDoc.documentElement.style.setProperty("margin", "0", "important");
           clonedDoc.documentElement.style.setProperty("padding", "0", "important");
+          if (finalOptions.backgroundColor === null) {
+            clonedDoc.documentElement.style.setProperty("background", "transparent", "important");
+            clonedDoc.documentElement.style.setProperty("background-color", "transparent", "important");
+          }
         }
       } catch (unconstrainErr) {
         console.warn("Failed to unconstrain ancestor elements in cloned document:", unconstrainErr);
@@ -494,7 +502,9 @@ export const safeHtml2canvas = async (
 
     if (originalOnClone) {
       try {
-        originalOnClone(clonedDoc, iframeClonedElement || undefined as any);
+        if (iframeClonedElement) {
+          originalOnClone(clonedDoc, iframeClonedElement);
+        }
       } catch (err) {
         console.warn("Error in original onclone callback:", err);
       }
@@ -503,8 +513,8 @@ export const safeHtml2canvas = async (
 
   try {
     const renderScale = Math.min(3, Math.max(2, finalOptions.scale || 3));
-    const effectiveWindowW = Math.max(1600, targetWidth);
-    const effectiveWindowH = Math.max(1200, targetHeight);
+    const effectiveWindowW = finalOptions.windowWidth || Math.max(1600, targetWidth);
+    const effectiveWindowH = finalOptions.windowHeight || Math.max(1200, targetHeight);
 
     const html2canvasOptions = {
       useCORS: true,

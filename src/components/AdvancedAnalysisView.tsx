@@ -37,18 +37,20 @@ import {
 } from "lucide-react";
 import { DataHeaders } from "../types";
 import { PARAM_CONFIG } from "../data/config";
-
-const VIRTUAL_PARAM_CONFIGS: Record<string, { b1: number; b2: number; unit: string; name: string }> = {
-  SAR: { b1: 10, b2: 18, unit: "Ratio", name: "Sodium Adsorption Ratio" },
-  RSC: { b1: 1.25, b2: 2.5, unit: "meq/l", name: "Residual Sodium Carbonate" },
-  TH: { b1: 200, b2: 600, unit: "mg/l", name: "Total Hardness (as CaCO3)" },
-  SSP: { b1: 50, b2: 60, unit: "%", name: "Soluble Sodium Percentage" },
-  PI: { b1: 25, b2: 75, unit: "%", name: "Permeability Index" },
-  KR: { b1: 1.0, b2: 2.0, unit: "Ratio", name: "Kelly's Ratio" },
-  MH: { b1: 50, b2: 50, unit: "%", name: "Magnesium Hazard" },
-  USSL: { b1: 4, b2: 8, unit: "Class", name: "USSL Salinity-Sodium Class" },
-  PIPER: { b1: 3, b2: 5, unit: "Facies", name: "Piper Hydrochemical Facies" }
-};
+import {
+  AdvancedSubTab,
+  AdvancedBiplotType,
+  AdvancedBiplotColorBy,
+  AdvancedGroupLevel,
+  AdvancedComparisonGroupLevel,
+  VIRTUAL_PARAM_CONFIGS,
+  getRowStateValue,
+  getRowDistrictValue,
+  getRowBlockValue,
+  getSmartStepAndMax,
+  computeCorrelationResults,
+  computeRegressionDetails
+} from "../utils/advancedAnalysisHelpers";
 
 interface AdvancedAnalysisViewProps {
   rawData: any[];
@@ -165,26 +167,9 @@ export default function AdvancedAnalysisView({
   }, [rawData]);
 
   // Geographical Helpers to extract fields safely
-  const getStateValue = (row: any): string => {
-    const col = headers.state;
-    if (col && row[col] !== undefined && row[col] !== null) return String(row[col]).trim();
-    const fallbackKey = Object.keys(row).find(k => ["state", "st_name", "state_name", "state name"].includes(k.toLowerCase().trim()));
-    return fallbackKey ? String(row[fallbackKey]).trim() : "";
-  };
-
-  const getDistrictValue = (row: any): string => {
-    const col = headers.district;
-    if (col && row[col] !== undefined && row[col] !== null) return String(row[col]).trim();
-    const fallbackKey = Object.keys(row).find(k => ["district", "dist", "dst_name", "district_name", "district name"].includes(k.toLowerCase().trim()));
-    return fallbackKey ? String(row[fallbackKey]).trim() : "";
-  };
-
-  const getBlockValue = (row: any): string => {
-    const col = headers.block;
-    if (col && row[col] !== undefined && row[col] !== null) return String(row[col]).trim();
-    const fallbackKey = Object.keys(row).find(k => ["block", "tehsil", "taluk", "subdistrict", "sub-district", "block_name", "block name"].includes(k.toLowerCase().trim()));
-    return fallbackKey ? String(row[fallbackKey]).trim() : "";
-  };
+  const getStateValue = (row: Record<string, unknown>): string => getRowStateValue(row, headers);
+  const getDistrictValue = (row: Record<string, unknown>): string => getRowDistrictValue(row, headers);
+  const getBlockValue = (row: Record<string, unknown>): string => getRowBlockValue(row, headers);
 
   // Local geographical filter states
   const [localStateFilter, setLocalStateFilter] = useState<string>("");
@@ -273,74 +258,8 @@ export default function AdvancedAnalysisView({
   // Compute correlation results between target parameter and all other parameters
   const correlationResults = useMemo(() => {
     if (!isVisible || activeSubTab !== "correlation" || !analyzedData || analyzedData.length === 0) return [];
-    
-    const target = corrTargetParam || selectedParam;
-    if (!target) return [];
-
-    const targetCol = headers.params.find(p => p === target || headerMap[p] === target) || target;
-    const results: any[] = [];
-    
-    headers.params.forEach(col => {
-      if (col === targetCol) return;
-      
-      let sumX = 0;
-      let sumY = 0;
-      let sumXY = 0;
-      let sumX2 = 0;
-      let sumY2 = 0;
-      let n = 0;
-      
-      analyzedData.forEach(row => {
-        const xVal = row[targetCol];
-        const yVal = row[col];
-        if (xVal !== undefined && xVal !== null && yVal !== undefined && yVal !== null) {
-          const x = parseFloat(xVal);
-          const y = parseFloat(yVal);
-          if (!isNaN(x) && !isNaN(y)) {
-            sumX += x;
-            sumY += y;
-            sumXY += x * y;
-            sumX2 += x * x;
-            sumY2 += y * y;
-            n++;
-          }
-        }
-      });
-      
-      if (n >= 5) {
-        const numerator = n * sumXY - sumX * sumY;
-        const denominator = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
-        if (denominator !== 0) {
-          const r = numerator / denominator;
-          const rSquared = r * r;
-          const absR = Math.abs(r);
-          
-          let strength = "none";
-          if (absR >= 0.8) strength = "very_strong";
-          else if (absR >= 0.6) strength = "strong";
-          else if (absR >= 0.4) strength = "moderate";
-          else if (absR >= 0.2) strength = "weak";
-          
-          const standardCode = headerMap[col] || col;
-          const conf = PARAM_CONFIG[standardCode] || VIRTUAL_PARAM_CONFIGS[standardCode] || { name: col };
-          
-          results.push({
-            paramCode: standardCode,
-            paramName: conf.name || col,
-            originalHeader: col,
-            r,
-            rSquared,
-            count: n,
-            direction: r >= 0 ? "positive" : "negative",
-            strength
-          });
-        }
-      }
-    });
-    
-    // Sort by absolute correlation strength descending
-    return results.sort((a, b) => Math.abs(b.r) - Math.abs(a.r));
-  }, [isVisible, activeSubTab, analyzedData, corrTargetParam, selectedParam, headers.params, headerMap]);
+    return computeCorrelationResults(analyzedData, corrTargetParam || selectedParam, headers, headerMap);
+  }, [isVisible, activeSubTab, analyzedData, corrTargetParam, selectedParam, headers, headerMap]);
 
   // Autoselect first correlated parameter when results change
   useEffect(() => {
@@ -370,84 +289,8 @@ export default function AdvancedAnalysisView({
   // Compute ordinary least-squares regression line and details
   const regressionDetails = useMemo(() => {
     if (!corrSelectedParam || !analyzedData || analyzedData.length === 0) return null;
-    
-    const target = corrTargetParam || selectedParam;
-    const targetCol = headers.params.find(p => p === target || headerMap[p] === target) || target;
-    const compareCol = corrSelectedParam;
-    
-    const points: { x: number; y: number; wellId: string; block: string; district: string }[] = [];
-    let sumX = 0;
-    let sumY = 0;
-    let sumXY = 0;
-    let sumX2 = 0;
-    let sumY2 = 0;
-    let n = 0;
-    
-    analyzedData.forEach(row => {
-      const xValStr = row[targetCol];
-      const yValStr = row[compareCol];
-      if (xValStr !== undefined && xValStr !== null && yValStr !== undefined && yValStr !== null) {
-        const x = parseFloat(xValStr);
-        const y = parseFloat(yValStr);
-        if (!isNaN(x) && !isNaN(y)) {
-          points.push({
-            x,
-            y,
-            wellId: row[headers.wellId || ""] || row["well_id"] || "N/A",
-            block: getBlockValue(row) || "N/A",
-            district: getDistrictValue(row) || "N/A"
-          });
-          sumX += x;
-          sumY += y;
-          sumXY += x * y;
-          sumX2 += x * x;
-          sumY2 += y * y;
-          n++;
-        }
-      }
-    });
-    
-    if (n < 3) return null;
-    
-    const meanX = sumX / n;
-    const meanY = sumY / n;
-    
-    const numerator = n * sumXY - sumX * sumY;
-    const denominatorX = n * sumX2 - sumX * sumX;
-    
-    let slope = 0;
-    let intercept = 0;
-    if (denominatorX !== 0) {
-      slope = numerator / denominatorX;
-      intercept = meanY - slope * meanX;
-    }
-    
-    const denominatorY = n * sumY2 - sumY * sumY;
-    let rSquared = 0;
-    if (denominatorX !== 0 && denominatorY !== 0) {
-      const r = numerator / Math.sqrt(denominatorX * denominatorY);
-      rSquared = r * r;
-    }
-    
-    const xValues = points.map(p => p.x);
-    const minX = safeMin(xValues);
-    const maxX = safeMax(xValues);
-    const regressionLine = [
-      [minX, slope * minX + intercept],
-      [maxX, slope * maxX + intercept]
-    ];
-    
-    return {
-      points,
-      slope,
-      intercept,
-      rSquared,
-      regressionLine,
-      n,
-      minX,
-      maxX
-    };
-  }, [corrSelectedParam, corrTargetParam, selectedParam, analyzedData, headers.params, headerMap, headers.wellId]);
+    return computeRegressionDetails(analyzedData, corrTargetParam || selectedParam, corrSelectedParam, headers, headerMap);
+  }, [corrSelectedParam, corrTargetParam, selectedParam, analyzedData, headers, headerMap]);
 
   // Guess and synchronize columns initially
   useEffect(() => {
@@ -504,21 +347,6 @@ export default function AdvancedAnalysisView({
     }
 
     // Set smart defaults for class range builder
-    const getSmartStepAndMax = (param: string) => {
-      switch (param) {
-        case "pH": return { step: "1.0", max: "14.0" };
-        case "TDS": return { step: "500", max: "3000" };
-        case "TH": return { step: "100", max: "1000" };
-        case "EC": return { step: "500", max: "5000" };
-        case "Cl": return { step: "250", max: "1500" };
-        case "NO3": return { step: "10", max: "100" };
-        case "F": return { step: "0.5", max: "3.0" };
-        case "Fe": return { step: "0.2", max: "2.0" };
-        case "As": return { step: "5.0", max: "30.0" };
-        case "U": return { step: "10.0", max: "60.0" };
-        default: return { step: "1.0", max: "10.0" };
-      }
-    };
     const smartVal = getSmartStepAndMax(selectedParam);
     setRangeStepInput(smartVal.step);
     setRangeMaxInput(smartVal.max);
@@ -2518,7 +2346,7 @@ export default function AdvancedAnalysisView({
 
       const seriesFormatted = depthScatterPoints.map(s => ({
         name: s.name,
-        color: (s as any).color || undefined,
+        color: ("color" in s ? s.color : undefined) as string | undefined,
         data: s.data.map((p: any) => ({
           x: p.x,
           y: p.y,
@@ -3230,8 +3058,8 @@ export default function AdvancedAnalysisView({
     if (biplotType !== "ec-nasratio") {
       const xVals = filteredBiplotScatterPoints.map(p => p.x).filter(v => typeof v === "number" && !isNaN(v));
       const yVals = filteredBiplotScatterPoints.map(p => p.y).filter(v => typeof v === "number" && !isNaN(v));
-      const maxX = xVals.length > 0 ? Math.max(...xVals) : 10;
-      const maxY = yVals.length > 0 ? Math.max(...yVals) : 10;
+      const maxX = xVals.length > 0 ? xVals.reduce((m, v) => (v > m ? v : m), xVals[0]) : 10;
+      const maxY = yVals.length > 0 ? yVals.reduce((m, v) => (v > m ? v : m), yVals[0]) : 10;
       const rawMax = Math.max(maxX, maxY);
       const maxVal = (isFinite(rawMax) && rawMax > 0) ? rawMax * 1.1 : 10;
 
@@ -3333,7 +3161,7 @@ export default function AdvancedAnalysisView({
         minorTickLength: biplotSettings.tickDirection === "inward" ? -biplotSettings.minorTickLength : biplotSettings.minorTickLength,
         minorTickWidth: biplotSettings.minorTickWidth,
 
-        gridLineDashStyle: biplotSettings.gridlineStyle as any,
+        gridLineDashStyle: biplotSettings.gridlineStyle as Highcharts.DashStyleValue,
         gridLineColor: finalGridlineColor,
         startOnTick: true,
         endOnTick: true,
@@ -3371,7 +3199,7 @@ export default function AdvancedAnalysisView({
         minorTickLength: biplotSettings.tickDirection === "inward" ? -biplotSettings.minorTickLength : biplotSettings.minorTickLength,
         minorTickWidth: biplotSettings.minorTickWidth,
 
-        gridLineDashStyle: biplotSettings.gridlineStyle as any,
+        gridLineDashStyle: biplotSettings.gridlineStyle as Highcharts.DashStyleValue,
         gridLineColor: finalGridlineColor,
         min: 0
       },
@@ -3435,8 +3263,11 @@ export default function AdvancedAnalysisView({
   }, [isVisible, activeSubTab, filteredBiplotScatterPoints, biplotType, biplotSettings, biplotBubbleExtremes, groupColors]);
 
   const handleBiplotExport = (format: "png300" | "png600" | "svg" | "pdf") => {
-    const chart = Highcharts.charts.find(c => c && (((c as any).renderTo === biplotChartRef.current) || (c.container && c.container.id === biplotChartRef.current?.id))) as any;
-    if (!chart) {
+    type HighchartsExportable = Highcharts.Chart & { renderTo?: HTMLElement; getSVG?: () => string };
+    const chart = Highcharts.charts.find((c): c is HighchartsExportable =>
+      Boolean(c && (((c as HighchartsExportable).renderTo === biplotChartRef.current) || (c.container && c.container.id === biplotChartRef.current?.id)))
+    );
+    if (!chart || !chart.getSVG) {
       showToast("Could not find the biplot chart to export", "error");
       return;
     }
@@ -3455,30 +3286,46 @@ export default function AdvancedAnalysisView({
       showToast("Vector SVG exported successfully", "success");
     } else if (format === "pdf") {
       const svgString = chart.getSVG();
-      const printWindow = window.open("", "_blank");
-      if (printWindow) {
-        printWindow.document.write(`
+      const printFrame = document.createElement("iframe");
+      printFrame.style.position = "fixed";
+      printFrame.style.right = "0";
+      printFrame.style.bottom = "0";
+      printFrame.style.width = "0";
+      printFrame.style.height = "0";
+      printFrame.style.border = "0";
+      printFrame.setAttribute("aria-hidden", "true");
+      document.body.appendChild(printFrame);
+
+      const frameDoc = printFrame.contentWindow?.document;
+      if (frameDoc && printFrame.contentWindow) {
+        frameDoc.open();
+        frameDoc.write(`
           <html>
             <head>
               <title>Groundwater Bi-Plot Publication Export</title>
               <style>
-                body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: white; }
+                body { margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: white; }
                 svg { width: 100%; height: auto; max-width: 1000px; }
               </style>
             </head>
-            <body>
-              ${svgString}
-              <script>
-                window.onload = function() {
-                  window.print();
-                  setTimeout(function() { window.close(); }, 500);
-                };
-              </script>
-            </body>
+            <body>${svgString}</body>
           </html>
         `);
-        printWindow.document.close();
+        frameDoc.close();
+        setTimeout(() => {
+          try {
+            printFrame.contentWindow?.focus();
+            printFrame.contentWindow?.print();
+          } finally {
+            setTimeout(() => {
+              if (printFrame.parentNode) printFrame.parentNode.removeChild(printFrame);
+            }, 1000);
+          }
+        }, 150);
         showToast("PDF Print dialog triggered", "success");
+      } else {
+        if (printFrame.parentNode) printFrame.parentNode.removeChild(printFrame);
+        showToast("Unable to open print frame in this browser.", "error");
       }
     } else {
       const dpi = format === "png600" ? 600 : 300;
@@ -3521,8 +3368,11 @@ export default function AdvancedAnalysisView({
   };
 
   const handleCorrChartExport = (format: "png300" | "png600" | "svg" | "pdf") => {
-    const chart = Highcharts.charts.find(c => c && (((c as any).renderTo === corrChartRef.current) || (c.container && c.container.id === corrChartRef.current?.id))) as any;
-    if (!chart) {
+    type HighchartsExportable = Highcharts.Chart & { renderTo?: HTMLElement; getSVG?: () => string };
+    const chart = Highcharts.charts.find((c): c is HighchartsExportable =>
+      Boolean(c && (((c as HighchartsExportable).renderTo === corrChartRef.current) || (c.container && c.container.id === corrChartRef.current?.id)))
+    );
+    if (!chart || !chart.getSVG) {
       showToast("Could not find the correlation chart to export", "error");
       return;
     }
@@ -3544,30 +3394,46 @@ export default function AdvancedAnalysisView({
       showToast("Vector SVG exported successfully", "success");
     } else if (format === "pdf") {
       const svgString = chart.getSVG();
-      const printWindow = window.open("", "_blank");
-      if (printWindow) {
-        printWindow.document.write(`
+      const printFrame = document.createElement("iframe");
+      printFrame.style.position = "fixed";
+      printFrame.style.right = "0";
+      printFrame.style.bottom = "0";
+      printFrame.style.width = "0";
+      printFrame.style.height = "0";
+      printFrame.style.border = "0";
+      printFrame.setAttribute("aria-hidden", "true");
+      document.body.appendChild(printFrame);
+
+      const frameDoc = printFrame.contentWindow?.document;
+      if (frameDoc && printFrame.contentWindow) {
+        frameDoc.open();
+        frameDoc.write(`
           <html>
             <head>
               <title>Groundwater Correlation Publication Export</title>
               <style>
-                body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: white; }
+                body { margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: white; }
                 svg { width: 100%; height: auto; max-width: 1000px; }
               </style>
             </head>
-            <body>
-              ${svgString}
-              <script>
-                window.onload = function() {
-                  window.print();
-                  setTimeout(function() { window.close(); }, 500);
-                };
-              </script>
-            </body>
+            <body>${svgString}</body>
           </html>
         `);
-        printWindow.document.close();
+        frameDoc.close();
+        setTimeout(() => {
+          try {
+            printFrame.contentWindow?.focus();
+            printFrame.contentWindow?.print();
+          } finally {
+            setTimeout(() => {
+              if (printFrame.parentNode) printFrame.parentNode.removeChild(printFrame);
+            }, 1000);
+          }
+        }, 150);
         showToast("PDF Print dialog triggered", "success");
+      } else {
+        if (printFrame.parentNode) printFrame.parentNode.removeChild(printFrame);
+        showToast("Unable to open print frame in this browser.", "error");
       }
     } else {
       const dpi = format === "png600" ? 600 : 300;
@@ -4406,7 +4272,7 @@ export default function AdvancedAnalysisView({
               <span className="text-xs font-black text-slate-500 uppercase tracking-widest whitespace-nowrap pl-2">Analysis View:</span>
               <select
                 value={activeSubTab}
-                onChange={(e) => setActiveSubTab(e.target.value as any)}
+                onChange={(e) => setActiveSubTab(e.target.value as AdvancedSubTab)}
                 className="w-full bg-white border border-slate-300 text-slate-800 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block p-2 font-bold cursor-pointer"
               >
                 <option value="frequency">📊 Frequency Distribution</option>
@@ -4826,7 +4692,7 @@ export default function AdvancedAnalysisView({
                     <span className="px-1">Group By:</span>
                     <select
                       value={aquiferTableGroupLevel}
-                      onChange={(e) => setAquiferTableGroupLevel(e.target.value as any)}
+                      onChange={(e) => setAquiferTableGroupLevel(e.target.value as AdvancedGroupLevel)}
                       className="text-xs p-1 rounded-xl bg-white border border-slate-300 font-bold text-slate-700 cursor-pointer"
                     >
                       <option value="all">None (National Consolidated)</option>
@@ -5132,7 +4998,7 @@ export default function AdvancedAnalysisView({
                     <span className="px-1">Group By:</span>
                     <select
                       value={aquiferTappedTableGroupLevel}
-                      onChange={(e) => setAquiferTappedTableGroupLevel(e.target.value as any)}
+                      onChange={(e) => setAquiferTappedTableGroupLevel(e.target.value as AdvancedGroupLevel)}
                       className="text-xs p-1 rounded-xl bg-white border border-slate-300 font-bold text-slate-700 cursor-pointer"
                     >
                       <option value="all">None (National Consolidated)</option>
@@ -5444,7 +5310,7 @@ export default function AdvancedAnalysisView({
                     <span className="px-1">Group By:</span>
                     <select
                       value={stageExtractionTableGroupLevel}
-                      onChange={(e) => setStageExtractionTableGroupLevel(e.target.value as any)}
+                      onChange={(e) => setStageExtractionTableGroupLevel(e.target.value as AdvancedGroupLevel)}
                       className="text-xs p-1 rounded-xl bg-white border border-slate-300 font-bold text-slate-700 cursor-pointer focus:outline-none"
                     >
                       <option value="all">None (National Consolidated)</option>
@@ -5756,7 +5622,7 @@ export default function AdvancedAnalysisView({
                     <span className="px-1">Group By:</span>
                     <select
                       value={sourceTableGroupLevel}
-                      onChange={(e) => setSourceTableGroupLevel(e.target.value as any)}
+                      onChange={(e) => setSourceTableGroupLevel(e.target.value as AdvancedGroupLevel)}
                       className="text-xs p-1 rounded-xl bg-white border border-slate-300 font-bold text-slate-700 cursor-pointer focus:outline-none"
                     >
                       <option value="all">None (Consolidated)</option>
@@ -6033,7 +5899,7 @@ export default function AdvancedAnalysisView({
                   </label>
                   <select
                     value={comparisonGroupLevel}
-                    onChange={(e) => setComparisonGroupLevel(e.target.value as any)}
+                    onChange={(e) => setComparisonGroupLevel(e.target.value as AdvancedComparisonGroupLevel)}
                     className="w-full text-xs p-2 rounded-xl bg-white border border-slate-300 font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
                   >
                     <option value="all">Consolidated (All Combined)</option>
@@ -6481,7 +6347,7 @@ export default function AdvancedAnalysisView({
                   return (
                     <button
                       key={item.id}
-                      onClick={() => setBiplotType(item.id as any)}
+                      onClick={() => setBiplotType(item.id as AdvancedBiplotType)}
                       className={`text-left p-5 rounded-2xl border-2 transition-all shadow-sm flex flex-col justify-between h-32 cursor-pointer relative overflow-hidden group ${
                         isActive
                           ? "bg-gradient-to-br from-indigo-50/80 to-slate-50 border-indigo-600 shadow-md ring-1 ring-indigo-300"
@@ -6558,7 +6424,7 @@ export default function AdvancedAnalysisView({
                       </label>
                       <select
                         value={biplotColorBy}
-                        onChange={(e) => setBiplotColorBy(e.target.value as any)}
+                        onChange={(e) => setBiplotColorBy(e.target.value as AdvancedBiplotColorBy)}
                         className="w-full text-xs p-2.5 rounded-xl bg-slate-50 border border-slate-200 font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-sm"
                       >
                         <option value="district">📍 District Wise</option>
@@ -7042,7 +6908,7 @@ export default function AdvancedAnalysisView({
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">Direction Filter</label>
                       <select
                         value={corrDirectionFilter}
-                        onChange={(e) => setCorrDirectionFilter(e.target.value as any)}
+                        onChange={(e) => setCorrDirectionFilter(e.target.value as "all" | "positive" | "negative")}
                         className="w-full text-xs p-2.5 rounded-xl bg-slate-50 border border-slate-200 font-bold text-slate-700"
                       >
                         <option value="all">All Directions (Positive & Negative)</option>

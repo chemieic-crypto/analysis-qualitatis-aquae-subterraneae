@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Cabinet+Grotesk:wght@700;800;900&family=Playfair+Display:ital,wght@0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&family=Noto+Sans+Devanagari:wght@400;700;900&family=Mukta:wght@400;700;800&family=Yatra+One&family=Noto+Serif+Devanagari:wght@450;700;900&family=Great+Vibes&family=Kalam:wght@400;700&family=Roboto:wght@300;400;500;700&family=Poppins:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cabinet+Grotesk:wght@700;800;900&family=Playfair+Display:ital,wght@0,600;0,700;0,800;0,900;1,400;1,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&family=Noto+Sans+Devanagari:wght@400;700;900&family=Mukta:wght@400;700;800&family=Yatra+One&family=Noto+Serif+Devanagari:wght@450;700;900&family=Great+Vibes&family=Kalam:wght@400;700&family=Roboto:wght@300;400;500;700&family=Poppins:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -102,6 +102,117 @@
   background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.7), transparent);
   transform: rotate(45deg);
   animation: shineSweep 4s infinite ease-in-out;
+}
+
+/* ============================================================================
+   Sleek 3D Glossy Aqua-Chrome Capsule Header (Hydro-Wave Edition)
+   ============================================================================ */
+
+.aqua-capsule-header {
+  background: linear-gradient(
+    90deg,
+    #021636 0%,
+    #052654 26%,
+    #093975 48%,
+    #1c64a8 67%,
+    #062a5c 85%,
+    #021738 100%
+  );
+  border: 2.5px solid rgba(214, 236, 255, 0.85);
+  box-shadow:
+    0 14px 34px -8px rgba(3, 24, 56, 0.52),
+    0 4px 12px -2px rgba(14, 165, 233, 0.25),
+    0 0 0 1px rgba(148, 197, 255, 0.55),
+    inset 0 2px 3px 0 rgba(255, 255, 255, 0.88),
+    inset 0 -3px 7px 0 rgba(2, 18, 46, 0.78);
+  position: relative;
+  overflow: hidden;
+}
+
+.aqua-capsule-header::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 10px;
+  right: 10px;
+  height: 44%;
+  border-radius: 9999px 9999px 40% 40%;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.34) 0%,
+    rgba(255, 255, 255, 0.09) 65%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  pointer-events: none;
+  z-index: 3;
+}
+
+.aqua-capsule-header::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -120%;
+  width: 36%;
+  height: 100%;
+  background: linear-gradient(
+    108deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.02) 35%,
+    rgba(255, 255, 255, 0.16) 50%,
+    rgba(255, 255, 255, 0.02) 65%,
+    transparent 100%
+  );
+  transform: skewX(-22deg);
+  animation: gloss-shine 8s infinite ease-in-out;
+  pointer-events: none;
+  z-index: 4;
+}
+
+/* Warm Golden 3D Glossy Hindi Title & Luminous White Cursive English Title */
+.aqua-hindi-title {
+  background: linear-gradient(
+    180deg,
+    #fffbeb 0%,
+    #fef08a 26%,
+    #facc15 58%,
+    #eab308 82%,
+    #fde047 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.78)) drop-shadow(0 0 12px rgba(250, 204, 21, 0.42));
+}
+
+.aqua-english-title {
+  color: #ffffff;
+  text-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.7),
+    0 0 14px rgba(186, 230, 253, 0.32);
+}
+
+@keyframes dropletRipplePulse {
+  0%, 100% {
+    transform: scale(0.96);
+    opacity: 0.72;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+}
+
+.droplet-ripple-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: dropletRipplePulse 3.2s infinite ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aqua-capsule-header::after,
+  .droplet-ripple-pulse {
+    animation: none !important;
+  }
 }
 
 .crisp-interpolation-overlay {

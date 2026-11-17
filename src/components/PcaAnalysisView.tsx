@@ -1013,12 +1013,14 @@ export default function PcaAnalysisView({
     }
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
+    link.href = url;
     link.download = filename;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   // Generate generic template
@@ -1076,7 +1078,7 @@ export default function PcaAnalysisView({
             </label>
             <select
               value={pcaType}
-              onChange={(e) => setPcaType(e.target.value as any)}
+              onChange={(e) => setPcaType(e.target.value as "correlation" | "covariance")}
               className="w-full bg-[#0b0e14] border border-slate-700 text-slate-200 rounded-lg p-2.5 font-bold focus:border-indigo-500 outline-none cursor-pointer"
             >
               <option value="correlation">Correlation (Standardized)</option>
@@ -1217,7 +1219,7 @@ export default function PcaAnalysisView({
           <div className="space-y-2 text-[11px]">
             <select
               value={retentionMethod}
-              onChange={(e) => setRetentionMethod(e.target.value as any)}
+              onChange={(e) => setRetentionMethod(e.target.value as "vis3" | "vis2" | "kaiser" | "elbow" | "variance")}
               className="w-full bg-[#0b0e14] border border-slate-700 text-slate-200 rounded-lg p-2 focus:border-indigo-500 outline-none cursor-pointer text-[11px]"
             >
               <option value="vis3">Keep Top 3 PCs (Visualization)</option>

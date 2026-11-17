@@ -564,8 +564,8 @@ export default function ShapefileFilterView({
     if (!isVisible || !mapContainerRef.current) return;
 
     if (!mapInstanceRef.current) {
-      if ((mapContainerRef.current as any)._leaflet_id) {
-        delete (mapContainerRef.current as any)._leaflet_id;
+      if (mapContainerRef.current._leaflet_id) {
+        delete mapContainerRef.current._leaflet_id;
       }
       const map = L.map(mapContainerRef.current, {
         zoomControl: true,
@@ -1328,7 +1328,7 @@ export default function ShapefileFilterView({
               {/* Basemap Selector */}
               <select
                 value={basemap}
-                onChange={(e) => setBasemap(e.target.value as any)}
+                onChange={(e) => setBasemap(e.target.value as "osm" | "topo" | "satellite")}
                 className="text-xs font-bold bg-slate-100 border border-slate-200 rounded-xl px-2.5 py-1.5 text-slate-700 focus:outline-none cursor-pointer"
               >
                 <option value="osm">OpenStreetMap</option>
@@ -1657,7 +1657,7 @@ export default function ShapefileFilterView({
             <select
               value={complianceFilter}
               onChange={(e) => {
-                setComplianceFilter(e.target.value as any);
+                setComplianceFilter(e.target.value as "all" | "safe" | "permissible" | "exceeded");
                 setCurrentPage(1);
               }}
               className="text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-slate-700 focus:outline-none cursor-pointer"

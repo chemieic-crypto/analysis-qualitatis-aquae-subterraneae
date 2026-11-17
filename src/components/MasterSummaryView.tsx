@@ -33,6 +33,7 @@ interface MasterSummaryViewProps {
   selectedDistrict: string;
   onExportExcel: () => void;
   reportingLevel: "State" | "District" | "Block";
+  showToast?: (message: string, type?: "success" | "error") => void;
 }
 
 export default function MasterSummaryView({
@@ -42,6 +43,7 @@ export default function MasterSummaryView({
   selectedState,
   selectedDistrict,
   onExportExcel,
+  showToast,
 }: MasterSummaryViewProps) {
   // Main view mode tabs
   const [activeSubTab, setActiveSubTab] = useState<
@@ -513,7 +515,7 @@ export default function MasterSummaryView({
   // Handler to export the complete unified Master Summary Matrix table as a styled Excel Sheet
   const handleExportMatrixExcel = async () => {
     if (!rawData.length || !activeParams || activeParams.length === 0) {
-      alert("No data available to export.");
+      showToast?.("No data available to export.", "error");
       return;
     }
 
@@ -552,7 +554,7 @@ export default function MasterSummaryView({
 
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Master Summary Matrix");
-    (ws as any)._customFormatted = true;
+    ws._customFormatted = true;
     ws.views = [{ showGridLines: true }];
 
     const totalCols = (isDistrict ? 3 : 2) + activeParams.length * 5;
@@ -809,7 +811,7 @@ export default function MasterSummaryView({
       if (!pData) return;
 
       const ws = wb.addWorksheet(pName.substring(0, 31));
-      (ws as any)._customFormatted = true;
+      ws._customFormatted = true;
       ws.views = [{ showGridLines: true }];
 
       // Title Banner
@@ -980,7 +982,7 @@ export default function MasterSummaryView({
       if (!pData) return;
 
       const ws = wb.addWorksheet(pName.substring(0, 31));
-      (ws as any)._customFormatted = true;
+      ws._customFormatted = true;
       ws.views = [{ showGridLines: true }];
 
       // Title Banner
@@ -1125,7 +1127,7 @@ export default function MasterSummaryView({
 
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Pristine Summary");
-    (ws as any)._customFormatted = true;
+    ws._customFormatted = true;
     ws.views = [{ showGridLines: true }];
 
     // Title
@@ -1515,7 +1517,7 @@ export default function MasterSummaryView({
   const handleDownloadHubCustomDocx = async () => {
     const selectedList = activeParams.filter((p) => selectedDocxParams[p]);
     if (selectedList.length === 0) {
-      alert("Please select at least one parameter to generate the DOCX document.");
+      showToast?.("Please select at least one parameter to generate the DOCX document.", "error");
       return;
     }
 

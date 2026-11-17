@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
 import Highcharts from "highcharts";
-// @ts-ignore
 import HighchartsMore from "highcharts/highcharts-more";
 import { DataHeaders, GroupedStatRow, ShapefileLayer } from "../types";
 import { PARAM_CONFIG, hasBisLimit } from "../data/config";
@@ -2253,7 +2252,7 @@ export default function DetailedView({
       if (setSharedBulletinMaps) {
         const autoSendToBulletin = async () => {
           try {
-            const transparentOptions = {
+            const transparentOptions: Highcharts.Options = {
               ...newOptions,
               chart: {
                 ...newOptions.chart,
@@ -2261,7 +2260,7 @@ export default function DetailedView({
                 plotBackgroundColor: "transparent",
               },
             };
-            const base64 = await generateOfflineChartBase64(transparentOptions as any, 1800, 1000);
+            const base64 = await generateOfflineChartBase64(transparentOptions, 1800, 1000);
             if (base64) {
               setSharedBulletinMaps((prev) => ({
                 ...prev,
@@ -2328,7 +2327,7 @@ export default function DetailedView({
       const sourceHeight = container ? container.clientHeight || 500 : 500;
 
       const fileSuffix = (activeParam === "SAR" || activeParam === "RSC") ? "Limits" : "BIS_Limits";
-      (chartRef.current as any).exportChart(
+      (chartRef.current as Highcharts.Chart & { exportChart?: (opts: Record<string, unknown>, chartOpts?: Highcharts.Options) => void }).exportChart?.(
         { 
           type: "image/jpeg", 
           filename: `Distribution_of_${activeParam}_in_${fileSuffix}`,
@@ -2465,7 +2464,7 @@ export default function DetailedView({
     };
 
     try {
-      const base64 = await generateOfflineChartBase64(options as any, 1800, 1000);
+      const base64 = await generateOfflineChartBase64(options, 1800, 1000);
       if (base64) {
         setSharedBulletinMaps((prev) => ({
           ...prev,
@@ -2486,21 +2485,21 @@ export default function DetailedView({
     const containerEl = document.getElementById(containerId);
     if (!containerEl) return;
 
-    const chartInstance = (Highcharts as any).charts.find(
-      (c: any) => c && c.renderTo === containerEl
+    const chartInstance = Highcharts.charts.find(
+      (c) => c && (c as Highcharts.Chart & { renderTo?: HTMLElement }).renderTo === containerEl
     );
     if (!chartInstance) return;
 
     try {
       const options = chartInstance.options;
-      const reportOptions = {
+      const reportOptions: Highcharts.Options = {
         ...options,
         chart: {
           ...options.chart,
           backgroundColor: "#ffffff",
         }
       };
-      const base64 = await generateOfflineChartBase64(reportOptions as any, 1200, 750);
+      const base64 = await generateOfflineChartBase64(reportOptions, 1200, 750);
       if (base64) {
         const key = `sent_chart_${tab}_${activeParam}_${season.replace(/[^a-zA-Z0-9]/g, "_")}`;
         setSharedBulletinMaps((prev) => ({
@@ -2618,7 +2617,7 @@ export default function DetailedView({
       `;
 
       uniquePeriods.forEach((period) => {
-        const stats = (row as any).periods?.[period] || row.periodStats?.[period] || {
+        const stats = row.periods?.[period] || row.periodStats?.[period] || {
           total: 0, nAcc: 0, nPerm: 0, nFail: 0,
           nSarS1: 0, nSarS2: 0, nSarS3: 0, nSarS4: 0,
           min: NaN, max: NaN, avg: NaN
@@ -2686,7 +2685,7 @@ export default function DetailedView({
       `;
 
       uniquePeriods.forEach((period) => {
-        const stats = (grandTotalRow as any).periods?.[period] || grandTotalRow.periodStats?.[period] || {
+        const stats = grandTotalRow.periods?.[period] || grandTotalRow.periodStats?.[period] || {
           total: 0, nAcc: 0, nPerm: 0, nFail: 0,
           nSarS1: 0, nSarS2: 0, nSarS3: 0, nSarS4: 0,
           min: NaN, max: NaN, avg: NaN
@@ -3915,7 +3914,7 @@ export default function DetailedView({
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Display Mode</label>
                   <select
                     value={exceedanceViewMode}
-                    onChange={(e) => setExceedanceViewMode(e.target.value as any)}
+                    onChange={(e) => setExceedanceViewMode(e.target.value as "dual" | "no" | "pct" | "grouped")}
                     className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg p-1.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   >
                     <option value="dual">Dual Axis (NO. &amp; %)</option>
@@ -3929,7 +3928,7 @@ export default function DetailedView({
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Bar Color Scheme</label>
                   <select
                     value={exceedanceColorMode}
-                    onChange={(e) => setExceedanceColorMode(e.target.value as any)}
+                    onChange={(e) => setExceedanceColorMode(e.target.value as "distinct" | "severity" | "uniform")}
                     className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg p-1.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   >
                     <option value="distinct">Distinct Multi-Color per Location</option>
@@ -3942,7 +3941,7 @@ export default function DetailedView({
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Sort Locations By</label>
                   <select
                     value={exceedanceSort}
-                    onChange={(e) => setExceedanceSort(e.target.value as any)}
+                    onChange={(e) => setExceedanceSort(e.target.value as "no" | "pct" | "total" | "name")}
                     className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg p-1.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   >
                     <option value="no">Exceeding Samples Count (NO.)</option>
@@ -3956,7 +3955,7 @@ export default function DetailedView({
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Sorting Order</label>
                   <select
                     value={exceedanceOrder}
-                    onChange={(e) => setExceedanceOrder(e.target.value as any)}
+                    onChange={(e) => setExceedanceOrder(e.target.value as "desc" | "asc")}
                     className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg p-1.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   >
                     <option value="desc">Decreasing (High → Low / Z-A)</option>
@@ -3969,7 +3968,7 @@ export default function DetailedView({
                   <div className="flex gap-1.5">
                     <select
                       value={exceedanceTopN}
-                      onChange={(e) => setExceedanceTopN(e.target.value as any)}
+                      onChange={(e) => setExceedanceTopN(e.target.value as "all" | "5" | "10" | "15" | "20" | "custom")}
                       className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg p-1.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     >
                       <option value="all">All Locations</option>
@@ -3997,7 +3996,7 @@ export default function DetailedView({
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Location Filter</label>
                   <select
                     value={exceedanceFilter}
-                    onChange={(e) => setExceedanceFilter(e.target.value as any)}
+                    onChange={(e) => setExceedanceFilter(e.target.value as "all" | "affected")}
                     className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg p-1.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   >
                     <option value="affected">Partially Affected Locations Only (Count &gt; 0)</option>

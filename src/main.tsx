@@ -1,3 +1,4 @@
+import 'leaflet/dist/leaflet.css';
 import './utils/initLeaflet';
 import './utils/initHighcharts';
 import {StrictMode} from 'react';

@@ -17,12 +17,13 @@ export const HighchartsCore = resolveHighchartsCore(HighchartsRaw);
 
 // Expose on window and globalThis immediately so UMD/CJS plugins (highcharts-3d, cylinder, heatmap, etc.) find Highcharts globally via _Highcharts or Highcharts
 if (typeof window !== "undefined") {
-  (window as any).Highcharts = HighchartsCore;
-  (window as any)._Highcharts = HighchartsCore;
+  window.Highcharts = HighchartsCore;
+  window._Highcharts = HighchartsCore;
 }
 if (typeof globalThis !== "undefined") {
-  (globalThis as any).Highcharts = HighchartsCore;
-  (globalThis as any)._Highcharts = HighchartsCore;
+  const g = globalThis as typeof globalThis & { Highcharts?: unknown; _Highcharts?: unknown };
+  g.Highcharts = HighchartsCore;
+  g._Highcharts = HighchartsCore;
 }
 
 /**
@@ -48,12 +49,13 @@ export async function loadHighchartsPlugin(pluginImporter: () => Promise<any>): 
 export function safeInitPlugin(pluginModule: any, customCore?: any) {
   const targetCore = customCore || HighchartsCore;
   if (typeof window !== "undefined") {
-    if (!(window as any).Highcharts) (window as any).Highcharts = targetCore;
-    if (!(window as any)._Highcharts) (window as any)._Highcharts = targetCore;
+    if (!window.Highcharts) window.Highcharts = targetCore;
+    if (!window._Highcharts) window._Highcharts = targetCore;
   }
   if (typeof globalThis !== "undefined") {
-    if (!(globalThis as any).Highcharts) (globalThis as any).Highcharts = targetCore;
-    if (!(globalThis as any)._Highcharts) (globalThis as any)._Highcharts = targetCore;
+    const g = globalThis as typeof globalThis & { Highcharts?: unknown; _Highcharts?: unknown };
+    if (!g.Highcharts) g.Highcharts = targetCore;
+    if (!g._Highcharts) g._Highcharts = targetCore;
   }
   if (!targetCore || (!targetCore.SeriesRegistry && !targetCore.chart)) {
     return;

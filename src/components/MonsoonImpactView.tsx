@@ -1666,7 +1666,7 @@ export default function MonsoonImpactView({
             <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-0.5">Pairing Logic</label>
             <select
               value={pairingLogic}
-              onChange={(e) => setPairingLogic(e.target.value as any)}
+              onChange={(e) => setPairingLogic(e.target.value as "well_id" | "location")}
               className="w-full text-xs p-2 rounded-lg bg-white border border-slate-300 font-bold text-slate-700 cursor-pointer"
             >
               <option value="well_id">Match by Well ID (Unique Well Identification)</option>
@@ -1679,7 +1679,7 @@ export default function MonsoonImpactView({
             <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-0.5">Aggregation Level</label>
             <select
               value={aggLevel}
-              onChange={(e) => setAggLevel(e.target.value as any)}
+              onChange={(e) => setAggLevel(e.target.value as "State" | "District" | "Block")}
               className="w-full text-xs p-2 rounded-lg bg-white border border-slate-300 font-bold text-slate-700 cursor-pointer"
             >
               <option value="State">State-wise</option>
@@ -1904,7 +1904,7 @@ export default function MonsoonImpactView({
               return (
                 <button
                   key={tabItem.id}
-                  onClick={() => setActiveTab(tabItem.id as any)}
+                  onClick={() => setActiveTab(tabItem.id as "general" | "diagrams" | "perm" | "contamination" | "stats" | "availability" | "detailed" | "methodology")}
                   className={`
                     whitespace-nowrap px-4 py-2 rounded-xl font-black text-[11px] uppercase tracking-wide flex items-center gap-2 select-none transition-all duration-150 cursor-pointer border border-white/10
                     ${isActive 

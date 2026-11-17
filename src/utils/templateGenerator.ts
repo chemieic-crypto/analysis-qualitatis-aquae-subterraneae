@@ -1,11 +1,11 @@
-import XLSX from "xlsx-js-style";
-import { ensureSheetJSNumbers } from "./excelFormatter";
+import ExcelJS from "exceljs";
+import { downloadExcelJSWorkbook } from "./excelFormatter";
 
 /**
  * Download standard Excel Template pre-populated with all static metadata headers
  * and water quality parameter headers with exact required units.
  */
-export function downloadWaterQualityTemplate() {
+export async function downloadWaterQualityTemplate() {
   const headers = [
     // Static Location & Well Details
     "CHQ Sl. No.",
@@ -69,7 +69,7 @@ export function downloadWaterQualityTemplate() {
   ];
 
   // Realistic sample data rows for user guidance
-  const sampleRows = [
+  const sampleRows: Array<Array<string | number>> = [
     [
       1,
       2025,
@@ -246,86 +246,68 @@ export function downloadWaterQualityTemplate() {
     ]
   ];
 
-  // Construct Data Sheet Matrix
-  const sheetData = [headers, ...sampleRows];
-  const wsData = XLSX.utils.aoa_to_sheet(sheetData);
-  ensureSheetJSNumbers(wsData, 1);
+  const wb = new ExcelJS.Workbook();
+  const wsData = wb.addWorksheet("Groundwater_Quality_Data");
+  const dataHeaderRow = wsData.addRow(headers);
+  dataHeaderRow.height = 32;
+  dataHeaderRow.eachCell((cell, colNumber) => {
+    const isMetadata = colNumber <= 23;
+    cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: isMetadata ? "FF1E293B" : "FF1E40AF" },
+    };
+    cell.alignment = { wrapText: true, vertical: "middle", horizontal: "center" };
+    cell.border = {
+      top: { style: "medium", color: { argb: "FF0F172A" } },
+      bottom: { style: "medium", color: { argb: "FF0F172A" } },
+      left: { style: "thin", color: { argb: "FF334155" } },
+      right: { style: "thin", color: { argb: "FF334155" } },
+    };
+  });
 
-  // Apply Styling & Widths to Data Sheet
-  const colWidths = headers.map((header, idx) => {
+  sampleRows.forEach((rowVals, rowIdx) => {
+    const row = wsData.addRow(rowVals);
+    row.height = 22;
+    row.eachCell((cell, colNumber) => {
+      const val = rowVals[colNumber - 1];
+      cell.font = { name: "Calibri", size: 10, color: { argb: "FF0F172A" } };
+      if ((rowIdx + 1) % 2 === 0) {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
+      }
+      cell.alignment = {
+        vertical: "middle",
+        horizontal: typeof val === "number" ? "right" : "left",
+      };
+      cell.border = {
+        top: { style: "thin", color: { argb: "FFE2E8F0" } },
+        bottom: { style: "thin", color: { argb: "FFE2E8F0" } },
+        left: { style: "thin", color: { argb: "FFE2E8F0" } },
+        right: { style: "thin", color: { argb: "FFE2E8F0" } },
+      };
+    });
+  });
+
+  headers.forEach((header, idx) => {
     let maxLen = header.length;
     sampleRows.forEach((row) => {
       const valStr = String(row[idx] ?? "");
       if (valStr.length > maxLen) maxLen = valStr.length;
     });
-    return { wch: Math.min(Math.max(maxLen + 3, 12), 45) };
+    wsData.getColumn(idx + 1).width = Math.min(Math.max(maxLen + 3, 12), 45);
   });
 
-  wsData["!cols"] = colWidths;
-
-  // Row heights & Header styling
-  const range = XLSX.utils.decode_range(wsData["!ref"] || "A1:BD4");
-  const rowHeights: any[] = [];
-
-  for (let R = range.s.r; R <= range.e.r; ++R) {
-    const isHeader = R === 0;
-    rowHeights[R] = { hpt: isHeader ? 32 : 22 };
-
-    for (let C = range.s.c; C <= range.e.c; ++C) {
-      const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-      if (!wsData[cellRef]) continue;
-
-      if (isHeader) {
-        wsData[cellRef].s = {
-          font: {
-            name: "Calibri",
-            sz: 11,
-            bold: true,
-            color: { rgb: "FFFFFF" },
-          },
-          fill: {
-            fgColor: { rgb: C < 23 ? "1E293B" : "1E40AF" }, // Slate dark for Metadata, Navy Blue for Parameters
-          },
-          alignment: {
-            wrapText: true,
-            vertical: "center",
-            horizontal: "center",
-          },
-          border: {
-            top: { style: "medium", color: { rgb: "0F172A" } },
-            bottom: { style: "medium", color: { rgb: "0F172A" } },
-            left: { style: "thin", color: { rgb: "334155" } },
-            right: { style: "thin", color: { rgb: "334155" } },
-          },
-        };
-      } else {
-        wsData[cellRef].s = {
-          font: {
-            name: "Calibri",
-            sz: 10,
-            color: { rgb: "0F172A" },
-          },
-          fill: R % 2 === 0 ? { fgColor: { rgb: "F8FAFC" } } : undefined,
-          alignment: {
-            vertical: "center",
-            horizontal: typeof sampleRows[R - 1]?.[C] === "number" ? "right" : "left",
-          },
-          border: {
-            top: { style: "thin", color: { rgb: "E2E8F0" } },
-            bottom: { style: "thin", color: { rgb: "E2E8F0" } },
-            left: { style: "thin", color: { rgb: "E2E8F0" } },
-            right: { style: "thin", color: { rgb: "E2E8F0" } },
-          },
-        };
-      }
-    }
-  }
-
-  wsData["!rows"] = rowHeights;
-
   // Construct Data Dictionary Sheet
-  const dictHeaders = ["Category", "Parameter Header / Column Name", "Unit of Measurement", "Acceptable Limit (B1)", "Permissible Limit (B2)", "Field Description & Instructions"];
-  const dictRows = [
+  const dictHeaders = [
+    "Category",
+    "Parameter Header / Column Name",
+    "Unit of Measurement",
+    "Acceptable Limit (B1)",
+    "Permissible Limit (B2)",
+    "Field Description & Instructions"
+  ];
+  const dictRows: string[][] = [
     ["Metadata", "CHQ Sl. No.", "Integer", "-", "-", "Unique serial number assigned to the sample"],
     ["Metadata", "Year", "YYYY", "-", "-", "Year of water sample collection (e.g. 2024, 2025)"],
     ["Metadata", "Season", "Text", "-", "-", "Collection season (e.g., Pre-Monsoon, Post-Monsoon)"],
@@ -383,82 +365,46 @@ export function downloadWaterQualityTemplate() {
     ["Water Quality", "U", "ppb (µg/L)", "30", "30", "Uranium concentration in parts per billion (ppb)"]
   ];
 
-  const wsDict = XLSX.utils.aoa_to_sheet([dictHeaders, ...dictRows]);
+  const wsDict = wb.addWorksheet("Data_Dictionary_&_Units");
+  const dictHeaderRow = wsDict.addRow(dictHeaders);
+  dictHeaderRow.height = 28;
+  dictHeaderRow.eachCell((cell) => {
+    cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
+    cell.alignment = { wrapText: true, vertical: "middle", horizontal: "center" };
+    cell.border = {
+      top: { style: "medium", color: { argb: "FF020617" } },
+      bottom: { style: "medium", color: { argb: "FF020617" } },
+      left: { style: "thin", color: { argb: "FF334155" } },
+      right: { style: "thin", color: { argb: "FF334155" } },
+    };
+  });
 
-  wsDict["!cols"] = [
-    { wch: 18 },
-    { wch: 32 },
-    { wch: 22 },
-    { wch: 24 },
-    { wch: 24 },
-    { wch: 65 }
-  ];
-
-  // Apply styling to Data Dictionary Sheet
-  const dictRange = XLSX.utils.decode_range(wsDict["!ref"] || "A1:F60");
-  const dictRowHeights: any[] = [];
-
-  for (let R = dictRange.s.r; R <= dictRange.e.r; ++R) {
-    const isHeader = R === 0;
-    dictRowHeights[R] = { hpt: isHeader ? 28 : 20 };
-
-    for (let C = dictRange.s.c; C <= dictRange.e.c; ++C) {
-      const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-      if (!wsDict[cellRef]) continue;
-
-      if (isHeader) {
-        wsDict[cellRef].s = {
-          font: {
-            name: "Calibri",
-            sz: 11,
-            bold: true,
-            color: { rgb: "FFFFFF" },
-          },
-          fill: {
-            fgColor: { rgb: "0F172A" },
-          },
-          alignment: {
-            wrapText: true,
-            vertical: "center",
-            horizontal: "center",
-          },
-          border: {
-            top: { style: "medium", color: { rgb: "020617" } },
-            bottom: { style: "medium", color: { rgb: "020617" } },
-            left: { style: "thin", color: { rgb: "334155" } },
-            right: { style: "thin", color: { rgb: "334155" } },
-          },
-        };
-      } else {
-        wsDict[cellRef].s = {
-          font: {
-            name: "Calibri",
-            sz: 10,
-            color: { rgb: "1E293B" },
-          },
-          fill: R % 2 === 0 ? { fgColor: { rgb: "F8FAFC" } } : undefined,
-          alignment: {
-            vertical: "center",
-            horizontal: C === 2 || C === 3 || C === 4 ? "center" : "left",
-          },
-          border: {
-            top: { style: "thin", color: { rgb: "E2E8F0" } },
-            bottom: { style: "thin", color: { rgb: "E2E8F0" } },
-            left: { style: "thin", color: { rgb: "E2E8F0" } },
-            right: { style: "thin", color: { rgb: "E2E8F0" } },
-          },
-        };
+  dictRows.forEach((rowVals, rowIdx) => {
+    const row = wsDict.addRow(rowVals);
+    row.height = 20;
+    row.eachCell((cell, colNumber) => {
+      cell.font = { name: "Calibri", size: 10, color: { argb: "FF1E293B" } };
+      if ((rowIdx + 1) % 2 === 0) {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
       }
-    }
-  }
+      cell.alignment = {
+        vertical: "middle",
+        horizontal: colNumber === 3 || colNumber === 4 || colNumber === 5 ? "center" : "left",
+      };
+      cell.border = {
+        top: { style: "thin", color: { argb: "FFE2E8F0" } },
+        bottom: { style: "thin", color: { argb: "FFE2E8F0" } },
+        left: { style: "thin", color: { argb: "FFE2E8F0" } },
+        right: { style: "thin", color: { argb: "FFE2E8F0" } },
+      };
+    });
+  });
 
-  wsDict["!rows"] = dictRowHeights;
+  const dictWidths = [18, 32, 22, 24, 24, 65];
+  dictWidths.forEach((w, idx) => {
+    wsDict.getColumn(idx + 1).width = w;
+  });
 
-  // Create Workbook
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, wsData, "Groundwater_Quality_Data");
-  XLSX.utils.book_append_sheet(wb, wsDict, "Data_Dictionary_&_Units");
-
-  // Export File
-  XLSX.writeFile(wb, "Water_Quality_Upload_Template.xlsx");
+  await downloadExcelJSWorkbook(wb, "Water_Quality_Upload_Template.xlsx");
 }

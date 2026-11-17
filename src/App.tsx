@@ -25,10 +25,13 @@ import LimitsManagerView from "./components/LimitsManagerView";
 import AdvancedAnalysisView from "./components/AdvancedAnalysisView";
 import CalculatoriusView from "./components/CalculatoriusView";
 import KpiView from "./components/KpiView";
+import FactSheetView from "./components/FactSheetView";
 import ShapefileFilterView from "./components/ShapefileFilterView";
 import { generateOfflineChartBase64 } from "./utils/chartHelpers";
 import { isStateAll, isDistrictAll, norm } from "./utils/shapefileFilter";
 import { downloadWaterQualityTemplate } from "./utils/templateGenerator";
+import { INDIA_BOUNDARY } from "./data/india_boundary";
+import MonsoonRainCanvas from "./components/MonsoonRainCanvas";
 
 import {
   Database,
@@ -61,15 +64,10 @@ import {
 } from "lucide-react";
 
 import Highcharts from "highcharts";
-// @ts-ignore
 import Highcharts3D from "highcharts/highcharts-3d";
-// @ts-ignore
 import Cylinder from "highcharts/modules/cylinder";
-// @ts-ignore
 import Exporting from "highcharts/modules/exporting";
-// @ts-ignore
 import OfflineExporting from "highcharts/modules/offline-exporting";
-// @ts-ignore
 import Heatmap from "highcharts/modules/heatmap";
 import { initHighchartsModule } from "./utils/chartHelpers";
 
@@ -82,10 +80,35 @@ if (typeof Highcharts === "object") {
   initHighchartsModule(Heatmap, Highcharts);
 }
 
+type ActiveTab =
+  | "single"
+  | "master"
+  | "multi"
+  | "bar"
+  | "aisummary"
+  | "bulletin"
+  | "about"
+  | "guidelines"
+  | "ussl"
+  | "ranking"
+  | "monsoon"
+  | "gis"
+  | "shapefileFilter"
+  | "sector"
+  | "hydrochemistry"
+  | "combination"
+  | "pca"
+  | "fortnightly"
+  | "limits"
+  | "advancedAnalysis"
+  | "calculatorius"
+  | "kpi"
+  | "factSheet";
+
+type ReportingLevel = "State" | "District" | "Block";
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<
-    "single" | "master" | "multi" | "bar" | "aisummary" | "bulletin" | "about" | "guidelines" | "ussl" | "ranking" | "monsoon" | "gis" | "shapefileFilter" | "sector" | "hydrochemistry" | "combination" | "pca" | "fortnightly" | "limits" | "advancedAnalysis" | "calculatorius" | "kpi"
-  >("kpi");
+  const [activeTab, setActiveTab] = useState<ActiveTab>("kpi");
 
   // State to trigger dynamic recalculation and re-rendering of all components on parameter limit changes
   const [limitsVersion, setLimitsVersion] = useState(0);
@@ -1102,101 +1125,243 @@ export default function App() {
 
       <div className="w-full mx-auto max-w-none">
         
-        {/* Official Bilingual Header Branding */}
-        <div className="bg-gradient-to-r from-white/95 via-sky-50/70 to-indigo-50/80 backdrop-blur-xl rounded-3xl p-5 md:p-6 mb-8 border border-white/90 shadow-[0_14px_36px_-6px_rgba(30,58,138,0.12),inset_0_1.5px_0_0_rgba(255,255,255,1)] flex flex-col md:flex-row justify-between items-start md:items-center gap-6 relative overflow-hidden">
-          <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-cyan-400 via-blue-600 to-indigo-600"></div>
-          
-          <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 w-full md:w-auto">
-            {/* 1. Animated Cup of Tea with Rising Steam/Warm Vapor */}
-            <div className="relative flex-shrink-0 w-16 h-16 flex items-center justify-center select-none bg-slate-900/5 rounded-2xl animate-radiate shine-sweep-container transition-transform duration-300 hover:scale-110">
-              {/* Shine sweep element */}
+        {/* Official Bilingual Header Branding - Glossy 3D Aqua-Chrome Wave Capsule */}
+        <header className="aqua-capsule-header rounded-3xl lg:rounded-full px-4 py-3 sm:px-6 sm:py-3.5 mb-7 flex flex-col lg:flex-row justify-between items-center gap-4">
+          {/* Flowing Wave Ribbon & Ocean Sweep Background */}
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 1440 120"
+            preserveAspectRatio="none"
+            className="pointer-events-none absolute inset-0 w-full h-full z-[1]"
+          >
+            <defs>
+              <linearGradient id="waveSweepGrad1" x1="0%" y1="50%" x2="100%" y2="50%">
+                <stop offset="0%" stopColor="#0ea5e9" stopOpacity="0.06" />
+                <stop offset="55%" stopColor="#38bdf8" stopOpacity="0.22" />
+                <stop offset="72%" stopColor="#bae6fd" stopOpacity="0.42" />
+                <stop offset="100%" stopColor="#0284c7" stopOpacity="0.1" />
+              </linearGradient>
+              <linearGradient id="waveSweepGrad2" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#7dd3fc" stopOpacity="0.08" />
+                <stop offset="45%" stopColor="#38bdf8" stopOpacity="0.26" />
+                <stop offset="75%" stopColor="#e0f2fe" stopOpacity="0.34" />
+                <stop offset="100%" stopColor="#0369a1" stopOpacity="0.14" />
+              </linearGradient>
+            </defs>
+            {/* Upper curved sky-aqua wave ribbon sweeping behind droplet */}
+            <path
+              d="M 520 120 C 780 112, 920 18, 1300 0 L 1440 0 L 1440 120 Z"
+              fill="url(#waveSweepGrad1)"
+            />
+            {/* Smooth lower ocean S-wave */}
+            <path
+              d="M 0 105 C 240 62, 520 118, 860 94 C 1100 76, 1280 96, 1440 82 L 1440 120 L 0 120 Z"
+              fill="url(#waveSweepGrad2)"
+            />
+            <path
+              d="M 0 98 C 300 72, 620 112, 980 88 C 1180 74, 1320 98, 1440 90"
+              fill="none"
+              stroke="rgba(224,242,254,0.45)"
+              strokeWidth="1.8"
+            />
+          </svg>
+
+          {/* Gentle Atmospheric Rain Layer */}
+          <div className="pointer-events-none absolute inset-0 opacity-50 z-[2]">
+            <MonsoonRainCanvas />
+          </div>
+
+          {/* Left Branding Zone: White Medallion Tea Cup + Divider + Hindi Gold + Divider + English Cursive */}
+          <div className="flex flex-wrap md:flex-nowrap items-center justify-center lg:justify-start gap-2.5 sm:gap-4 w-full lg:w-auto relative z-10 min-w-0">
+            {/* 1. Animated Tea Cup inside Crisp White Circular Medallion */}
+            <div className="relative flex-shrink-0 w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-white border-2 border-sky-200/95 shadow-[0_3px_12px_rgba(0,0,0,0.45),inset_0_2px_4px_rgba(255,255,255,1)] flex items-center justify-center select-none shine-sweep-container transition-transform duration-300 hover:scale-105">
               <div className="shine-sweep-element"></div>
-              
-              {/* Hot Tea Cup SVG */}
-              <svg className="w-12 h-12 drop-shadow-[0_4px_10px_rgba(249,115,22,0.4)]" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <svg className="w-11 h-11 sm:w-12 sm:h-12 drop-shadow-[0_2px_6px_rgba(30,64,175,0.28)]" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <defs>
-                  {/* Gradients for warm ceramic cup and tea liquid */}
                   <linearGradient id="ceramicGrad" x1="50" y1="48" x2="50" y2="78" gradientUnits="userSpaceOnUse">
                     <stop offset="0%" stopColor="#38bdf8" />
                     <stop offset="100%" stopColor="#1d4ed8" />
                   </linearGradient>
                   <linearGradient id="saucerGrad" x1="50" y1="78" x2="50" y2="86" gradientUnits="userSpaceOnUse">
-                    <stop offset="0%" stopColor="#e2e8f0" />
-                    <stop offset="100%" stopColor="#94a3b8" />
+                    <stop offset="0%" stopColor="#cbd5e1" />
+                    <stop offset="100%" stopColor="#64748b" />
                   </linearGradient>
                   <linearGradient id="teaLiquidGrad" x1="50" y1="46" x2="50" y2="50" gradientUnits="userSpaceOnUse">
                     <stop offset="0%" stopColor="#fb923c" />
                     <stop offset="100%" stopColor="#7c2d12" />
                   </linearGradient>
                   <linearGradient id="steamGrad" x1="50" y1="40" x2="50" y2="5" gradientUnits="userSpaceOnUse">
-                    <stop offset="0%" stopColor="#fef08a" stopOpacity="0.8" />
-                    <stop offset="50%" stopColor="#ffffff" stopOpacity="0.6" />
+                    <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.9" />
+                    <stop offset="50%" stopColor="#0284c7" stopOpacity="0.7" />
                     <stop offset="100%" stopColor="#38bdf8" stopOpacity="0" />
                   </linearGradient>
                 </defs>
 
-                {/* Rotating accent aura around tea cup */}
-                <circle cx="50" cy="50" r="44" stroke="#fb923c" strokeWidth="1" strokeDasharray="4 6" opacity="0.3" className="animate-spin" style={{ transformOrigin: '50px 50px', animationDuration: '24s' }} />
-                <circle cx="50" cy="50" r="38" stroke="#38bdf8" strokeWidth="0.75" strokeDasharray="2 3" opacity="0.2" className="animate-spin" style={{ transformOrigin: '50px 50px', animationDuration: '14s', animationDirection: 'reverse' }} />
-
-                {/* Saucer at bottom */}
-                <ellipse cx="50" cy="80" rx="32" ry="5" fill="url(#saucerGrad)" stroke="#64748b" strokeWidth="1" />
-
-                {/* Cup handle */}
+                <circle cx="50" cy="50" r="44" stroke="#f59e0b" strokeWidth="1.2" strokeDasharray="4 6" opacity="0.45" className="animate-spin" style={{ transformOrigin: '50px 50px', animationDuration: '24s' }} />
+                <circle cx="50" cy="50" r="38" stroke="#0284c7" strokeWidth="0.9" strokeDasharray="2 3" opacity="0.35" className="animate-spin" style={{ transformOrigin: '50px 50px', animationDuration: '14s', animationDirection: 'reverse' }} />
+                <ellipse cx="50" cy="80" rx="32" ry="5" fill="url(#saucerGrad)" stroke="#475569" strokeWidth="1" />
                 <path d="M 72 54 C 84 54, 84 70, 70 70" fill="none" stroke="url(#ceramicGrad)" strokeWidth="4" strokeLinecap="round" />
-
-                {/* Main Cup Body */}
                 <path d="M 26 48 C 26 48, 24 76, 50 76 C 76 76, 74 48, 74 48 Z" fill="url(#ceramicGrad)" stroke="#1e3a8a" strokeWidth="1.5" />
-
-                {/* Inside rim of cup */}
                 <ellipse cx="50" cy="48" rx="24" ry="4.5" fill="#1e40af" stroke="#93c5fd" strokeWidth="1" />
-
-                {/* Tea Liquid inside */}
                 <ellipse cx="50" cy="49" rx="21" ry="3.5" fill="url(#teaLiquidGrad)" />
 
-                {/* Rising Steam Wisps (wavy trails with custom riser animations) */}
                 <g stroke="url(#steamGrad)" strokeWidth="2.5" strokeLinecap="round" fill="none">
-                  {/* Steam 1 (Left) */}
                   <path d="M 38 41 C 35 30, 43 23, 37 12 C 34 7, 39 3, 37 -3" className="animate-steam-1" style={{ transformOrigin: '38px 41px' }} />
-                  {/* Steam 2 (Middle) */}
                   <path d="M 50 41 C 47 28, 55 19, 49 8 C 46 2, 51 -2, 49 -8" className="animate-steam-2" style={{ transformOrigin: '50px 41px' }} />
-                  {/* Steam 3 (Right) */}
                   <path d="M 62 41 C 59 30, 67 23, 61 12 C 58 7, 63 3, 61 -3" className="animate-steam-3" style={{ transformOrigin: '62px 41px' }} />
                 </g>
               </svg>
             </div>
 
-            {/* 2. Header Branding */}
-            <div className="text-center sm:text-left">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-x-5 gap-y-1">
-                {/* Main Title 'भूजल गुणवत्ता' (Bhujal Gunvaatta in Devanagari Cursive) */}
-                <h1 className="text-[26px] sm:text-[38px] md:text-[47px] font-black text-blue-700 tracking-wide font-cursive-devanagari select-none" style={{ fontFamily: "'Kalam', 'Yatra One', cursive", lineHeight: "1.1" }}>
-                  भूजल गुणवत्ता
-                </h1>
-                {/* English Title styled in British Cursive Script */}
-                <h2 className="text-[26px] sm:text-[38px] md:text-[62px] font-medium text-indigo-950 tracking-wide font-cursive select-none pt-1" style={{ fontFamily: "'Great Vibes', 'Playfair Display', serif", lineHeight: "1.1" }}>
-                  Data Analysis Interface
-                </h2>
+            <span aria-hidden="true" className="hidden sm:block w-[1.5px] h-10 bg-white/65 shrink-0" />
+
+            {/* 2. Hindi Title 'भूजल गुणवत्ता' */}
+            <h1
+              className="aqua-hindi-title text-[26px] sm:text-[32px] xl:text-[38px] font-black tracking-wide select-none leading-none whitespace-nowrap"
+              style={{ fontFamily: "'Noto Sans Devanagari', 'Yatra One', sans-serif" }}
+            >
+              भूजल गुणवत्ता
+            </h1>
+
+            <span aria-hidden="true" className="hidden sm:block w-[1.5px] h-10 bg-white/65 shrink-0" />
+
+            {/* 3. English Flowing Cursive Title */}
+            <h2
+              className="aqua-english-title text-[26px] sm:text-[32px] xl:text-[40px] font-normal tracking-normal select-none leading-none whitespace-nowrap pt-1"
+              style={{ fontFamily: "'Great Vibes', 'Playfair Display', cursive" }}
+            >
+              Data Analysis Interface
+            </h2>
+          </div>
+
+          {/* Right Zone: Glossy 3D India-Map Water Droplet + Ripples + Live Analog/Digital Clock */}
+          <div className="flex items-center justify-between lg:justify-end gap-5 w-full lg:w-auto shrink-0 relative z-10">
+            {/* Glossy 3D Water Droplet with Accurate India Silhouette & Water Ripples */}
+            <div aria-hidden="true" className="hidden md:flex items-center justify-center relative w-32 h-16 shrink-0 select-none">
+              <svg viewBox="0 0 160 95" className="w-full h-full overflow-visible">
+                <defs>
+                  <radialGradient id="dropBodyGrad" cx="38%" cy="38%" r="65%">
+                    <stop offset="0%" stopColor="#bae6fd" stopOpacity="0.95" />
+                    <stop offset="42%" stopColor="#38bdf8" stopOpacity="0.88" />
+                    <stop offset="78%" stopColor="#0369a1" stopOpacity="0.95" />
+                    <stop offset="100%" stopColor="#082f49" stopOpacity="0.98" />
+                  </radialGradient>
+                  <linearGradient id="dropHighlightGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#ffffff" stopOpacity="0.95" />
+                    <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+                  </linearGradient>
+                  <clipPath id="dropClip">
+                    <path d="M 80 4 C 80 4 106 36 106 53 C 106 67 94.5 76 80 76 C 65.5 76 54 67 54 53 C 54 36 80 4 80 4 Z" />
+                  </clipPath>
+                </defs>
+
+                {/* Concentric Water Splash Ripples */}
+                <g className="droplet-ripple-pulse">
+                  <ellipse cx="80" cy="76" rx="64" ry="13" fill="none" stroke="rgba(186,230,253,0.45)" strokeWidth="1.4" />
+                  <ellipse cx="80" cy="76" rx="48" ry="9.5" fill="none" stroke="rgba(224,242,254,0.68)" strokeWidth="1.6" />
+                  <ellipse cx="80" cy="76" rx="33" ry="6.5" fill="none" stroke="rgba(255,255,255,0.85)" strokeWidth="1.6" />
+                </g>
+
+                {/* 3D Crystal Water Droplet */}
+                <path
+                  d="M 80 4 C 80 4 106 36 106 53 C 106 67 94.5 76 80 76 C 65.5 76 54 67 54 53 C 54 36 80 4 80 4 Z"
+                  fill="url(#dropBodyGrad)"
+                  stroke="rgba(224,242,254,0.9)"
+                  strokeWidth="1.3"
+                />
+
+                {/* India Map Silhouette inside the Water Droplet */}
+                <g clipPath="url(#dropClip)">
+                  <path
+                    d={(() => {
+                      const ring = INDIA_BOUNDARY.geometry.coordinates[0] || [];
+                      if (ring.length === 0) return "";
+                      const minLng = 68.0, maxLng = 97.6, minLat = 7.9, maxLat = 36.2;
+                      return ring
+                        .map(([lng, lat], i) => {
+                          const x = 64 + ((lng - minLng) / (maxLng - minLng)) * 32;
+                          const y = 31 + ((maxLat - lat) / (maxLat - minLat)) * 38;
+                          return `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+                        })
+                        .join(" ") + " Z";
+                    })()}
+                    fill="rgba(255, 255, 255, 0.92)"
+                    stroke="rgba(12, 74, 110, 0.35)"
+                    strokeWidth="0.6"
+                  />
+                  {/* Curved specular highlight reflection on droplet left side */}
+                  <path
+                    d="M 76 11 C 68 25 60 39 60 52 C 60 60 64 66 68 68 C 63 63 62 55 64 46 C 67 34 73 22 78 13 Z"
+                    fill="url(#dropHighlightGrad)"
+                    opacity="0.72"
+                  />
+                  {/* Bright bottom caustic arc */}
+                  <path
+                    d="M 66 69 C 74 74 87 74 95 68"
+                    fill="none"
+                    stroke="rgba(255,255,255,0.8)"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  />
+                </g>
+              </svg>
+            </div>
+
+            {/* Live Analog Clock Icon + Vertical Divider + Digital Time & Date */}
+            <div className="flex items-center gap-3.5 ml-auto">
+              {/* Crisp Analog Clock SVG synced to live time */}
+              <svg aria-hidden="true" viewBox="0 0 40 40" className="w-9 h-9 text-white/90 shrink-0 drop-shadow-[0_1px_4px_rgba(0,0,0,0.5)]">
+                <circle cx="20" cy="20" r="16" fill="rgba(255,255,255,0.08)" stroke="currentColor" strokeWidth="2.2" />
+                <circle cx="20" cy="20" r="1.6" fill="currentColor" />
+                {(() => {
+                  const mins = currentDateTime.getMinutes();
+                  const hrs = (currentDateTime.getHours() % 12) + mins / 60;
+                  const minAngle = (mins * 6 - 90) * (Math.PI / 180);
+                  const hrAngle = (hrs * 30 - 90) * (Math.PI / 180);
+                  return (
+                    <>
+                      <line
+                        x1="20"
+                        y1="20"
+                        x2={20 + Math.cos(hrAngle) * 8.5}
+                        y2={20 + Math.sin(hrAngle) * 8.5}
+                        stroke="currentColor"
+                        strokeWidth="2.4"
+                        strokeLinecap="round"
+                      />
+                      <line
+                        x1="20"
+                        y1="20"
+                        x2={20 + Math.cos(minAngle) * 11.5}
+                        y2={20 + Math.sin(minAngle) * 11.5}
+                        stroke="currentColor"
+                        strokeWidth="1.9"
+                        strokeLinecap="round"
+                      />
+                    </>
+                  );
+                })()}
+              </svg>
+
+              <span aria-hidden="true" className="w-[1.5px] h-10 bg-white/65 shrink-0" />
+
+              <div className="flex flex-col items-end text-right select-none">
+                <span className="text-lg sm:text-xl xl:text-[22px] font-black text-white font-mono tracking-tight tabular-nums leading-tight drop-shadow-[0_1px_4px_rgba(0,0,0,0.65)] whitespace-nowrap">
+                  {(() => {
+                    const hours = String(currentDateTime.getHours() % 12 || 12).padStart(2, '0');
+                    const minutes = String(currentDateTime.getMinutes()).padStart(2, '0');
+                    const seconds = String(currentDateTime.getSeconds()).padStart(2, '0');
+                    const ampm = currentDateTime.getHours() >= 12 ? 'PM' : 'AM';
+                    return `${hours}:${minutes}:${seconds} ${ampm}`;
+                  })()}
+                </span>
+                <span className="text-[11px] font-bold italic text-sky-100/95 tracking-wide uppercase whitespace-nowrap mt-0.5" style={{ fontFamily: "'Playfair Display', serif" }}>
+                  {currentDateTime.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                </span>
               </div>
             </div>
           </div>
-
-          {/* 3. Modern Live Date and Time Display */}
-          <div className="flex flex-row md:flex-col items-center md:items-end gap-1 shrink-0 w-full md:w-auto justify-between md:justify-end text-right select-none">
-            <span className="text-xl md:text-2xl font-black text-black font-mono tracking-tight tabular-nums">
-              {(() => {
-                const hours = String(currentDateTime.getHours() % 12 || 12).padStart(2, '0');
-                const minutes = String(currentDateTime.getMinutes()).padStart(2, '0');
-                const seconds = String(currentDateTime.getSeconds()).padStart(2, '0');
-                const ampm = currentDateTime.getHours() >= 12 ? 'PM' : 'AM';
-                return `${hours}:${minutes}:${seconds} ${ampm}`;
-              })()}
-            </span>
-            <span className="text-xs font-extrabold text-[#8B4513] tracking-wide uppercase">
-              {currentDateTime.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
-            </span>
-          </div>
-        </div>
+        </header>
 
         {/* Global Geographical Filter Strip when data is present */}
         {rawData.length > 0 && (
@@ -1206,7 +1371,7 @@ export default function App() {
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5 drop-shadow-xs">1. Reporting Level</label>
               <select
                 value={reportingLevel}
-                onChange={(e) => handleLevelChange(e.target.value as any)}
+                onChange={(e) => handleLevelChange(e.target.value as ReportingLevel)}
                 className="w-full glossy-input rounded-xl p-3 font-bold text-slate-700 bg-white cursor-pointer select-none text-xs"
               >
                 <option value="State">States and UTs Wise</option>
@@ -1290,10 +1455,11 @@ export default function App() {
             </label>
             <select
               value={activeTab}
-              onChange={(e) => setActiveTab(e.target.value as any)}
+              onChange={(e) => setActiveTab(e.target.value as ActiveTab)}
               className="w-full glossy-input rounded-2xl p-4 font-black text-slate-700 bg-white cursor-pointer select-none text-sm border-2 border-slate-200 outline-none focus:border-indigo-500 shadow-md transition-all"
             >
               <option value="kpi">🏆 KPI Analysis</option>
+              <option value="factSheet">📑 State Fact Sheet (EC IDW & Exceedance)</option>
               <option value="single">📊 Detailed Analysis</option>
               <option value="advancedAnalysis">🧪 Advanced Data Analysis</option>
               <option value="ranking">📈 Ranking Stats</option>
@@ -1353,6 +1519,7 @@ export default function App() {
         <div className="hidden md:flex flex-wrap gap-x-3.5 gap-y-3 mb-8 select-none p-4 bg-gradient-to-r from-white/95 via-slate-50/80 to-white/95 backdrop-blur-xl rounded-3xl border border-white/90 shadow-[0_12px_32px_-4px_rgba(15,23,42,0.08),inset_0_1.5px_0_0_rgba(255,255,255,1)]">
           {[
             { id: "kpi", label: "KPI Analysis", icon: Award, baseColor: "amber" },
+            { id: "factSheet", label: "State Fact Sheet", icon: FileText, baseColor: "teal" },
             { id: "single", label: "Detailed Analysis", icon: LayoutDashboard, baseColor: "blue" },
             { id: "advancedAnalysis", label: "Advanced Data Analysis", icon: Activity, baseColor: "indigo" },
             { id: "ranking", label: "Ranking Stats", icon: TrendingUp, baseColor: "violet" },
@@ -1443,7 +1610,7 @@ export default function App() {
             return (
               <button
                 key={tabItem.id}
-                onClick={() => setActiveTab(tabItem.id as any)}
+                onClick={() => setActiveTab(tabItem.id as ActiveTab)}
                 className={`
                   whitespace-nowrap px-4 py-2.5 rounded-2xl font-extrabold text-xs flex items-center gap-2 select-none transition-all duration-200 cursor-pointer border
                   ${isActive 
@@ -1586,15 +1753,18 @@ export default function App() {
           )}
 
           {activeTab === "master" && (
-            <MasterSummaryView
-              rawData={yearSeasonFilteredData}
-              headers={headers}
-              headerMap={headerMap}
-              selectedState={selectedState}
-              selectedDistrict={selectedDistrict}
-              onExportExcel={handleExportIndividual}
-              reportingLevel={reportingLevel}
-            />
+            <ErrorBoundary>
+              <MasterSummaryView
+                rawData={yearSeasonFilteredData}
+                headers={headers}
+                headerMap={headerMap}
+                selectedState={selectedState}
+                selectedDistrict={selectedDistrict}
+                onExportExcel={handleExportIndividual}
+                reportingLevel={reportingLevel}
+                showToast={showToast}
+              />
+            </ErrorBoundary>
           )}
 
           {activeTab === "monsoon" && (
@@ -1629,14 +1799,16 @@ export default function App() {
           )}
 
           {activeTab === "bulletin" && (
-            <BulletinView
-              rawData={yearFilteredData}
-              headers={headers}
-              headerMap={headerMap}
-              selectedState={selectedState}
-              bulletinMaps={sharedBulletinMaps}
-              setBulletinMaps={setSharedBulletinMaps}
-            />
+            <ErrorBoundary>
+              <BulletinView
+                rawData={yearFilteredData}
+                headers={headers}
+                headerMap={headerMap}
+                selectedState={selectedState}
+                bulletinMaps={sharedBulletinMaps}
+                setBulletinMaps={setSharedBulletinMaps}
+              />
+            </ErrorBoundary>
           )}
 
           {activeTab === "fortnightly" && (
@@ -1700,21 +1872,23 @@ export default function App() {
           </div>
 
           <div className={activeTab === "gis" ? "block" : "hidden"}>
-            <GisMapView
-              rawData={yearSeasonFilteredData}
-              headers={headers}
-              headerMap={headerMap}
-              selectedState={selectedState}
-              selectedDistrict={selectedDistrict}
-              showToast={showToast}
-              isVisible={activeTab === "gis"}
-              bulletinMaps={sharedBulletinMaps}
-              setBulletinMaps={setSharedBulletinMaps}
-              layers={sharedLayers}
-              setLayers={setSharedLayers}
-              choroplethClasses={choroplethClasses}
-              setChoroplethClasses={setChoroplethClasses}
-            />
+            <ErrorBoundary>
+              <GisMapView
+                rawData={yearSeasonFilteredData}
+                headers={headers}
+                headerMap={headerMap}
+                selectedState={selectedState}
+                selectedDistrict={selectedDistrict}
+                showToast={showToast}
+                isVisible={activeTab === "gis"}
+                bulletinMaps={sharedBulletinMaps}
+                setBulletinMaps={setSharedBulletinMaps}
+                layers={sharedLayers}
+                setLayers={setSharedLayers}
+                choroplethClasses={choroplethClasses}
+                setChoroplethClasses={setChoroplethClasses}
+              />
+            </ErrorBoundary>
           </div>
 
           <div className={activeTab === "shapefileFilter" ? "block" : "hidden"}>
@@ -1759,32 +1933,37 @@ export default function App() {
 
 
           {activeTab === "limits" && (
-            <LimitsManagerView
-              headers={headers}
-              uploadedHeaders={uploadedHeaders}
-              headerMap={headerMap}
-              onLimitsChanged={() => setLimitsVersion((v) => v + 1)}
-              onUpdateHeaders={(newHeaders, newHeaderMap) => {
-                setHeaders(newHeaders);
-                setHeaderMap(newHeaderMap);
-                if (newHeaders.params && newHeaders.params.length > 0) {
-                  setExportParams([...newHeaders.params]);
-                  setCombinedParams([...newHeaders.params]);
-                }
-              }}
-            />
+            <ErrorBoundary>
+              <LimitsManagerView
+                headers={headers}
+                uploadedHeaders={uploadedHeaders}
+                headerMap={headerMap}
+                onLimitsChanged={() => setLimitsVersion((v) => v + 1)}
+                showToast={showToast}
+                onUpdateHeaders={(newHeaders, newHeaderMap) => {
+                  setHeaders(newHeaders);
+                  setHeaderMap(newHeaderMap);
+                  if (newHeaders.params && newHeaders.params.length > 0) {
+                    setExportParams([...newHeaders.params]);
+                    setCombinedParams([...newHeaders.params]);
+                  }
+                }}
+              />
+            </ErrorBoundary>
           )}
 
           <div className={activeTab === "advancedAnalysis" ? "block" : "hidden"}>
-            <AdvancedAnalysisView
-              rawData={yearSeasonFilteredData}
-              headers={headers}
-              headerMap={headerMap}
-              selectedState={selectedState}
-              selectedDistrict={selectedDistrict}
-              showToast={showToast}
-              isVisible={activeTab === "advancedAnalysis"}
-            />
+            <ErrorBoundary>
+              <AdvancedAnalysisView
+                rawData={yearSeasonFilteredData}
+                headers={headers}
+                headerMap={headerMap}
+                selectedState={selectedState}
+                selectedDistrict={selectedDistrict}
+                showToast={showToast}
+                isVisible={activeTab === "advancedAnalysis"}
+              />
+            </ErrorBoundary>
           </div>
 
           {activeTab === "kpi" && (
@@ -1804,6 +1983,28 @@ export default function App() {
               setChoroplethClasses={setChoroplethClasses}
               showToast={showToast}
             />
+          )}
+
+          {activeTab === "factSheet" && (
+            <ErrorBoundary>
+              <FactSheetView
+                rawData={yearSeasonFilteredData}
+                allRawData={rawData}
+                headers={headers}
+                headerMap={headerMap}
+                selectedState={selectedState}
+                setSelectedState={setSelectedState}
+                selectedDistrict={selectedDistrict}
+                setSelectedDistrict={setSelectedDistrict}
+                selectedYear={selectedYear}
+                selectedSeason={selectedSeason}
+                sharedLayers={sharedLayers}
+                sharedBulletinMaps={sharedBulletinMaps}
+                setSharedBulletinMaps={setSharedBulletinMaps}
+                onNavigateToGis={() => setActiveTab("gis")}
+                showToast={showToast}
+              />
+            </ErrorBoundary>
           )}
 
         </div>

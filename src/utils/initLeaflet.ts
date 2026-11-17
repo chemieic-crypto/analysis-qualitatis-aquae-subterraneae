@@ -123,11 +123,11 @@ patchLeafletInstance(L);
 
 // Expose on window & globalThis and patch global window.L as well
 if (typeof window !== "undefined") {
-  (window as any).L = L;
-  patchLeafletInstance((window as any).L);
+  window.L = L;
+  patchLeafletInstance(window.L);
 
   // If a script tag (e.g. from unpkg) re-defines window.L later, patch it as well
-  let currentWindowL = (window as any).L;
+  let currentWindowL = window.L;
   Object.defineProperty(window, "L", {
     configurable: true,
     enumerable: true,
@@ -142,7 +142,7 @@ if (typeof window !== "undefined") {
 }
 
 if (typeof globalThis !== "undefined") {
-  (globalThis as any).L = L;
+  (globalThis as typeof globalThis & { L?: typeof L }).L = L;
 }
 
 export default L;

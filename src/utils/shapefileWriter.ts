@@ -1,13 +1,14 @@
 import JSZip from "jszip";
 
 /**
- * ESRI Shapefile Generator (Pure TypeScript)
+ * ESRI Shapefile & MapInfo Package Generator (Pure TypeScript)
  * Compliant with ESRI Shapefile Technical Description (July 1998)
- * Generates .shp, .shx, .dbf, .prj, .cpg bundled inside a standard .zip archive.
+ * Generates .shp, .shx, .dbf, .prj, .cpg, and MapInfo .tab files bundled inside a .zip archive.
  */
 
 export interface ShapefileFieldDef {
   name: string; // Max 10 chars, uppercase ASCII
+  origKey: string; // Original property key in feature.properties
   type: "C" | "N"; // Character or Numeric
   length: number; // Bytes in DBF (max 254)
   decimals?: number; // Decimal places for N
@@ -19,15 +20,63 @@ export interface ShapefilePointFeature {
   properties: Record<string, any>;
 }
 
-export interface ShapefilePolygonFeature {
-  rings: [number, number][][]; // Each ring is an array of [lng, lat]
+export interface ShapefilePolyLineFeature {
+  parts: [number, number][][]; // Each part is an array of [lng, lat]
   properties: Record<string, any>;
 }
 
-const WGS84_PRJ = `GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]`;
+export interface ShapefilePolygonFeature {
+  rings: [number, number][][]; // Each ring is an array of [lng, lat]
+  ringIsHole?: boolean[]; // True for interior holes (CCW), false/undefined for exterior (CW)
+  properties: Record<string, any>;
+}
+
+export const WGS84_PRJ = `GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]`;
+
+const textEncoder = new TextEncoder();
 
 /**
- * Sanitizes field names to fit dBASE 10-character limit and valid characters.
+ * Computes twice the signed shoelace area of a closed ring in Cartesian (X=lng, Y=lat).
+ * Positive => Clockwise (CW); Negative => Counter-Clockwise (CCW).
+ */
+function getRingSignedAreaTwice(ring: [number, number][]): number {
+  let sum = 0;
+  for (let i = 0; i < ring.length - 1; i++) {
+    const [x1, y1] = ring[i];
+    const [x2, y2] = ring[i + 1];
+    sum += (x2 - x1) * (y2 + y1);
+  }
+  return sum;
+}
+
+/**
+ * Closes a polygon ring and enforces ESRI Shapefile winding order:
+ * - Exterior ring: Clockwise (CW, signedAreaTwice >= 0)
+ * - Interior hole ring: Counter-Clockwise (CCW, signedAreaTwice <= 0)
+ */
+function normalizePolygonRing(ring: [number, number][], isHole: boolean): [number, number][] | null {
+  const validPts = ring.filter(
+    (pt) => Array.isArray(pt) && pt.length >= 2 && Number.isFinite(pt[0]) && Number.isFinite(pt[1])
+  );
+  if (validPts.length < 3) return null;
+
+  const first = validPts[0];
+  const last = validPts[validPts.length - 1];
+  const isClosed = Math.abs(first[0] - last[0]) < 1e-10 && Math.abs(first[1] - last[1]) < 1e-10;
+  const closedRing: [number, number][] = isClosed ? [...validPts] : [...validPts, [first[0], first[1]]];
+  if (closedRing.length < 4) return null;
+
+  const area2 = getRingSignedAreaTwice(closedRing);
+  if (!isHole && area2 < 0) {
+    closedRing.reverse();
+  } else if (isHole && area2 > 0) {
+    closedRing.reverse();
+  }
+  return closedRing;
+}
+
+/**
+ * Sanitizes field names to fit dBASE 10-character ASCII limit.
  */
 function sanitizeFieldName(name: string, existingNames: Set<string>): string {
   let clean = name
@@ -41,7 +90,7 @@ function sanitizeFieldName(name: string, existingNames: Set<string>): string {
   let counter = 1;
   while (existingNames.has(candidate)) {
     const suffix = String(counter);
-    candidate = clean.slice(0, 10 - suffix.length) + suffix;
+    candidate = clean.slice(0, Math.max(1, 10 - suffix.length)) + suffix;
     counter++;
   }
   existingNames.add(candidate);
@@ -49,110 +98,139 @@ function sanitizeFieldName(name: string, existingNames: Set<string>): string {
 }
 
 /**
- * Derives DBF field definitions from record properties.
+ * Derives DBF field definitions from record properties (capped cleanly to dBASE III limits).
  */
-function deriveFieldDefs(propertiesList: Record<string, any>[]): {
-  fieldDefs: ShapefileFieldDef[];
-  keyMap: Record<string, string>;
-} {
+export function deriveFieldDefs(propertiesList: Record<string, any>[]): ShapefileFieldDef[] {
   const existingNames = new Set<string>();
   const fieldDefs: ShapefileFieldDef[] = [];
-  const keyMap: Record<string, string> = {}; // originalKey -> sanitizedKey
 
   if (propertiesList.length === 0) {
-    const idDef: ShapefileFieldDef = { name: "ID", type: "N", length: 10, decimals: 0 };
-    return { fieldDefs: [idDef], keyMap: { ID: "ID" } };
+    return [{ name: "ID", origKey: "ID", type: "N", length: 10, decimals: 0 }];
   }
 
-  // Collect all unique keys
   const allKeys: string[] = [];
   propertiesList.forEach((props) => {
+    if (!props) return;
     Object.keys(props).forEach((k) => {
-      if (!allKeys.includes(k)) allKeys.push(k);
+      if (k && !k.startsWith("_") && !allKeys.includes(k)) {
+        allKeys.push(k);
+      }
     });
   });
 
-  allKeys.forEach((key) => {
-    const sanitized = sanitizeFieldName(key, existingNames);
-    keyMap[key] = sanitized;
+  if (allKeys.length === 0) {
+    return [{ name: "ID", origKey: "ID", type: "N", length: 10, decimals: 0 }];
+  }
 
-    // Detect type and max length
+  // dBASE III allows max 255 fields and ~4000 bytes per record
+  let accumulatedRecordBytes = 1;
+
+  for (const key of allKeys) {
+    if (fieldDefs.length >= 120) break;
+
     let isNumeric = true;
-    let maxLen = 0;
+    let maxByteLen = 0;
     let hasDecimals = false;
     let maxDecimals = 0;
-
     let sampleCount = 0;
-    propertiesList.forEach((props) => {
-      const val = props[key];
+
+    for (let r = 0; r < propertiesList.length; r++) {
+      const val = propertiesList[r]?.[key];
       if (val !== undefined && val !== null && val !== "") {
         sampleCount++;
-        const str = String(val);
-        if (str.length > maxLen) maxLen = str.length;
-        if (typeof val === "number" || (!isNaN(Number(val)) && !isNaN(parseFloat(str)))) {
-          if (str.includes(".")) {
+        if (typeof val === "number") {
+          if (!Number.isFinite(val)) {
+            isNumeric = false;
+          } else {
+            const s = String(val);
+            if (s.includes("e") || s.includes("E")) {
+              isNumeric = false;
+            } else if (s.includes(".")) {
+              hasDecimals = true;
+              const decLen = s.split(".")[1]?.length || 0;
+              if (decLen > maxDecimals) maxDecimals = Math.min(6, decLen);
+            }
+            if (s.length > maxByteLen) maxByteLen = s.length;
+          }
+        } else if (typeof val === "boolean") {
+          isNumeric = false;
+          if (5 > maxByteLen) maxByteLen = 5;
+        } else {
+          const str = String(val).trim();
+          const bLen = textEncoder.encode(str).length;
+          if (bLen > maxByteLen) maxByteLen = bLen;
+          if (str === "" || isNaN(Number(str)) || str.includes("e") || str.includes("E") || (str.length > 1 && str.startsWith("0") && !str.startsWith("0."))) {
+            isNumeric = false;
+          } else if (str.includes(".")) {
             hasDecimals = true;
             const decLen = str.split(".")[1]?.length || 0;
             if (decLen > maxDecimals) maxDecimals = Math.min(6, decLen);
           }
-        } else {
-          isNumeric = false;
         }
       }
-    });
+    }
+
+    const sanitized = sanitizeFieldName(key, existingNames);
+    let def: ShapefileFieldDef;
 
     if (sampleCount === 0 || !isNumeric) {
-      fieldDefs.push({
+      def = {
         name: sanitized,
+        origKey: key,
         type: "C",
-        length: Math.max(10, Math.min(254, maxLen || 50)),
-      });
+        length: Math.max(10, Math.min(254, maxByteLen || 40)),
+      };
     } else {
-      fieldDefs.push({
+      const decimals = hasDecimals ? Math.max(2, maxDecimals) : 0;
+      const numLen = Math.max(12, Math.min(20, maxByteLen + (decimals > 0 ? 4 : 2)));
+      def = {
         name: sanitized,
+        origKey: key,
         type: "N",
-        length: Math.max(12, Math.min(20, maxLen + 2)),
-        decimals: hasDecimals ? Math.max(2, maxDecimals) : 0,
-      });
+        length: numLen,
+        decimals,
+      };
     }
-  });
 
-  return { fieldDefs, keyMap };
+    if (accumulatedRecordBytes + def.length > 3900) break;
+    accumulatedRecordBytes += def.length;
+    fieldDefs.push(def);
+  }
+
+  if (fieldDefs.length === 0) {
+    fieldDefs.push({ name: "ID", origKey: "ID", type: "N", length: 10, decimals: 0 });
+  }
+
+  return fieldDefs;
 }
 
 /**
- * Builds the binary dBASE III (.dbf) buffer.
+ * Builds the binary dBASE III (.dbf) buffer cleanly handling UTF-8 byte lengths.
  */
-function buildDbfBuffer(
-  records: Record<string, any>[],
-  fieldDefs: ShapefileFieldDef[],
-  keyMap: Record<string, string>
-): Uint8Array {
+function buildDbfBuffer(records: Record<string, any>[], fieldDefs: ShapefileFieldDef[]): Uint8Array {
   const numRecords = records.length;
   const numFields = fieldDefs.length;
   const headerLength = 32 + numFields * 32 + 1;
   const recordLength = 1 + fieldDefs.reduce((sum, f) => sum + f.length, 0);
-  const totalLength = headerLength + numRecords * recordLength + 1; // +1 for 0x1A terminator
+  const totalLength = headerLength + numRecords * recordLength + 1;
 
   const buffer = new ArrayBuffer(totalLength);
   const view = new DataView(buffer);
   const bytes = new Uint8Array(buffer);
 
-  // DBF Header
   view.setUint8(0, 0x03); // dBASE III without memo
   const now = new Date();
-  view.setUint8(1, now.getFullYear() - 1900);
+  view.setUint8(1, Math.min(255, Math.max(0, now.getFullYear() - 1900)));
   view.setUint8(2, now.getMonth() + 1);
   view.setUint8(3, now.getDate());
-  view.setUint32(4, numRecords, true); // Number of records LE
-  view.setUint16(8, headerLength, true); // Header length LE
-  view.setUint16(10, recordLength, true); // Record length LE
+  view.setUint32(4, numRecords, true);
+  view.setUint16(8, headerLength, true);
+  view.setUint16(10, recordLength, true);
+  view.setUint8(29, 0x00); // Rely on .cpg UTF-8
 
-  // Field Descriptors
   let fieldOffset = 32;
-  const encoder = new TextEncoder();
   fieldDefs.forEach((f) => {
-    const nameBytes = encoder.encode(f.name.slice(0, 10).toUpperCase());
+    const nameBytes = textEncoder.encode(f.name.slice(0, 10).toUpperCase());
     for (let i = 0; i < 11; i++) {
       bytes[fieldOffset + i] = i < nameBytes.length ? nameBytes[i] : 0;
     }
@@ -162,36 +240,46 @@ function buildDbfBuffer(
     fieldOffset += 32;
   });
 
-  bytes[headerLength - 1] = 0x0d; // Header terminator
+  bytes[headerLength - 1] = 0x0d;
 
-  // Data Records
   let recOffset = headerLength;
-  records.forEach((rec) => {
-    bytes[recOffset] = 0x20; // 0x20 = Valid record (not deleted)
+  records.forEach((rec, recIdx) => {
+    bytes[recOffset] = 0x20;
     let colOffset = recOffset + 1;
 
     fieldDefs.forEach((f) => {
-      // Find original key corresponding to this sanitized field name
-      const origKey = Object.keys(keyMap).find((k) => keyMap[k] === f.name) || f.name;
-      let val = rec[origKey];
-      if (val === undefined || val === null) val = "";
-
-      let strVal = String(val).trim();
-      if (f.type === "N") {
-        if (strVal === "" || isNaN(Number(strVal))) {
-          strVal = "".padStart(f.length, " ");
-        } else {
-          const num = Number(strVal);
-          strVal = f.decimals !== undefined && f.decimals > 0 ? num.toFixed(f.decimals) : String(Math.round(num));
-          strVal = strVal.slice(0, f.length).padStart(f.length, " ");
-        }
-      } else {
-        strVal = strVal.slice(0, f.length).padEnd(f.length, " ");
+      let val = rec?.[f.origKey];
+      if (val === undefined || val === null) {
+        val = f.origKey === "ID" ? recIdx + 1 : "";
       }
 
-      const valBytes = encoder.encode(strVal);
-      for (let i = 0; i < f.length; i++) {
-        bytes[colOffset + i] = i < valBytes.length ? valBytes[i] : 0x20;
+      if (f.type === "N") {
+        const rawStr = String(val).trim();
+        let numStr = "";
+        if (rawStr !== "" && Number.isFinite(Number(rawStr))) {
+          const num = Number(rawStr);
+          numStr =
+            f.decimals !== undefined && f.decimals > 0
+              ? num.toFixed(f.decimals)
+              : String(Math.round(num));
+          if (numStr.length > f.length) {
+            numStr = numStr.slice(0, f.length);
+          }
+        }
+        const padded = numStr.padStart(f.length, " ");
+        for (let i = 0; i < f.length; i++) {
+          bytes[colOffset + i] = padded.charCodeAt(i);
+        }
+      } else {
+        const strVal = String(val).replace(/[\r\n]+/g, " ").trim();
+        const encoded = textEncoder.encode(strVal);
+        const copyLen = Math.min(f.length, encoded.length);
+        for (let i = 0; i < copyLen; i++) {
+          bytes[colOffset + i] = encoded[i];
+        }
+        for (let i = copyLen; i < f.length; i++) {
+          bytes[colOffset + i] = 0x20;
+        }
       }
       colOffset += f.length;
     });
@@ -199,12 +287,62 @@ function buildDbfBuffer(
     recOffset += recordLength;
   });
 
-  bytes[totalLength - 1] = 0x1a; // EOF
+  bytes[totalLength - 1] = 0x1a;
   return bytes;
 }
 
 /**
- * Builds Point Shapefile (.shp and .shx).
+ * Generates a MapInfo Professional Shapefile-backed .tab wrapper so layers open via File > Open directly.
+ */
+export function buildMapInfoShapefileTab(fieldDefs: ShapefileFieldDef[]): string {
+  const fieldsLines = fieldDefs.map((f) => {
+    if (f.type === "N") {
+      return `    ${f.name} Decimal (${f.length}, ${f.decimals || 0}) ;`;
+    }
+    return `    ${f.name} Char (${f.length}) ;`;
+  });
+  return [
+    "!table",
+    "!version 1050",
+    "!charset UTF-8",
+    "",
+    "Definition Table",
+    '  Type SHAPEFILE Charset "UTF-8"',
+    `  Fields ${fieldDefs.length}`,
+    ...fieldsLines,
+    ""
+  ].join("\r\n");
+}
+
+/**
+ * Generates a standard MapInfo Professional Georeferenced Raster .tab file (WGS84 Earth Projection 1, 104).
+ */
+export function buildMapInfoRasterTab(
+  tifFilename: string,
+  width: number,
+  height: number,
+  bounds: { minLng: number; maxLng: number; minLat: number; maxLat: number }
+): string {
+  return [
+    "!table",
+    "!version 300",
+    "!charset WindowsLatin1",
+    "",
+    "Definition Table",
+    `  File "${tifFilename}"`,
+    '  Type "RASTER"',
+    `  (${bounds.minLng.toFixed(8)}, ${bounds.maxLat.toFixed(8)}) (0, 0) Label "Top Left",`,
+    `  (${bounds.maxLng.toFixed(8)}, ${bounds.maxLat.toFixed(8)}) (${width}, 0) Label "Top Right",`,
+    `  (${bounds.maxLng.toFixed(8)}, ${bounds.minLat.toFixed(8)}) (${width}, ${height}) Label "Bottom Right",`,
+    `  (${bounds.minLng.toFixed(8)}, ${bounds.minLat.toFixed(8)}) (0, ${height}) Label "Bottom Left"`,
+    "  CoordSys Earth Projection 1, 104",
+    '  Units "degree"',
+    ""
+  ].join("\r\n");
+}
+
+/**
+ * Builds Point Shapefile (.shp and .shx, ShapeType = 1).
  */
 export function buildPointShapefile(points: ShapefilePointFeature[]): {
   shp: Uint8Array;
@@ -216,34 +354,34 @@ export function buildPointShapefile(points: ShapefilePointFeature[]): {
     ymax = -Infinity;
 
   points.forEach((p) => {
-    if (p.lng < xmin) xmin = p.lng;
-    if (p.lng > xmax) xmax = p.lng;
-    if (p.lat < ymin) ymin = p.lat;
-    if (p.lat > ymax) ymax = p.lat;
+    if (Number.isFinite(p.lng) && Number.isFinite(p.lat)) {
+      if (p.lng < xmin) xmin = p.lng;
+      if (p.lng > xmax) xmax = p.lng;
+      if (p.lat < ymin) ymin = p.lat;
+      if (p.lat > ymax) ymax = p.lat;
+    }
   });
   if (points.length === 0 || !isFinite(xmin)) {
     xmin = ymin = xmax = ymax = 0;
   }
 
   const numRecords = points.length;
-  const recordContentBytes = 20; // 4 (type) + 8 (X) + 8 (Y)
-  const recordTotalBytes = 8 + recordContentBytes; // 28 bytes
+  const recordContentBytes = 20;
+  const recordTotalBytes = 8 + recordContentBytes;
   const shpTotalBytes = 100 + numRecords * recordTotalBytes;
 
   const shpBuffer = new ArrayBuffer(shpTotalBytes);
   const shpView = new DataView(shpBuffer);
 
-  // 100-byte SHP Header
-  shpView.setInt32(0, 9994, false); // File code Big Endian
-  shpView.setInt32(24, shpTotalBytes / 2, false); // File length in 16-bit words BE
-  shpView.setInt32(28, 1000, true); // Version Little Endian
-  shpView.setInt32(32, 1, true); // Point ShapeType = 1 LE
+  shpView.setInt32(0, 9994, false);
+  shpView.setInt32(24, shpTotalBytes / 2, false);
+  shpView.setInt32(28, 1000, true);
+  shpView.setInt32(32, 1, true);
   shpView.setFloat64(36, xmin, true);
   shpView.setFloat64(44, ymin, true);
   shpView.setFloat64(52, xmax, true);
   shpView.setFloat64(60, ymax, true);
 
-  // 100-byte SHX Header
   const shxTotalBytes = 100 + numRecords * 8;
   const shxBuffer = new ArrayBuffer(shxTotalBytes);
   const shxView = new DataView(shxBuffer);
@@ -258,19 +396,16 @@ export function buildPointShapefile(points: ShapefilePointFeature[]): {
 
   let shpOffset = 100;
   points.forEach((p, i) => {
-    // SHX record (offset in 16-bit words BE, content length in 16-bit words BE)
     const shxOffset = 100 + i * 8;
     shxView.setInt32(shxOffset, shpOffset / 2, false);
-    shxView.setInt32(shxOffset + 4, 10, false); // 20 bytes / 2 = 10 words
+    shxView.setInt32(shxOffset + 4, 10, false);
 
-    // SHP record header
-    shpView.setInt32(shpOffset, i + 1, false); // Record number 1-based BE
-    shpView.setInt32(shpOffset + 4, 10, false); // Content length in words BE
+    shpView.setInt32(shpOffset, i + 1, false);
+    shpView.setInt32(shpOffset + 4, 10, false);
 
-    // SHP record content
-    shpView.setInt32(shpOffset + 8, 1, true); // ShapeType 1 LE
-    shpView.setFloat64(shpOffset + 12, p.lng, true); // X LE
-    shpView.setFloat64(shpOffset + 20, p.lat, true); // Y LE
+    shpView.setInt32(shpOffset + 8, 1, true);
+    shpView.setFloat64(shpOffset + 12, Number.isFinite(p.lng) ? p.lng : 0, true);
+    shpView.setFloat64(shpOffset + 20, Number.isFinite(p.lat) ? p.lat : 0, true);
 
     shpOffset += 28;
   });
@@ -279,9 +414,9 @@ export function buildPointShapefile(points: ShapefilePointFeature[]): {
 }
 
 /**
- * Builds Polygon Shapefile (.shp and .shx).
+ * Builds PolyLine Shapefile (.shp and .shx, ShapeType = 3).
  */
-export function buildPolygonShapefile(features: ShapefilePolygonFeature[]): {
+export function buildPolyLineShapefile(features: ShapefilePolyLineFeature[]): {
   shp: Uint8Array;
   shx: Uint8Array;
 } {
@@ -298,17 +433,13 @@ export function buildPolygonShapefile(features: ShapefilePolygonFeature[]): {
     const parts: number[] = [];
     const allPoints: [number, number][] = [];
 
-    feat.rings.forEach((ring) => {
-      if (!ring || ring.length < 3) return;
+    feat.parts.forEach((line) => {
+      const validPts = line.filter(
+        (pt) => Array.isArray(pt) && pt.length >= 2 && Number.isFinite(pt[0]) && Number.isFinite(pt[1])
+      );
+      if (validPts.length < 2) return;
       parts.push(allPoints.length);
-
-      // Ensure ring is closed
-      const first = ring[0];
-      const last = ring[ring.length - 1];
-      const isClosed = first && last && Math.abs(first[0] - last[0]) < 1e-9 && Math.abs(first[1] - last[1]) < 1e-9;
-      const normalizedRing = isClosed ? ring : [...ring, first];
-
-      normalizedRing.forEach(([x, y]) => {
+      validPts.forEach(([x, y]) => {
         if (x < fXmin) fXmin = x;
         if (x > fXmax) fXmax = x;
         if (y < fYmin) fYmin = y;
@@ -324,7 +455,6 @@ export function buildPolygonShapefile(features: ShapefilePolygonFeature[]): {
 
     const numParts = parts.length;
     const numPoints = allPoints.length;
-    // 4 (shapeType) + 32 (box) + 4 (numParts) + 4 (numPoints) + (numParts * 4) + (numPoints * 16)
     const contentBytes = 44 + numParts * 4 + numPoints * 16;
     return {
       fXmin: isFinite(fXmin) ? fXmin : 0,
@@ -349,7 +479,7 @@ export function buildPolygonShapefile(features: ShapefilePolygonFeature[]): {
   shpView.setInt32(0, 9994, false);
   shpView.setInt32(24, totalShpBytes / 2, false);
   shpView.setInt32(28, 1000, true);
-  shpView.setInt32(32, 5, true); // ShapeType 5 = Polygon
+  shpView.setInt32(32, 3, true); // ShapeType 3 = PolyLine
   shpView.setFloat64(36, xmin, true);
   shpView.setFloat64(44, ymin, true);
   shpView.setFloat64(52, xmax, true);
@@ -361,7 +491,7 @@ export function buildPolygonShapefile(features: ShapefilePolygonFeature[]): {
   shxView.setInt32(0, 9994, false);
   shxView.setInt32(24, totalShxBytes / 2, false);
   shxView.setInt32(28, 1000, true);
-  shxView.setInt32(32, 5, true);
+  shxView.setInt32(32, 3, true);
   shxView.setFloat64(36, xmin, true);
   shxView.setFloat64(44, ymin, true);
   shxView.setFloat64(52, xmax, true);
@@ -369,17 +499,14 @@ export function buildPolygonShapefile(features: ShapefilePolygonFeature[]): {
 
   let shpOffset = 100;
   records.forEach((r, i) => {
-    // SHX
     const shxOffset = 100 + i * 8;
     shxView.setInt32(shxOffset, shpOffset / 2, false);
     shxView.setInt32(shxOffset + 4, r.contentWords, false);
 
-    // SHP Record Header
     shpView.setInt32(shpOffset, i + 1, false);
     shpView.setInt32(shpOffset + 4, r.contentWords, false);
 
-    // Polygon Record Content
-    shpView.setInt32(shpOffset + 8, 5, true); // ShapeType 5
+    shpView.setInt32(shpOffset + 8, 3, true); // ShapeType 3
     shpView.setFloat64(shpOffset + 12, r.fXmin, true);
     shpView.setFloat64(shpOffset + 20, r.fYmin, true);
     shpView.setFloat64(shpOffset + 28, r.fXmax, true);
@@ -407,6 +534,233 @@ export function buildPolygonShapefile(features: ShapefilePolygonFeature[]): {
 }
 
 /**
+ * Builds Polygon Shapefile (.shp and .shx, ShapeType = 5) with ESRI winding order enforced.
+ */
+export function buildPolygonShapefile(features: ShapefilePolygonFeature[]): {
+  shp: Uint8Array;
+  shx: Uint8Array;
+} {
+  let xmin = Infinity,
+    ymin = Infinity,
+    xmax = -Infinity,
+    ymax = -Infinity;
+
+  const records = features.map((feat) => {
+    let fXmin = Infinity,
+      fYmin = Infinity,
+      fXmax = -Infinity,
+      fYmax = -Infinity;
+    const parts: number[] = [];
+    const allPoints: [number, number][] = [];
+
+    feat.rings.forEach((ring, rIdx) => {
+      if (!ring || ring.length < 3) return;
+      const isHole = feat.ringIsHole ? Boolean(feat.ringIsHole[rIdx]) : rIdx > 0;
+      const normalizedRing = normalizePolygonRing(ring, isHole);
+      if (!normalizedRing) return;
+
+      parts.push(allPoints.length);
+      normalizedRing.forEach(([x, y]) => {
+        if (x < fXmin) fXmin = x;
+        if (x > fXmax) fXmax = x;
+        if (y < fYmin) fYmin = y;
+        if (y > fYmax) fYmax = y;
+        allPoints.push([x, y]);
+      });
+    });
+
+    if (fXmin < xmin) xmin = fXmin;
+    if (fXmax > xmax) xmax = fXmax;
+    if (fYmin < ymin) ymin = fYmin;
+    if (fYmax > ymax) ymax = fYmax;
+
+    const numParts = parts.length;
+    const numPoints = allPoints.length;
+    const contentBytes = 44 + numParts * 4 + numPoints * 16;
+    return {
+      fXmin: isFinite(fXmin) ? fXmin : 0,
+      fYmin: isFinite(fYmin) ? fYmin : 0,
+      fXmax: isFinite(fXmax) ? fXmax : 0,
+      fYmax: isFinite(fYmax) ? fYmax : 0,
+      parts,
+      allPoints,
+      contentBytes,
+      contentWords: contentBytes / 2,
+    };
+  });
+
+  if (features.length === 0 || !isFinite(xmin)) {
+    xmin = ymin = xmax = ymax = 0;
+  }
+
+  const totalShpBytes = 100 + records.reduce((s, r) => s + 8 + r.contentBytes, 0);
+  const shpBuffer = new ArrayBuffer(totalShpBytes);
+  const shpView = new DataView(shpBuffer);
+
+  shpView.setInt32(0, 9994, false);
+  shpView.setInt32(24, totalShpBytes / 2, false);
+  shpView.setInt32(28, 1000, true);
+  shpView.setInt32(32, 5, true);
+  shpView.setFloat64(36, xmin, true);
+  shpView.setFloat64(44, ymin, true);
+  shpView.setFloat64(52, xmax, true);
+  shpView.setFloat64(60, ymax, true);
+
+  const totalShxBytes = 100 + features.length * 8;
+  const shxBuffer = new ArrayBuffer(totalShxBytes);
+  const shxView = new DataView(shxBuffer);
+  shxView.setInt32(0, 9994, false);
+  shxView.setInt32(24, totalShxBytes / 2, false);
+  shxView.setInt32(28, 1000, true);
+  shxView.setInt32(32, 5, true);
+  shxView.setFloat64(36, xmin, true);
+  shxView.setFloat64(44, ymin, true);
+  shxView.setFloat64(52, xmax, true);
+  shxView.setFloat64(60, ymax, true);
+
+  let shpOffset = 100;
+  records.forEach((r, i) => {
+    const shxOffset = 100 + i * 8;
+    shxView.setInt32(shxOffset, shpOffset / 2, false);
+    shxView.setInt32(shxOffset + 4, r.contentWords, false);
+
+    shpView.setInt32(shpOffset, i + 1, false);
+    shpView.setInt32(shpOffset + 4, r.contentWords, false);
+
+    shpView.setInt32(shpOffset + 8, 5, true);
+    shpView.setFloat64(shpOffset + 12, r.fXmin, true);
+    shpView.setFloat64(shpOffset + 20, r.fYmin, true);
+    shpView.setFloat64(shpOffset + 28, r.fXmax, true);
+    shpView.setFloat64(shpOffset + 36, r.fYmax, true);
+    shpView.setInt32(shpOffset + 44, r.parts.length, true);
+    shpView.setInt32(shpOffset + 48, r.allPoints.length, true);
+
+    let partsOffset = shpOffset + 52;
+    r.parts.forEach((pIdx) => {
+      shpView.setInt32(partsOffset, pIdx, true);
+      partsOffset += 4;
+    });
+
+    let pointsOffset = partsOffset;
+    r.allPoints.forEach(([x, y]) => {
+      shpView.setFloat64(pointsOffset, x, true);
+      shpView.setFloat64(pointsOffset + 8, y, true);
+      pointsOffset += 16;
+    });
+
+    shpOffset += 8 + r.contentBytes;
+  });
+
+  return { shp: new Uint8Array(shpBuffer), shx: new Uint8Array(shxBuffer) };
+}
+
+/**
+ * Splits a GeoJSON FeatureCollection into typed Shapefile feature arrays cleanly.
+ */
+function extractTypedFeaturesFromGeoJson(geojson: any): {
+  points: ShapefilePointFeature[];
+  lines: ShapefilePolyLineFeature[];
+  polygons: ShapefilePolygonFeature[];
+} {
+  const points: ShapefilePointFeature[] = [];
+  const lines: ShapefilePolyLineFeature[] = [];
+  const polygons: ShapefilePolygonFeature[] = [];
+
+  if (!geojson) return { points, lines, polygons };
+  const features = geojson.features || (geojson.type === "Feature" ? [geojson] : []);
+
+  const pushGeometry = (geom: any, props: Record<string, any>) => {
+    if (!geom) return;
+    if (geom.type === "Point") {
+      const [lng, lat] = geom.coordinates || [];
+      if (Number.isFinite(lng) && Number.isFinite(lat)) {
+        points.push({ lng, lat, properties: props });
+      }
+    } else if (geom.type === "MultiPoint") {
+      (geom.coordinates || []).forEach((pt: any) => {
+        if (Array.isArray(pt) && Number.isFinite(pt[0]) && Number.isFinite(pt[1])) {
+          points.push({ lng: pt[0], lat: pt[1], properties: props });
+        }
+      });
+    } else if (geom.type === "LineString") {
+      if (Array.isArray(geom.coordinates) && geom.coordinates.length >= 2) {
+        lines.push({ parts: [geom.coordinates], properties: props });
+      }
+    } else if (geom.type === "MultiLineString") {
+      const validParts = (geom.coordinates || []).filter((p: any) => Array.isArray(p) && p.length >= 2);
+      if (validParts.length > 0) {
+        lines.push({ parts: validParts, properties: props });
+      }
+    } else if (geom.type === "Polygon") {
+      const rings: [number, number][][] = [];
+      const ringIsHole: boolean[] = [];
+      (geom.coordinates || []).forEach((ring: any, idx: number) => {
+        if (Array.isArray(ring) && ring.length >= 3) {
+          rings.push(ring);
+          ringIsHole.push(idx > 0);
+        }
+      });
+      if (rings.length > 0) {
+        polygons.push({ rings, ringIsHole, properties: props });
+      }
+    } else if (geom.type === "MultiPolygon") {
+      const allRings: [number, number][][] = [];
+      const ringIsHole: boolean[] = [];
+      (geom.coordinates || []).forEach((poly: any) => {
+        (poly || []).forEach((ring: any, rIdx: number) => {
+          if (Array.isArray(ring) && ring.length >= 3) {
+            allRings.push(ring);
+            ringIsHole.push(rIdx > 0);
+          }
+        });
+      });
+      if (allRings.length > 0) {
+        polygons.push({ rings: allRings, ringIsHole, properties: props });
+      }
+    } else if (geom.type === "GeometryCollection") {
+      (geom.geometries || []).forEach((sub: any) => pushGeometry(sub, props));
+    }
+  };
+
+  features.forEach((feat: any) => {
+    if (!feat) return;
+    pushGeometry(feat.geometry || feat, feat.properties || {});
+  });
+
+  return { points, lines, polygons };
+}
+
+/**
+ * Adds a single typed Shapefile layer (.shp, .shx, .dbf, .prj, .cpg, .tab) to an existing JSZip instance.
+ */
+function appendShapefileLayerToZip(
+  zip: JSZip,
+  cleanBase: string,
+  kind: "point" | "polyline" | "polygon",
+  features: any[]
+): void {
+  const propsList = features.map((f) => f.properties || {});
+  const fieldDefs = deriveFieldDefs(propsList);
+  const dbf = buildDbfBuffer(propsList, fieldDefs);
+
+  let binary: { shp: Uint8Array; shx: Uint8Array };
+  if (kind === "point") {
+    binary = buildPointShapefile(features as ShapefilePointFeature[]);
+  } else if (kind === "polyline") {
+    binary = buildPolyLineShapefile(features as ShapefilePolyLineFeature[]);
+  } else {
+    binary = buildPolygonShapefile(features as ShapefilePolygonFeature[]);
+  }
+
+  zip.file(`${cleanBase}.shp`, binary.shp);
+  zip.file(`${cleanBase}.shx`, binary.shx);
+  zip.file(`${cleanBase}.dbf`, dbf);
+  zip.file(`${cleanBase}.prj`, WGS84_PRJ);
+  zip.file(`${cleanBase}.cpg`, "UTF-8\n");
+  zip.file(`${cleanBase}.tab`, buildMapInfoShapefileTab(fieldDefs));
+}
+
+/**
  * Creates a complete zipped Shapefile package (.zip) from Point features.
  */
 export async function createPointShapefileZip(
@@ -414,19 +768,8 @@ export async function createPointShapefileZip(
   baseName: string = "Groundwater_Points"
 ): Promise<Blob> {
   const cleanBase = baseName.replace(/[^a-zA-Z0-9_-]/g, "_") || "Groundwater_Points";
-  const { shp, shx } = buildPointShapefile(points);
-
-  const propertiesList = points.map((p) => p.properties || {});
-  const { fieldDefs, keyMap } = deriveFieldDefs(propertiesList);
-  const dbf = buildDbfBuffer(propertiesList, fieldDefs, keyMap);
-
   const zip = new JSZip();
-  zip.file(`${cleanBase}.shp`, shp);
-  zip.file(`${cleanBase}.shx`, shx);
-  zip.file(`${cleanBase}.dbf`, dbf);
-  zip.file(`${cleanBase}.prj`, WGS84_PRJ);
-  zip.file(`${cleanBase}.cpg`, "UTF-8\n");
-
+  appendShapefileLayerToZip(zip, cleanBase, "point", points);
   return await zip.generateAsync({ type: "blob" });
 }
 
@@ -438,93 +781,117 @@ export async function createPolygonShapefileZip(
   baseName: string = "Groundwater_Boundary"
 ): Promise<Blob> {
   const cleanBase = baseName.replace(/[^a-zA-Z0-9_-]/g, "_") || "Groundwater_Boundary";
-  const { shp, shx } = buildPolygonShapefile(polygons);
-
-  const propertiesList = polygons.map((p) => p.properties || {});
-  const { fieldDefs, keyMap } = deriveFieldDefs(propertiesList);
-  const dbf = buildDbfBuffer(propertiesList, fieldDefs, keyMap);
-
   const zip = new JSZip();
-  zip.file(`${cleanBase}.shp`, shp);
-  zip.file(`${cleanBase}.shx`, shx);
-  zip.file(`${cleanBase}.dbf`, dbf);
-  zip.file(`${cleanBase}.prj`, WGS84_PRJ);
-  zip.file(`${cleanBase}.cpg`, "UTF-8\n");
-
+  appendShapefileLayerToZip(zip, cleanBase, "polygon", polygons);
   return await zip.generateAsync({ type: "blob" });
 }
 
 /**
- * Converts GeoJSON into Shapefile ZIP package (Points or Polygons).
+ * Creates a complete zipped Shapefile package (.zip) from PolyLine features.
+ */
+export async function createPolyLineShapefileZip(
+  lines: ShapefilePolyLineFeature[],
+  baseName: string = "Groundwater_Contours"
+): Promise<Blob> {
+  const cleanBase = baseName.replace(/[^a-zA-Z0-9_-]/g, "_") || "Groundwater_Contours";
+  const zip = new JSZip();
+  appendShapefileLayerToZip(zip, cleanBase, "polyline", lines);
+  return await zip.generateAsync({ type: "blob" });
+}
+
+/**
+ * Converts GeoJSON into a Shapefile ZIP package (Points, PolyLines, Polygons, or mixed).
  */
 export async function createShapefileFromGeoJson(
   geojson: any,
   baseName: string = "Map_Layer"
 ): Promise<Blob> {
   const cleanBase = baseName.replace(/[^a-zA-Z0-9_-]/g, "_") || "Map_Layer";
-  const features = geojson.features || (geojson.type === "Feature" ? [geojson] : []);
+  const { points, lines, polygons } = extractTypedFeaturesFromGeoJson(geojson);
 
-  // Detect whether features are Polygons or Points
-  const polygonFeatures: ShapefilePolygonFeature[] = [];
-  const pointFeatures: ShapefilePointFeature[] = [];
+  const zip = new JSZip();
+  const typeCount = (points.length > 0 ? 1 : 0) + (lines.length > 0 ? 1 : 0) + (polygons.length > 0 ? 1 : 0);
 
-  features.forEach((feat: any) => {
-    const geom = feat.geometry;
-    if (!geom) return;
-    const props = feat.properties || {};
-
-    if (geom.type === "Point") {
-      const [lng, lat] = geom.coordinates;
-      pointFeatures.push({ lng, lat, properties: props });
-    } else if (geom.type === "Polygon") {
-      polygonFeatures.push({ rings: geom.coordinates, properties: props });
-    } else if (geom.type === "MultiPolygon") {
-      // MultiPolygon has array of polygons
-      const allRings: [number, number][][] = [];
-      geom.coordinates.forEach((poly: any) => {
-        poly.forEach((ring: any) => allRings.push(ring));
-      });
-      polygonFeatures.push({ rings: allRings, properties: props });
-    }
-  });
-
-  if (polygonFeatures.length > 0 && pointFeatures.length === 0) {
-    return await createPolygonShapefileZip(polygonFeatures, cleanBase);
-  } else if (pointFeatures.length > 0 && polygonFeatures.length === 0) {
-    return await createPointShapefileZip(pointFeatures, cleanBase);
-  } else if (polygonFeatures.length > 0 && pointFeatures.length > 0) {
-    // Both: bundle both sub-shapefiles in the same zip archive!
-    const zip = new JSZip();
-
-    // 1. Points
-    const ptBase = `${cleanBase}_Stations`;
-    const { shp: ptShp, shx: ptShx } = buildPointShapefile(pointFeatures);
-    const ptProps = pointFeatures.map((p) => p.properties || {});
-    const { fieldDefs: ptFields, keyMap: ptKeyMap } = deriveFieldDefs(ptProps);
-    const ptDbf = buildDbfBuffer(ptProps, ptFields, ptKeyMap);
-    zip.file(`${ptBase}.shp`, ptShp);
-    zip.file(`${ptBase}.shx`, ptShx);
-    zip.file(`${ptBase}.dbf`, ptDbf);
-    zip.file(`${ptBase}.prj`, WGS84_PRJ);
-    zip.file(`${ptBase}.cpg`, "UTF-8\n");
-
-    // 2. Polygons
-    const polyBase = `${cleanBase}_Boundaries`;
-    const { shp: polyShp, shx: polyShx } = buildPolygonShapefile(polygonFeatures);
-    const polyProps = polygonFeatures.map((p) => p.properties || {});
-    const { fieldDefs: polyFields, keyMap: polyKeyMap } = deriveFieldDefs(polyProps);
-    const polyDbf = buildDbfBuffer(polyProps, polyFields, polyKeyMap);
-    zip.file(`${polyBase}.shp`, polyShp);
-    zip.file(`${polyBase}.shx`, polyShx);
-    zip.file(`${polyBase}.dbf`, polyDbf);
-    zip.file(`${polyBase}.prj`, WGS84_PRJ);
-    zip.file(`${polyBase}.cpg`, "UTF-8\n");
-
+  if (typeCount === 0) {
+    appendShapefileLayerToZip(zip, cleanBase, "point", []);
     return await zip.generateAsync({ type: "blob" });
   }
 
-  // Fallback empty point shapefile
-  return await createPointShapefileZip([], cleanBase);
+  if (typeCount === 1) {
+    if (polygons.length > 0) appendShapefileLayerToZip(zip, cleanBase, "polygon", polygons);
+    else if (lines.length > 0) appendShapefileLayerToZip(zip, cleanBase, "polyline", lines);
+    else appendShapefileLayerToZip(zip, cleanBase, "point", points);
+    return await zip.generateAsync({ type: "blob" });
+  }
+
+  if (polygons.length > 0) appendShapefileLayerToZip(zip, `${cleanBase}_Polygons`, "polygon", polygons);
+  if (lines.length > 0) appendShapefileLayerToZip(zip, `${cleanBase}_Lines`, "polyline", lines);
+  if (points.length > 0) appendShapefileLayerToZip(zip, `${cleanBase}_Stations`, "point", points);
+  return await zip.generateAsync({ type: "blob" });
+}
+
+export interface GisPackageLayerInput {
+  fileBaseName: string;
+  geoJson: any;
+}
+
+export interface GisPackageExtraFile {
+  fileName: string;
+  content: Blob | Uint8Array | string;
+}
+
+/**
+ * Creates a complete multi-layer ArcGIS & MapInfo GIS Package (.zip) containing all prepared vector
+ * shapefiles (.shp, .shx, .dbf, .prj, .cpg, .tab), plus optional georeferenced raster & legend files.
+ */
+export async function createGisPackageZip(
+  layers: GisPackageLayerInput[],
+  extraFiles: GisPackageExtraFile[] = []
+): Promise<Blob> {
+  const zip = new JSZip();
+  const usedNames = new Set<string>();
+
+  const getUniqueBase = (rawName: string) => {
+    let base = rawName.replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+/g, "_").slice(0, 48) || "Layer";
+    if (!usedNames.has(base)) {
+      usedNames.add(base);
+      return base;
+    }
+    let idx = 2;
+    while (usedNames.has(`${base}_${idx}`)) idx++;
+    const finalName = `${base}_${idx}`;
+    usedNames.add(finalName);
+    return finalName;
+  };
+
+  layers.forEach((layer) => {
+    const { points, lines, polygons } = extractTypedFeaturesFromGeoJson(layer.geoJson);
+    const typeCount = (points.length > 0 ? 1 : 0) + (lines.length > 0 ? 1 : 0) + (polygons.length > 0 ? 1 : 0);
+    if (typeCount === 0) return;
+
+    if (typeCount === 1) {
+      const base = getUniqueBase(layer.fileBaseName);
+      if (polygons.length > 0) appendShapefileLayerToZip(zip, base, "polygon", polygons);
+      else if (lines.length > 0) appendShapefileLayerToZip(zip, base, "polyline", lines);
+      else appendShapefileLayerToZip(zip, base, "point", points);
+    } else {
+      if (polygons.length > 0) appendShapefileLayerToZip(zip, getUniqueBase(`${layer.fileBaseName}_Poly`), "polygon", polygons);
+      if (lines.length > 0) appendShapefileLayerToZip(zip, getUniqueBase(`${layer.fileBaseName}_Line`), "polyline", lines);
+      if (points.length > 0) appendShapefileLayerToZip(zip, getUniqueBase(`${layer.fileBaseName}_Pt`), "point", points);
+    }
+  });
+
+  extraFiles.forEach((ef) => {
+    if (ef.fileName && ef.content !== undefined) {
+      zip.file(ef.fileName, ef.content);
+    }
+  });
+
+  return await zip.generateAsync({
+    type: "blob",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 }
+  });
 }
 
 /**
