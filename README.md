@@ -11,6 +11,7 @@ This repository supports two distinct deployment architectures:
 1. **Static Frontend Mode (GitHub Pages / Static CDN)**
    - `.github/workflows/deploy.yml` builds only the static Vite frontend (`./dist`) and publishes it to GitHub Pages.
    - GitHub Pages **cannot** execute `server.ts`, host `/api/ai/*` endpoints, or store server-side secrets such as `GEMINI_API_KEY`.
+   - When hosted statically, the AquaIntel drawer automatically falls back to the browser-side offline hydrogeological summary engine (or can point to a separately hosted Express backend via `VITE_API_BASE_URL`).
    - Core groundwater calculations, diagrams, Excel exports, and shapefile filtering run 100% client-side in the browser.
 
 2. **Full-Stack Node.js Mode (`server.ts` + Express + Static `dist/`)**

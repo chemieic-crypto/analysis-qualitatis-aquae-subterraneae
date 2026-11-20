@@ -397,31 +397,16 @@ export default function App() {
     const autoLoadDefaultData = async () => {
       const dataFilesToTry = [
         "./Pre-Monsoon.xlsx",
-        "/Pre-Monsoon.xlsx",
         "./Pre-Monsoon 2025.xlsx",
-        "/Pre-Monsoon 2025.xlsx",
-        "./Pre-Monsoon.xlsx.xlsx",
-        "/Pre-Monsoon.xlsx.xlsx",
-        "./Pre-Monsoon 2025.xlsx.xlsx",
-        "/Pre-Monsoon 2025.xlsx.xlsx",
         "./Pre_Monsoon.xlsx",
-        "/Pre_Monsoon.xlsx",
         "./PreMonsoon.xlsx",
-        "/PreMonsoon.xlsx",
         "./pre-monsoon.xlsx",
-        "/pre-monsoon.xlsx",
         "./Pre-Monsoon.xls",
-        "/Pre-Monsoon.xls",
         "./Pre-Monsoon 2025.xls",
-        "/Pre-Monsoon 2025.xls",
         "./groundwater_data.xlsx",
-        "/groundwater_data.xlsx",
         "./data.xlsx",
-        "/data.xlsx",
         "./groundwater.xlsx",
-        "/groundwater.xlsx",
-        "./data.csv",
-        "/data.csv"
+        "./data.csv"
       ];
 
       for (const fileUrl of dataFilesToTry) {

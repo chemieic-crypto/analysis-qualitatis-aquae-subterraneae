@@ -2077,9 +2077,13 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
           rightCell.alignment = { vertical: "middle", horizontal: "right" };
         }
 
-        // Try embedding the official transparent CGWB logo into the worksheet
+        // Try embedding the official CGWB logo into the worksheet (works on root and GitHub Pages subpaths)
         try {
-          const logoResp = await fetch("/assets/aistudio/logo_1-removebg-preview_f8d93171.png");
+          const cgwbLogoUrl = `${import.meta.env.BASE_URL}assets/cgwb_logo.png`;
+          let logoResp = await fetch(cgwbLogoUrl).catch(() => null);
+          if (!logoResp || !logoResp.ok) {
+            logoResp = await fetch(logoImageSrc || DEFAULT_CGWB_PNG_BASE64);
+          }
           if (logoResp.ok) {
             const logoBuffer = await logoResp.arrayBuffer();
             const imageId = wb.addImage({
@@ -4595,7 +4599,11 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
                     <div className="mt-2 pt-2 border-t border-[#b0c4de] flex items-center justify-between text-[10px] bg-white p-2 rounded border border-slate-200 shadow-xs">
                       <div className="flex items-center gap-1.5">
                         <img
-                          src="/assets/aistudio/logo_1-removebg-preview_f8d93171.png"
+                          src={`${import.meta.env.BASE_URL}assets/cgwb_logo.png`}
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = DEFAULT_CGWB_PNG_BASE64;
+                          }}
                           alt="CGWB Logo"
                           className="h-5 w-auto object-contain"
                         />
@@ -4900,7 +4908,11 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
                           >
                             <div className="flex items-center gap-2 py-1">
                               <img
-                                src="/assets/aistudio/logo_1-removebg-preview_f8d93171.png"
+                                src={`${import.meta.env.BASE_URL}assets/cgwb_logo.png`}
+                                onError={(e) => {
+                                  e.currentTarget.onerror = null;
+                                  e.currentTarget.src = DEFAULT_CGWB_PNG_BASE64;
+                                }}
                                 alt="CGWB Logo"
                                 className="h-7 w-auto object-contain inline-block shrink-0"
                               />
@@ -4927,7 +4939,11 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
                     <div className="mt-3 mx-auto min-w-[1100px] border-t-2 border-[#b0c4de] pt-2.5 pb-1 px-3 flex items-center justify-between bg-white rounded-b-xl shadow-xs">
                       <div className="flex items-center gap-2">
                         <img
-                          src="/assets/aistudio/logo_1-removebg-preview_f8d93171.png"
+                          src={`${import.meta.env.BASE_URL}assets/cgwb_logo.png`}
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = DEFAULT_CGWB_PNG_BASE64;
+                          }}
                           alt="CGWB Logo"
                           className="h-8 w-auto object-contain shrink-0"
                         />

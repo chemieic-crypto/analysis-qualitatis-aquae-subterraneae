@@ -19,6 +19,7 @@ import {
   HelpCircle,
   RotateCcw,
 } from "lucide-react";
+import { generateDeterministicHydroReport } from "../utils/offlineHydroSummary";
 
 export interface HydroContextSummary {
   totalSamples: number;
@@ -146,35 +147,62 @@ export const HydroAiAgentDrawer: React.FC<HydroAiAgentDrawerProps> = ({
     if (!textToSend) setInput("");
     setIsLoading(true);
 
+    const contextPayload = {
+      samplesCount: context.filteredSamples,
+      totalDatasetSamples: context.totalSamples,
+      activeFilters: {
+        state: context.selectedState || "All States",
+        district: context.selectedDistrict || "All Districts",
+        block: context.selectedBlock || "All Blocks",
+        aquifer: context.selectedAquifer || "All Aquifers",
+        season: context.selectedSeason || "All Seasons",
+        year: context.selectedYear || "All Years",
+      },
+      faciesBreakdown: context.faciesBreakdown || {},
+      usslBreakdown: context.usslBreakdown || {},
+      exceedancesSummary: context.exceedances || [],
+      averageParameters: context.avgParameters || {},
+    };
+
+    const appendOfflineFallback = (note: string) => {
+      const offlineReply: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "model",
+        content: generateDeterministicHydroReport(contextPayload, query),
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        fallbackNote: note,
+      };
+      setMessages((prev) => [...prev, offlineReply]);
+    };
+
     try {
-      // Prepare payload for server-side Gemini endpoint
+      // Prepare payload for server-side Gemini endpoint (supports optional external API base URL)
       const payloadMessages = newMessages
         .filter((m) => m.id !== "welcome")
         .map((m) => ({ role: m.role, content: m.content }));
 
-      const res = await fetch("/api/ai/chat", {
+      const apiBase = (import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
+      const res = await fetch(`${apiBase}/api/ai/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: payloadMessages,
-          context: {
-            samplesCount: context.filteredSamples,
-            totalDatasetSamples: context.totalSamples,
-            activeFilters: {
-              state: context.selectedState || "All States",
-              district: context.selectedDistrict || "All Districts",
-              block: context.selectedBlock || "All Blocks",
-              aquifer: context.selectedAquifer || "All Aquifers",
-              season: context.selectedSeason || "All Seasons",
-              year: context.selectedYear || "All Years",
-            },
-            faciesBreakdown: context.faciesBreakdown || {},
-            usslBreakdown: context.usslBreakdown || {},
-            exceedancesSummary: context.exceedances || [],
-            averageParameters: context.avgParameters || {},
-          },
+          context: contextPayload,
         }),
       });
+
+      const contentType = res.headers.get("content-type") || "";
+      const isStaticHostResponse =
+        res.status === 404 ||
+        res.status === 405 ||
+        !contentType.toLowerCase().includes("application/json");
+
+      if (isStaticHostResponse) {
+        appendOfflineFallback(
+          "Static hosting mode (no AI backend server detected): generated locally via offline hydrogeological summary engine."
+        );
+        return;
+      }
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
@@ -193,7 +221,20 @@ export const HydroAiAgentDrawer: React.FC<HydroAiAgentDrawerProps> = ({
       setMessages((prev) => [...prev, aiReply]);
     } catch (err: any) {
       console.error("AI Chat Error:", err);
-      let errorText = err?.message || "Failed to reach AI service";
+      const rawMessage = err?.message || "Failed to reach AI service";
+      const isNetworkUnavailable =
+        err instanceof TypeError ||
+        rawMessage.toLowerCase().includes("failed to fetch") ||
+        rawMessage.toLowerCase().includes("networkerror");
+
+      if (isNetworkUnavailable) {
+        appendOfflineFallback(
+          "Offline mode (AI backend unreachable): generated locally via deterministic hydrogeological summary engine."
+        );
+        return;
+      }
+
+      let errorText = rawMessage;
       if (
         errorText.includes("503") ||
         errorText.includes("high demand") ||
