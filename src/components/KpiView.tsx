@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef } from "react";
 import { captureGlossyCanvas } from "../utils/colorSanitizer";
+import { canvasToJpegBlobWithDpi, dpiToCaptureScale } from "../utils/jpegDpi";
 import { DataHeaders, ShapefileLayer } from "../types";
 import { PARAM_CONFIG, hasBisLimit } from "../data/config";
 import { toProperCase } from "../utils/shapefileFilter";
@@ -417,60 +418,41 @@ export default function KpiView({
   const [isRangeModalOpen, setIsRangeModalOpen] = useState<boolean>(false);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
-  // JPEG Download Ref & Handler
+  // JPEG Download Ref & Handler (600–800 DPI)
   const kpiSectionRef = useRef<HTMLDivElement | null>(null);
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
+  const [kpiExportDpi, setKpiExportDpi] = useState<600 | 700 | 800>(600);
 
   const handleDownloadJpeg = async () => {
     if (!kpiSectionRef.current) return;
     setIsDownloading(true);
     try {
       if (showToast) {
-        showToast("Generating high-density 600 DPI JPEG image...", "success");
+        showToast(`Generating high-density ${kpiExportDpi} DPI JPEG image...`, "success");
       }
-      
-      // Capture pixel-identical glossy HD canvas (zero text cutting, preserves glassmorphism & 3D depth)
+
+      // Capture pixel-identical glossy HD canvas at 600–800 DPI scale (6.25x–8.33x)
       const canvas = await captureGlossyCanvas(kpiSectionRef.current, {
-        scale: 3,
+        scale: dpiToCaptureScale(kpiExportDpi),
         backgroundColor: "#f8fafc",
       });
 
-      let exported = false;
       const dateStr = new Date().toISOString().slice(0, 10);
       const paramSlug = (selectedParamKey || "KPI").replace(/[^a-zA-Z0-9]/g, "_");
-      const filename = `KPI_Section_${paramSlug}_600DPI_${dateStr}.jpg`;
+      const filename = `KPI_Section_${paramSlug}_${kpiExportDpi}DPI_${dateStr}.jpg`;
 
-      try {
-        const blob = await new Promise<Blob | null>((resolve) => {
-          canvas.toBlob((b) => resolve(b), "image/jpeg", 0.95);
-        });
-        if (blob) {
-          const blobUrl = URL.createObjectURL(blob);
-          const link = document.createElement("a");
-          link.download = filename;
-          link.href = blobUrl;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-          exported = true;
-        }
-      } catch (e) {
-        console.warn("toBlob failed, falling back to toDataURL:", e);
-      }
-
-      if (!exported) {
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
-        const link = document.createElement("a");
-        link.download = filename;
-        link.href = dataUrl;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      }
+      const blob = await canvasToJpegBlobWithDpi(canvas, kpiExportDpi, 0.96);
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.download = filename;
+      link.href = blobUrl;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
 
       if (showToast) {
-        showToast("KPI Section downloaded as High-Density 600 DPI JPEG!", "success");
+        showToast(`KPI Section downloaded as High-Density ${kpiExportDpi} DPI JPEG!`, "success");
       }
     } catch (err) {
       console.error("Error generating KPI Section JPEG:", err);
@@ -973,25 +955,39 @@ export default function KpiView({
             <span>{showGisAnalysis ? "Full Canvas Map" : "Split View"}</span>
           </button>
 
-          {/* DOWNLOAD HIGH-DENSITY JPEG BUTTON */}
-          <button
-            onClick={handleDownloadJpeg}
-            disabled={isDownloading}
-            className="bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-400 text-white font-extrabold text-xs px-3 py-1.5 rounded-xl border border-emerald-800 flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
-            title="Download entire KPI Section as high-density JPEG image (3x resolution)"
-          >
-            {isDownloading ? (
-              <>
-                <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                <span>Exporting...</span>
-              </>
-            ) : (
-              <>
-                <Download className="w-3.5 h-3.5" />
-                <span>Download JPEG (3x HD)</span>
-              </>
-            )}
-          </button>
+          {/* DOWNLOAD HIGH-DENSITY 600–800 DPI JPEG CONTROL */}
+          <div className="flex items-center bg-emerald-50 rounded-xl border border-emerald-700/40 p-0.5 shadow-xs">
+            <select
+              value={kpiExportDpi}
+              onChange={(e) => setKpiExportDpi(Number(e.target.value) as 600 | 700 | 800)}
+              disabled={isDownloading}
+              aria-label="KPI JPEG Export DPI"
+              title="Select KPI JPEG Resolution (600–800 DPI)"
+              className="bg-white text-emerald-950 font-black text-xs px-2 py-1 rounded-lg border border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer mr-1"
+            >
+              <option value={600}>600 DPI</option>
+              <option value={700}>700 DPI</option>
+              <option value={800}>800 DPI</option>
+            </select>
+            <button
+              onClick={handleDownloadJpeg}
+              disabled={isDownloading}
+              className="bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-400 text-white font-extrabold text-xs px-3 py-1 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
+              title={`Download entire KPI Section as high-density ${kpiExportDpi} DPI JPEG image`}
+            >
+              {isDownloading ? (
+                <>
+                  <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Exporting...</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download JPEG ({kpiExportDpi} DPI)</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 

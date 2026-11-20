@@ -2962,8 +2962,7 @@ export default function BulletinView({
       "MN": "मैंगनीज (Manganese)",
       "AL": "एल्युमिनियम (Aluminum)",
       "BA": "बेरियम (Barium)",
-      "B": "बोरोन (Boron)",
-      "MO": "मोलिब्डेनम (Molybdenum)"
+      "B": "बोरोन (Boron)"
     };
     const paramNameHindi = paramNamesHindi[key] || paramName;
 
@@ -3363,7 +3362,6 @@ export default function BulletinView({
           "Al": "Al",
           "Ba": "Ba",
           "B": "B",
-          "Mo": "Mo",
           "NH4": "NH<sub>4</sub><sup>+</sup>",
           "PO4": "PO<sub>4</sub><sup>3-</sup>"
         };
@@ -3408,7 +3406,7 @@ export default function BulletinView({
       }
 
       const basicParamsList = ["pH", "TDS", "Turbidity", "Alkalinity", "TH", "EC", "Cl", "NO3", "F", "Ca", "Mg", "SO4"];
-      const heavyMetalsList = ["Fe", "As", "U", "Zn", "Cu", "Pb", "Cd", "Cr", "Hg", "Ni", "Se", "Mn", "Al", "Ba", "B", "Mo"];
+      const heavyMetalsList = ["Fe", "As", "U", "Zn", "Cu", "Pb", "Cd", "Cr", "Hg", "Ni", "Se", "Mn", "Al", "Ba", "B"];
 
       let basicSummaryListHTML = "";
       let heavySummaryListHTML = "";

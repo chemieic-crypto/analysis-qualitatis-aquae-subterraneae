@@ -67,7 +67,7 @@ const COLUMNS = [
   "SO4-2 (mg/L)", "NO3-1 (mg/L)", "F", "Ca+2 (mg/L)", "Mg+2 (mg/L)", 
   "TH *as CaCO3 (mg/L)", "Cr (mg/L)", "Mn (mg/L)", "Fe (mg/L)", "Ni (mg/L)", 
   "Cu (mg/L)", "Zn (mg/L)", "As (µg/L)", "Se (µg/L)", "Cd (µg/L)", "Pb (µg/L)", 
-  "U (µg/L)", "Al (mg/L)", "Ba (mg/L)", "B (mg/L)", "Mo (mg/L)", "Hg (mg/L)"
+  "U (µg/L)", "Al (mg/L)", "Ba (mg/L)", "B (mg/L)", "Hg (mg/L)"
 ];
 
 const DEFAULT_LIMITS: Record<string, { acc: number; perm: number; isStrictRange?: boolean }> = {
@@ -94,11 +94,10 @@ const DEFAULT_LIMITS: Record<string, { acc: number; perm: number; isStrictRange?
   "Al (mg/L)": { acc: 0.03, perm: 0.2 },
   "Ba (mg/L)": { acc: 0.7, perm: 0.7 },
   "B (mg/L)": { acc: 0.5, perm: 2.4 },
-  "Mo (mg/L)": { acc: 0.05, perm: 0.07 },
   "Hg (mg/L)": { acc: 0.001, perm: 0.001 }
 };
 
-const HEAVY_METALS = ["Cr", "Mn", "Fe", "Ni", "Cu", "Zn", "As", "Se", "Cd", "Pb", "U", "Al", "Ba", "B", "Mo", "Hg"];
+const HEAVY_METALS = ["Cr", "Mn", "Fe", "Ni", "Cu", "Zn", "As", "Se", "Cd", "Pb", "U", "Al", "Ba", "B", "Hg"];
 
 export interface AlertParamDefinition {
   key: string;
@@ -133,7 +132,6 @@ export const ALERT_PARAM_DEFINITIONS: AlertParamDefinition[] = [
   { key: "Al (mg/L)", shortName: "Al", displayHeader: "Al (mg/L)", rangeText: "0.03-0.2", unit: "mg/L", group: "metal" },
   { key: "Ba (mg/L)", shortName: "Ba", displayHeader: "Ba (mg/L)", rangeText: "0.7", unit: "mg/L", group: "metal" },
   { key: "B (mg/L)", shortName: "B", displayHeader: "B (mg/L)", rangeText: "0.5-2.4", unit: "mg/L", group: "metal" },
-  { key: "Mo (mg/L)", shortName: "Mo", displayHeader: "Mo (mg/L)", rangeText: "0.05-0.07", unit: "mg/L", group: "metal" },
   { key: "Hg (mg/L)", shortName: "Hg", displayHeader: "Hg (mg/L)", rangeText: "0.001", unit: "mg/L", group: "metal" }
 ];
 
@@ -215,7 +213,7 @@ const FULL_PARAM_NAMES: Record<string, string> = {
   "TH": "Total Hardness", "Cr": "Chromium", "Mn": "Manganese", "Fe": "Iron",
   "Ni": "Nickel", "Cu": "Copper", "Zn": "Zinc", "As": "Arsenic", "Se": "Selenium",
   "Cd": "Cadmium", "Pb": "Lead", "U": "Uranium", "Al": "Aluminium", "Ba": "Barium",
-  "B": "Boron", "Mo": "Molybdenum", "Hg": "Mercury"
+  "B": "Boron", "Hg": "Mercury"
 };
 
 const CGWB_LABS: Record<string, string> = {
@@ -1168,7 +1166,6 @@ const FortnightlyAlertsView: React.FC<FortnightlyAlertsViewProps> = ({
         "Al (mg/L)": { configKey: "Al", aliases: ["al", "aluminium", "aluminum", "alluminium", "al (mg/l)", "al(mg/l)"] },
         "Ba (mg/L)": { configKey: "Ba", aliases: ["ba", "barium", "total barium", "ba (mg/l)", "ba(mg/l)"] },
         "B (mg/L)": { configKey: "B", aliases: ["b", "boron", "boran", "total boron", "b (mg/l)", "b(mg/l)"] },
-        "Mo (mg/L)": { configKey: "Mo", aliases: ["mo", "molybdenum", "molybdnum", "mo (mg/l)", "mo(mg/l)"] },
         "Hg (mg/L)": { 
           configKey: "Hg", 
           aliases: ["hg", "mercury", "total mercury", "hg (mg/l)", "hg(mg/l)"],

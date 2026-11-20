@@ -3,7 +3,7 @@ import L from "leaflet";
 import shp from "shpjs";
 import * as turf from "@turf/turf";
 import * as XLSX from "xlsx";
-import { ensureSheetJSNumbers, isNumericString } from "../utils/excelFormatter";
+import { downloadStyledSheetJSWorkbook, ensureSheetJSNumbers, isNumericString } from "../utils/excelFormatter";
 import {
   MapPin,
   Filter,
@@ -869,7 +869,7 @@ export default function ShapefileFilterView({
   };
 
   // Download filtered points as Excel (.xlsx)
-  const handleDownloadExcel = () => {
+  const handleDownloadExcel = async () => {
     if (insideSamples.length === 0) {
       showToast("No sample points to export.", "warning");
       return;
@@ -965,7 +965,10 @@ export default function ShapefileFilterView({
       XLSX.utils.book_append_sheet(wb, stationsWs, "Extracted_Wells");
 
       const baseName = `${shapefileName || "Filtered"}_Wells_${new Date().toISOString().slice(0, 10)}.xlsx`;
-      XLSX.writeFile(wb, baseName);
+      await downloadStyledSheetJSWorkbook(wb, baseName, {
+        Spatial_Summary: 2,
+        Extracted_Wells: 1,
+      });
       showToast(`Downloaded Excel report with ${insideSamples.length} wells!`, "success");
     } catch (err: any) {
       console.error("Excel download error:", err);

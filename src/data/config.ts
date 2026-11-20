@@ -54,7 +54,6 @@ export const DEFAULT_PARAM_CONFIG: ParamConfigMap = {
   'B': { b1: 0.5, b2: 2.4, unit: 'mg/L', name: 'Boran', keywords: ['B', 'Boran'] },
   'Co': { b1: 0, b2: 0, unit: 'mg/L', name: 'Cobalt', keywords: ['co', 'cobalt'], hasBisLimit: false },
   'Sr': { b1: 0, b2: 0, unit: 'mg/L', name: 'Strontium', keywords: ['sr', 'strontium'], hasBisLimit: false },
-  'Mo': { b1: 0.05, b2: 0.07, unit: 'mg/L', name: 'Molybdnum', keywords: ['Mo', 'Molybdnum'] },
   'SAR': { b1: 10, b2: 26, unit: '', name: 'Sodium Adsorption Ratio', keywords: ['sar', 'sodium adsorption ratio', 'sodium-adsorption-ratio'] },
   'RSC': { b1: 1.25, b2: 2.5, unit: 'meq/L', name: 'Residual Sodium Carbonate', keywords: ['rsc', 'residual sodium carbonate', 'residual-sodium-carbonate'] },
 };

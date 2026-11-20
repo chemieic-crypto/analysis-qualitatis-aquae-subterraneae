@@ -51,6 +51,7 @@ import {
   computeCorrelationResults,
   computeRegressionDetails
 } from "../utils/advancedAnalysisHelpers";
+import SourceWiseAllParamTab from "./SourceWiseAllParamTab";
 
 interface AdvancedAnalysisViewProps {
   rawData: any[];
@@ -71,8 +72,8 @@ export default function AdvancedAnalysisView({
   showToast,
   isVisible
 }: AdvancedAnalysisViewProps) {
-  // GUI Sub Tabs: "frequency" | "depth" | "aquifer" | "aquiferTapped" | "stageExtraction" | "source" | "comparison" | "biplots" | "correlation"
-  const [activeSubTab, setActiveSubTab] = useState<"frequency" | "depth" | "aquifer" | "aquiferTapped" | "stageExtraction" | "source" | "comparison" | "biplots" | "correlation">("frequency");
+  // GUI Sub Tabs
+  const [activeSubTab, setActiveSubTab] = useState<AdvancedSubTab>("frequency");
 
   // --- BI-PLOTS CONFIG ---
   const [biplotType, setBiplotType] = useState<"na-cl" | "ca-so4" | "ec-nasratio" | "cams-hco3so4">("na-cl");
@@ -4266,8 +4267,8 @@ export default function AdvancedAnalysisView({
           </div>
 
 
-          {/* SECTION 3: ANALYSIS SELECTION DROPDOWN */}
-          <div className="flex items-center justify-start border-b border-slate-250 pb-4 select-none">
+          {/* SECTION 3: ANALYSIS VIEW SELECTOR & DEDICATED SOURCE-WISE ALL-PARAMETER TAB */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4 select-none">
             <div className="flex items-center gap-3 bg-slate-50 p-2 rounded-xl border border-slate-200 shadow-sm w-full max-w-lg">
               <span className="text-xs font-black text-slate-500 uppercase tracking-widest whitespace-nowrap pl-2">Analysis View:</span>
               <select
@@ -4280,12 +4281,49 @@ export default function AdvancedAnalysisView({
                 <option value="aquifer">🗄️ Principal Aquifer Table</option>
                 <option value="aquiferTapped">🔀 Aquifer Tapped Table</option>
                 <option value="stageExtraction">📈 Stage of Extraction Table</option>
-                <option value="source">🛢️ Source Table</option>
+                <option value="source">🛢️ Source Table (Single Parameter Ranges)</option>
+                <option value="sourceAllParams">📋 Source-Wise All-Parameter Summary (Min/Max/P05/P75/P99)</option>
                 <option value="biplots">🔄 Bi-Plots</option>
                 <option value="correlation">🧬 Correlation Analysis</option>
               </select>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setActiveSubTab("sourceAllParams")}
+              className={`h-10 px-4 rounded-xl border text-xs font-bold inline-flex items-center gap-2 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                activeSubTab === "sourceAllParams"
+                  ? "bg-slate-900 text-white border-slate-900"
+                  : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+              }`}
+            >
+              <Database className="w-4 h-4" />
+              <span>Source-Wise All-Parameter Summary</span>
+            </button>
           </div>
+
+          {/* SUBTAB: SOURCE-WISE ALL-PARAMETER SUMMARY (ALL PARAMETERS ON SAME GUI INTERFACE) */}
+          {activeSubTab === "sourceAllParams" && (
+            <SourceWiseAllParamTab
+              analyzedData={analyzedData}
+              totalRawCount={rawData.length}
+              headers={headers}
+              headerMap={headerMap}
+              sourceColumn={sourceColumn}
+              setSourceColumn={setSourceColumn}
+              availableHeaders={availableHeaders}
+              localStateFilter={localStateFilter}
+              setLocalStateFilter={setLocalStateFilter}
+              localDistrictFilter={localDistrictFilter}
+              setLocalDistrictFilter={setLocalDistrictFilter}
+              localBlockFilter={localBlockFilter}
+              setLocalBlockFilter={setLocalBlockFilter}
+              localStates={localStates}
+              localDistricts={localDistricts}
+              localBlocks={localBlocks}
+              showToast={showToast}
+            />
+          )}
 
 
           {/* SUBTAB CONTENT 1: FREQUENCY DISTRIBUTION */}

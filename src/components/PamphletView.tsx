@@ -158,7 +158,7 @@ export default function PamphletView({
         : `${regionName} District`;
 
       const totalSamples = filtered.length;
-      const heavyMetalsList = ["Fe", "Mn", "As", "U", "Zn", "Cu", "Pb", "Cd", "Cr", "Hg", "Ni", "Se", "Ba", "Al", "B", "Mo"];
+      const heavyMetalsList = ["Fe", "Mn", "As", "U", "Zn", "Cu", "Pb", "Cd", "Cr", "Hg", "Ni", "Se", "Ba", "Al", "B"];
 
       // 2. Compute compliance metrics
       let safeSamplesCount = 0;

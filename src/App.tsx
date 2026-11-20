@@ -1,10 +1,16 @@
 import React, { useState, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
-import { ensureSheetJSNumbers } from "./utils/excelFormatter";
 import shp from "shpjs";
 import { DataHeaders, ShapefileLayer } from "./types";
 import { PARAM_CONFIG } from "./data/config";
-import { getStats } from "./utils/math";
+import {
+  extractSpreadsheetHeaders,
+  guessDataHeaders,
+  validateParsedSpreadsheetRows,
+  validateSpreadsheetFile,
+} from "./utils/spreadsheetImport";
+import { buildComplianceWorkbook } from "./utils/complianceExport";
+import { downloadStyledSheetJSWorkbook } from "./utils/excelFormatter";
 import MappingModal from "./components/MappingModal";
 import DetailedView from "./components/DetailedView";
 import ComparisonsView from "./components/ComparisonsView";
@@ -16,6 +22,7 @@ import RankingStatsView from "./components/RankingStatsView";
 import MonsoonImpactView from "./components/MonsoonImpactView";
 import GisMapView from "./components/GisMapView";
 import SectorAnalysisView from "./components/SectorAnalysisView";
+import HotspotAnalysisView from "./components/HotspotAnalysisView";
 import ErrorBoundary from "./components/ErrorBoundary";
 import HydrochemistryView from "./components/HydrochemistryView";
 import { CombinationAnalysisView } from "./components/CombinationAnalysisView";
@@ -27,6 +34,7 @@ import CalculatoriusView from "./components/CalculatoriusView";
 import KpiView from "./components/KpiView";
 import FactSheetView from "./components/FactSheetView";
 import ShapefileFilterView from "./components/ShapefileFilterView";
+import HydroMergeView from "./components/HydroMergeView";
 import { generateOfflineChartBase64 } from "./utils/chartHelpers";
 import { isStateAll, isDistrictAll, norm } from "./utils/shapefileFilter";
 import { downloadWaterQualityTemplate } from "./utils/templateGenerator";
@@ -60,7 +68,9 @@ import {
   Map,
   MapPin,
   Calculator,
-  Award
+  Award,
+  GitMerge,
+  Target
 } from "lucide-react";
 
 import Highcharts from "highcharts";
@@ -95,6 +105,7 @@ type ActiveTab =
   | "gis"
   | "shapefileFilter"
   | "sector"
+  | "hotspot"
   | "hydrochemistry"
   | "combination"
   | "pca"
@@ -103,7 +114,8 @@ type ActiveTab =
   | "advancedAnalysis"
   | "calculatorius"
   | "kpi"
-  | "factSheet";
+  | "factSheet"
+  | "hydromerge";
 
 type ReportingLevel = "State" | "District" | "Block";
 
@@ -275,81 +287,17 @@ export default function App() {
   // Charts are generated lazily inside BulletinView during bulletin compilation, or asynchronously when viewing a specific parameter in DetailedView.
   // This avoids blocking the main thread during data parsing and filtering.
 
-  // Pre-guess columns matching
-  const guessHeaders = (rawHeaders: string[]): { guessed: DataHeaders; map: Record<string, string> } => {
-    const find = (targets: string[]) =>
-      rawHeaders.find((k) => k && typeof k === "string" && targets.some((t) => k.toLowerCase().trim() === t.toLowerCase()));
-
-    const guessed: DataHeaders = {
-      state: find(["State", "State_Name", "State/UT"]),
-      district: find(["District", "Dist"]),
-      block: find(["Block", "Tehsil", "Block/Talluka", "Tehsil_Name"]),
-      wellId: find(["Well ID", "Well_ID", "Station ID", "Site ID", "WLS_ID"]),
-      location: find(["Location", "Village", "Site Name", "Place", "Location_Name"]),
-      longitude: find(["Longitude", "Long", "Lon", "X"]),
-      latitude: find(["Latitude", "Lat", "Y"]),
-      year: find(["Year", "year"]),
-      season: find(["Season", "season"]),
-      aquifer: find(["Aquifer", "Aquifer Type", "Aquifer_Type", "Aquifer Name", "Aquifer_Name"]),
-      source: find(["Source", "Well Type", "Well_Type", "Source Type", "Source_Type", "Water Source", "Water_Source", "src"]),
-      depth: find(["Depth", "Well Depth", "Depth BGL", "Well_Depth", "Casing Depth", "Drill Depth", "Depth(m)", "Depth (m)", "BGL", "depth_m"]),
-      params: [],
-    };
-
-    const knownKeys = Object.values(guessed).filter((h) => typeof h === "string") as string[];
-    const map: Record<string, string> = {};
-
-    const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-    rawHeaders.forEach((header) => {
-      if (!header || typeof header !== "string") return;
-      if (knownKeys.includes(header)) return;
-      const hLower = header.toLowerCase().trim();
-      const staticKeywords = ["location", "lat", "lon", "district", "state", "block", "village", "well", "sl. no", "serial", "unit", "source"];
-      if (staticKeywords.some((sw) => hLower.includes(sw))) return;
-
-      const matchedKey = Object.keys(PARAM_CONFIG).find((key) => {
-        const config = PARAM_CONFIG[key];
-        if (!config) return false;
-        if (hLower === key.toLowerCase()) return true;
-        if (
-          config.keywords &&
-          config.keywords.some((kw) => {
-            if (!kw) return false;
-            const kwLower = kw.toLowerCase().trim();
-            if (hLower === kwLower) return true;
-            if (hLower.includes(`(${kwLower})`)) return true;
-            try {
-              const regex = new RegExp(`\\b${escapeRegExp(kwLower)}\\b`, "i");
-              return regex.test(hLower);
-            } catch {
-              return hLower.includes(kwLower);
-            }
-          })
-        ) {
-          return true;
-        }
-        return false;
-      });
-
-      if (matchedKey) {
-        if (!guessed.params.includes(matchedKey)) {
-          guessed.params.push(matchedKey);
-        }
-        if (!guessed.params.includes(header)) {
-          guessed.params.push(header);
-        }
-        map[header] = matchedKey;
-        map[matchedKey] = header;
-      }
-    });
-
-    return { guessed, map };
-  };
-
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Reset input value so users can re-select a file after fixing validation errors
+    e.target.value = "";
     if (!file) return;
+
+    const fileCheck = validateSpreadsheetFile(file);
+    if ("error" in fileCheck) {
+      showToast(fileCheck.error, "error");
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = (evt) => {
@@ -360,7 +308,7 @@ export default function App() {
         let wb;
         try {
           wb = XLSX.read(new Uint8Array(arrayBuffer), { type: "array", cellFormula: false, cellHTML: false, cellText: false });
-        } catch (readErr) {
+        } catch (_readErr) {
           // Fallback: try parsing as string (for CSV text standard formats)
           const decoder = new TextDecoder("utf-8");
           const text = decoder.decode(arrayBuffer);
@@ -380,44 +328,13 @@ export default function App() {
         }
 
         const parsedData = XLSX.utils.sheet_to_json(ws);
-        if (!parsedData || parsedData.length === 0) {
-          showToast("Uploaded spreadsheet contains no plottable data rows.", "error");
+        const rowsCheck = validateParsedSpreadsheetRows(parsedData);
+        if ("error" in rowsCheck) {
+          showToast(rowsCheck.error, "error");
           return;
         }
 
-        // Gather all header values from worksheet structure first
-        const headersList: string[] = [];
-        if (ws["!ref"]) {
-          const range = XLSX.utils.decode_range(ws["!ref"]);
-          const R = range.s.r; // First row
-          for (let C = range.s.c; C <= range.e.c; ++C) {
-            const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-            const cell = ws[cellRef];
-            if (cell && (cell.v !== undefined && cell.v !== null)) {
-              headersList.push(String(cell.v).trim());
-            } else if (cell && cell.w !== undefined) {
-              headersList.push(String(cell.w).trim());
-            }
-          }
-        }
-
-        // Fallback: extract headers from parsed rows (for resilient mapping)
-        const allKeys = new Set<string>();
-        parsedData.forEach((row: any) => {
-          if (row && typeof row === "object") {
-            Object.keys(row).forEach((k) => {
-              if (k && !k.startsWith("__EMPTY")) {
-                allKeys.add(String(k).trim());
-              }
-            });
-          }
-        });
-
-        // Merge standard worksheet headers with json keys
-        const headersSet = new Set<string>(headersList.filter(Boolean));
-        allKeys.forEach((k) => headersSet.add(k));
-        const uniqueHeaders = Array.from(headersSet);
-
+        const uniqueHeaders = extractSpreadsheetHeaders(ws, parsedData);
         if (uniqueHeaders.length === 0) {
           showToast("Could not extract column headers. Verify spreadsheet structure.", "error");
           return;
@@ -426,16 +343,19 @@ export default function App() {
         setTempRawData(parsedData);
         setUploadedHeaders(uniqueHeaders);
 
-        const { guessed, map } = guessHeaders(uniqueHeaders);
+        const { guessed, map } = guessDataHeaders(uniqueHeaders);
         setTempHeaders(guessed);
         setTempHeaderMap(map);
-        
+
         // Open the mapping modal overlay
         setMappingModalOpen(true);
       } catch (err) {
         console.error(err);
         showToast("Parser error: ensure file is a valid standard .csv, .xls, or .xlsx spreadsheet.", "error");
       }
+    };
+    reader.onerror = () => {
+      showToast("Failed to read the selected file from disk.", "error");
     };
     reader.readAsArrayBuffer(file);
   };
@@ -570,7 +490,7 @@ export default function App() {
         setRawData(parsedData);
         setUploadedHeaders(uniqueHeaders);
 
-        const { guessed, map } = guessHeaders(uniqueHeaders);
+        const { guessed, map } = guessDataHeaders(uniqueHeaders);
         setHeaders(guessed);
         setHeaderMap(map);
 
@@ -641,255 +561,7 @@ export default function App() {
     setReportingLevel(level);
   };
 
-  // Spreadsheet styles applicator helper
-  const applyExcelStyles = (ws: any, headerRowCount = 1) => {
-    if (!ws["!ref"]) return;
-    ensureSheetJSNumbers(ws, headerRowCount);
-    const range = XLSX.utils.decode_range(ws["!ref"]);
-    const colWidths: any[] = [];
-    const rowHeights: any[] = [];
-
-    // Columns width
-    for (let R = range.s.r; R <= range.e.r; ++R) {
-      for (let C = range.s.c; C <= range.e.c; ++C) {
-        const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-        if (!ws[cellRef]) ws[cellRef] = { t: "s", v: "" };
-        const cellText = ws[cellRef].w || String(ws[cellRef].v || "");
-
-        const maxLineLen = Math.max(...cellText.split("\n").map((l: string) => l.length));
-        const textLen = maxLineLen + 2;
-
-        if (!colWidths[C] || colWidths[C].wch < textLen) {
-          colWidths[C] = { wch: Math.min(Math.max(textLen, 10), 40) };
-        }
-      }
-    }
-
-    // Styles writing logic
-    for (let R = range.s.r; R <= range.e.r; ++R) {
-      const isHeader = R < headerRowCount;
-      let maxRowHeight = isHeader ? 25 : 18;
-
-      for (let C = range.s.c; C <= range.e.c; ++C) {
-        const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-        const cell = ws[cellRef];
-        const cellText = cell.w || String(cell.v || "");
-        const lines = cellText.split("\n");
-        const colWidthLimit = colWidths[C].wch;
-
-        let estimatedLines = 0;
-        lines.forEach((line: string) => {
-          estimatedLines += Math.max(1, Math.ceil((line.length + 1) / colWidthLimit));
-        });
-
-        const calcHeight = estimatedLines * 15 + 4;
-        if (calcHeight > maxRowHeight) maxRowHeight = calcHeight;
-
-        cell.s = {
-          font: {
-            name: "Times New Roman",
-            sz: 12,
-            bold: isHeader,
-            color: { rgb: isHeader ? "FFFFFF" : "000000" },
-          },
-          fill: isHeader ? { fgColor: { rgb: "333333" } } : undefined, // Light black header row
-          border: {
-            top: { style: "thin", color: { rgb: "cbd5e1" } },
-            bottom: { style: "thin", color: { rgb: "cbd5e1" } },
-            left: { style: "thin", color: { rgb: "cbd5e1" } },
-            right: { style: "thin", color: { rgb: "cbd5e1" } },
-          },
-          alignment: {
-            wrapText: true,
-            vertical: "center",
-            horizontal: isHeader ? "center" : cell.t === "n" ? "right" : "left",
-          },
-        };
-      }
-      rowHeights[R] = { hpt: maxRowHeight };
-    }
-
-    ws["!cols"] = colWidths;
-    ws["!rows"] = rowHeights;
-  };
-
-  // Compliance calculations for sheets
-  const computeComplianceDataRows = (paramName: string, filteredDataset: any[], level: "State" | "District" | "Block") => {
-    const configKey = headerMap[paramName];
-    const config = PARAM_CONFIG[configKey];
-    if (!config) return null;
-
-    const unit = config.unit;
-    const isSingleLimit = config.b1 === config.b2 && configKey !== "pH";
-
-    let accLabel = "", permLabel = "", failLabel = "";
-    if (configKey === "pH") {
-      accLabel = `pH: ${config.b1}-${config.b2}`;
-      failLabel = "Out Range";
-    } else if (isSingleLimit) {
-      accLabel = `≤${config.b1} ${unit}`;
-      failLabel = `>${config.b1} ${unit}`;
-    } else {
-      accLabel = `≤${config.b1} ${unit}`;
-      permLabel = `>${config.b1}-${config.b2} ${unit}`;
-      failLabel = `>${config.b2} ${unit}`;
-    }
-
-    // Set headers
-    const cols = ["S.No."];
-    if (level === "State") cols.push("State");
-    else if (level === "District") cols.push("State", "District");
-    else cols.push("State", "District", "Block");
-
-    cols.push("Total Samples", `${accLabel} (No)`, `${accLabel} (%)`);
-    if (!isSingleLimit && configKey !== "pH") {
-      cols.push(`${permLabel} (No)`, `${permLabel} (%)`);
-    }
-    cols.push(`${failLabel} (No)`, `${failLabel} (%)`, "Min", "Max", "Average", "SD");
-
-    // Gather groups
-    const groupKey =
-      level === "State"
-        ? headers.state
-        : level === "District"
-        ? headers.district
-        : headers.block;
-
-    if (!groupKey) return null;
-
-    const groupMap: Record<string, { state: string; district: string; block: string; name: string; samples: any[] }> = {};
-    let globalAcc = 0, globalPerm = 0, globalFail = 0;
-    const globalVals: number[] = [];
-
-    filteredDataset.forEach((row) => {
-      const rowSt = String(row[headers.state || ""] || "").trim();
-      const rowDt = String(row[headers.district || ""] || "").trim();
-      const rowBlk = String(row[headers.block || ""] || "").trim();
-      const loc = String(row[groupKey] || "Unknown").trim();
-
-      let compositeKey = loc;
-      if (level === "District") {
-        compositeKey = rowSt ? `${rowSt}___${loc}` : loc;
-      } else if (level === "Block") {
-        compositeKey = `${rowSt}___${rowDt}___${loc}`;
-      }
-
-      if (!groupMap[compositeKey]) {
-        groupMap[compositeKey] = {
-          state: rowSt,
-          district: rowDt,
-          block: rowBlk,
-          name: loc,
-          samples: [],
-        };
-      }
-      groupMap[compositeKey].samples.push(row);
-
-      const val = parseFloat(row[paramName]);
-      if (!isNaN(val)) globalVals.push(val);
-    });
-
-    const bodyRows: any[][] = [];
-    const sortedEntries = Object.entries(groupMap).sort((a, b) => {
-      const stComp = (a[1].state || "").localeCompare(b[1].state || "");
-      if (stComp !== 0) return stComp;
-      const dtComp = (a[1].district || "").localeCompare(b[1].district || "");
-      if (dtComp !== 0) return dtComp;
-      return a[1].name.localeCompare(b[1].name);
-    });
-
-    sortedEntries.forEach(([keyKey, data], idx) => {
-      const vals = data.samples.map((s) => parseFloat(s[paramName])).filter((v) => !isNaN(v));
-      const total = vals.length;
-      if (total === 0) return;
-
-      let nAcc = 0, nPerm = 0, nFail = 0;
-      vals.forEach((v) => {
-        if (configKey === "pH") {
-          if (v >= config.b1 && v <= config.b2) {
-            nAcc++;
-            globalAcc++;
-          } else {
-            nFail++;
-            globalFail++;
-          }
-        } else if (isSingleLimit) {
-          if (v <= config.b1) {
-            nAcc++;
-            globalAcc++;
-          } else {
-            nFail++;
-            globalFail++;
-          }
-        } else {
-          if (v <= config.b1) {
-            nAcc++;
-            globalAcc++;
-          } else if (v <= config.b2) {
-            nPerm++;
-            globalPerm++;
-          } else {
-            nFail++;
-            globalFail++;
-          }
-        }
-      });
-
-      const mathStats = getStats(vals);
-      const rowItem: any[] = [idx + 1];
-
-      if (level === "State") rowItem.push(data.state || data.name);
-      else if (level === "District") rowItem.push(data.state || "-", data.district || data.name);
-      else rowItem.push(data.state || "-", data.district || "-", data.block || data.name);
-
-      rowItem.push(total);
-      rowItem.push(nAcc, { v: (nAcc / total) * 100, t: "n", z: "0.00" });
-      if (!isSingleLimit && configKey !== "pH") {
-        rowItem.push(nPerm, { v: (nPerm / total) * 100, t: "n", z: "0.00" });
-      }
-      rowItem.push(nFail, { v: (nFail / total) * 100, t: "n", z: "0.00" });
-
-      rowItem.push(
-        parseFloat(mathStats.min.toFixed(2)),
-        parseFloat(mathStats.max.toFixed(2)),
-        parseFloat(mathStats.avg.toFixed(2)),
-        parseFloat(mathStats.std.toFixed(2))
-      );
-
-      bodyRows.push(rowItem);
-    });
-
-    // Grand total
-    if (globalVals.length > 0) {
-      const grandStats = getStats(globalVals);
-      const totalCount = globalVals.length;
-      const totalRow: any[] = ["-"];
-
-      if (level === "State") totalRow.push("TOTAL SUMMARY");
-      else if (level === "District") totalRow.push("TOTAL SUMMARY", "");
-      else totalRow.push("TOTAL SUMMARY", "", "");
-
-      totalRow.push(totalCount);
-      totalRow.push(globalAcc, { v: (globalAcc / totalCount) * 100, t: "n", z: "0.00" });
-      if (!isSingleLimit && configKey !== "pH") {
-        totalRow.push(globalPerm, { v: (globalPerm / totalCount) * 100, t: "n", z: "0.00" });
-      }
-      totalRow.push(globalFail, { v: (globalFail / totalCount) * 100, t: "n", z: "0.00" });
-
-      totalRow.push(
-        parseFloat(grandStats.min.toFixed(2)),
-        parseFloat(grandStats.max.toFixed(2)),
-        parseFloat(grandStats.avg.toFixed(2)),
-        parseFloat(grandStats.std.toFixed(2))
-      );
-
-      bodyRows.push(totalRow);
-    }
-
-    return [cols, ...bodyRows];
-  };
-
-  const handleExportIndividual = () => {
+  const handleExportIndividual = async () => {
     if (!rawData.length) {
       showToast("Uploaded dataset is empty. Cannot export.", "error");
       return;
@@ -900,183 +572,36 @@ export default function App() {
       return;
     }
 
-    let filtered = yearSeasonFilteredData;
-
-    const wb = XLSX.utils.book_new();
-    const uniqueSheetNames = new Set<string>();
-
-    // 1. Generate compliance sheet tab per parameter selection
-    exportParams.forEach((paramName) => {
-      const dataArr = computeComplianceDataRows(paramName, filtered, reportingLevel);
-      if (dataArr && dataArr.length > 1) {
-        const ws = XLSX.utils.aoa_to_sheet(dataArr);
-        applyExcelStyles(ws, 1);
-
-        let cleanName = paramName.substring(0, 24).replace(/[\[\]\*\/\\\?\:]/g, "_");
-        let sheetNameVal = cleanName;
-        let counter = 1;
-        while (uniqueSheetNames.has(sheetNameVal)) {
-          sheetNameVal = `${cleanName}_${counter++}`;
-        }
-        uniqueSheetNames.add(sheetNameVal);
-
-        XLSX.utils.book_append_sheet(wb, ws, sheetNameVal);
-      }
+    const { workbook, sheetCount } = buildComplianceWorkbook({
+      filteredDataset: yearSeasonFilteredData,
+      reportingLevel,
+      headers,
+      headerMap,
+      exportParams,
+      combinedParams,
+      exportIndividualExceedance,
+      exportCombinedExceedance,
     });
 
-    // 2. Generate Exceedance logs
-    if (exportIndividualExceedance || exportCombinedExceedance) {
-      const indRows: any[][] = [];
-      const combRows: any[][] = [];
-      let indSl = 1;
-      let combSl = 1;
-
-      const indCols = [
-        "Sl. No",
-        "Well ID",
-        "State/UT",
-        "District",
-        "Block/Tehsil",
-        "Location",
-        "Longitude",
-        "Latitude",
-        "Measured Value",
-        "Parameter Name",
-        "BIS Permissible Limit",
-        "Unit",
-      ];
-
-      const combCols = [
-        "Sl. No",
-        "Well ID",
-        "State/UT",
-        "District",
-        "Block/Tehsil",
-        "Location",
-        "Longitude",
-        "Latitude",
-        "Count of Exceedances",
-        "Names of Exceedances",
-        "Exceeding Values Detail",
-        "Classification",
-      ];
-
-      filtered.forEach((row) => {
-        const localExceedances: string[] = [];
-        const localNames: string[] = [];
-        let hasHeavyMetal = false;
-
-        Object.keys(headerMap).forEach((headerCol) => {
-          const isExpInd = exportParams.includes(headerCol);
-          const isExpComb = combinedParams.includes(headerCol);
-
-          if (!isExpInd && !isExpComb) return;
-
-          const key = headerMap[headerCol];
-          if (!key || !PARAM_CONFIG[key]) return;
-          const config = PARAM_CONFIG[key];
-          const val = parseFloat(row[headerCol]);
-
-          if (isNaN(val)) return;
-
-          const isSingleLimit = config.b1 === config.b2 && key !== "pH";
-          const checkLimit = key === "pH" ? null : isSingleLimit ? config.b1 : config.b2;
-
-          let isExceeding = false;
-          let limitStr = "";
-
-          if (key === "pH") {
-            if (val < config.b1 || val > config.b2) {
-              isExceeding = true;
-              limitStr = `${config.b1}-${config.b2}`;
-            }
-          } else if (checkLimit !== null) {
-            if (val > checkLimit) {
-              isExceeding = true;
-              limitStr = `${checkLimit}`;
-            }
-          }
-
-          if (isExceeding) {
-            const wholeNums = ["TH", "Ca", "SO4", "Mg", "Cl"];
-            const decimalPlaces = key === "EC" ? 1 : key === "NO3" ? 2 : key === "F" ? 3 : wholeNums.includes(key) ? 0 : 4;
-            const zFormat = key === "EC" ? "0.0" : key === "NO3" ? "0.00" : key === "F" ? "0.000" : wholeNums.includes(key) ? "0" : "0.000";
-
-            if (isExpInd) {
-              indRows.push([
-                indSl++,
-                row[headers.wellId || ""] || "-",
-                row[headers.state || ""] || "-",
-                row[headers.district || ""] || "-",
-                row[headers.block || ""] || "-",
-                row[headers.location || ""] || "-",
-                row[headers.longitude || ""] || "-",
-                row[headers.latitude || ""] || "-",
-                { v: val, t: "n", z: zFormat },
-                headerCol,
-                `${limitStr} ${config.unit}`.trim(),
-                config.unit,
-              ]);
-            }
-
-            if (isExpComb) {
-              const heavyList = ["Fe", "As", "U", "Zn", "Cu", "Pb", "Cd", "Cr", "Hg", "Ni", "Se", "Ba"];
-              if (heavyList.includes(key)) hasHeavyMetal = true;
-
-              localExceedances.push(`${headerCol} (${val.toFixed(decimalPlaces)} ${config.unit})`);
-              localNames.push(headerCol);
-            }
-          }
-        });
-
-        if (localExceedances.length > 0) {
-          let typeClass = "One Parameter Contamination";
-          if (hasHeavyMetal) typeClass = "Contamination with heavy metals";
-          else if (localExceedances.length > 1) typeClass = "Multi Parameter Contamination";
-
-          combRows.push([
-            combSl++,
-            row[headers.wellId || ""] || "-",
-            row[headers.state || ""] || "-",
-            row[headers.district || ""] || "-",
-            row[headers.block || ""] || "-",
-            row[headers.location || ""] || "-",
-            row[headers.longitude || ""] || "-",
-            row[headers.latitude || ""] || "-",
-            localNames.length,
-            localNames.join(", "),
-            localExceedances.join(", "),
-            typeClass,
-          ]);
-        }
-      });
-
-      if (exportIndividualExceedance && indRows.length > 0) {
-        const titleRow = ["Locations where parameter values exceed the respective permissible limits as per BIS: 10500"];
-        const wsIndData = [titleRow, indCols, ...indRows];
-        const wsInd = XLSX.utils.aoa_to_sheet(wsIndData);
-        wsInd["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 11 } }];
-        applyExcelStyles(wsInd, 2);
-        XLSX.utils.book_append_sheet(wb, wsInd, "Exceedance Locations");
-      }
-
-      if (exportCombinedExceedance && combRows.length > 0) {
-        const titleRow = ["Locations with one or more parameters exceeding permissible limits as per BIS: 10500"];
-        const wsCombData = [titleRow, combCols, ...combRows];
-        const wsComb = XLSX.utils.aoa_to_sheet(wsCombData);
-        wsComb["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 11 } }];
-        applyExcelStyles(wsComb, 2);
-        XLSX.utils.book_append_sheet(wb, wsComb, "Combined Exceedances");
-      }
-    }
-
-    if (wb.SheetNames.length === 0) {
+    if (sheetCount === 0) {
       showToast("No mapped data available to write sheets.", "error");
       return;
     }
 
-    XLSX.writeFile(wb, `Groundwater_Compliance_Report_${Date.now()}.xlsx`);
-    showToast("Styled Excel Workbook written successfully!", "success");
+    try {
+      await downloadStyledSheetJSWorkbook(
+        workbook,
+        `Groundwater_Compliance_Report_${Date.now()}.xlsx`,
+        {
+          "Exceedance Locations": 2,
+          "Combined Exceedances": 2,
+        }
+      );
+      showToast("Styled Excel Workbook written successfully!", "success");
+    } catch (err) {
+      console.error("Compliance Excel export error:", err);
+      showToast("Failed to generate styled Excel report.", "error");
+    }
   };
 
   const getActiveTabButtonClasses = (tab: typeof activeTab) => {
@@ -1470,7 +995,9 @@ export default function App() {
               <option value="calculatorius">🧮 Calculatorius</option>
               <option value="gis">🌍 Geospatial Map Module</option>
               <option value="shapefileFilter">🗺️ Shapefile Spatial Filter</option>
-              <option value="sector">🎯 Sector Analysis (Concentric & Radial)</option>
+              <option value="hydromerge">🔀 Hydro Merge (Multi-Sheet)</option>
+              <option value="sector">🎯 Sector Analysis (Radial & Grid)</option>
+              <option value="hotspot">🔥 Hot Spot Analysis (Multi-Spot & Decay)</option>
               <option value="master">📋 Master Summary Matrix</option>
               <option value="monsoon">🌧️ Dynamic Impact of Monsoon</option>
               <option value="bar">📊 Comparative Exceedance (Bar)</option>
@@ -1530,7 +1057,9 @@ export default function App() {
             { id: "calculatorius", label: "Calculatorius", icon: Calculator, baseColor: "blue" },
             { id: "gis", label: "Geospatial Map Module", icon: Globe, baseColor: "teal" },
             { id: "shapefileFilter", label: "Shapefile Spatial Filter", icon: MapPin, baseColor: "emerald" },
+            { id: "hydromerge", label: "Hydro Merge", icon: GitMerge, baseColor: "indigo" },
             { id: "sector", label: "Sector Analysis", icon: Compass, baseColor: "indigo" },
+            { id: "hotspot", label: "Hot Spot Analysis", icon: Target, baseColor: "rose" },
             { id: "master", label: "Master Summary", icon: Table2, baseColor: "amber" },
             { id: "monsoon", label: "Dynamic Monsoon Impact", icon: Database, baseColor: "emerald" },
             { id: "bar", label: "Comparative Exceedance (Bar)", icon: BarChart3, baseColor: "orange" },
@@ -1682,7 +1211,7 @@ export default function App() {
         <div className="glass-tab-view space-y-6">
           
           {/* Default Upload Placement Helper */}
-          {rawData.length === 0 && activeTab !== "about" && activeTab !== "guidelines" && (
+          {rawData.length === 0 && activeTab !== "about" && activeTab !== "guidelines" && activeTab !== "hotspot" && (
             <div className="mb-6 mx-auto max-w-full bg-slate-900 border-l-4 border-amber-500 rounded-2xl p-4 shadow-md backdrop-blur-sm">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
@@ -1908,6 +1437,19 @@ export default function App() {
             </ErrorBoundary>
           </div>
 
+          <div className={activeTab === "hydromerge" ? "block" : "hidden"}>
+            <ErrorBoundary>
+              <HydroMergeView
+                mainAppData={yearSeasonFilteredData}
+                mainAppHeaders={uploadedHeaders}
+                sharedLayers={sharedLayers}
+                setSharedLayers={setSharedLayers}
+                isVisible={activeTab === "hydromerge"}
+                showToast={showToast}
+              />
+            </ErrorBoundary>
+          </div>
+
           <div className={activeTab === "sector" ? "block" : "hidden"}>
             <ErrorBoundary>
               <SectorAnalysisView
@@ -1926,6 +1468,20 @@ export default function App() {
                 sharedLayers={sharedLayers}
                 setSharedLayers={setSharedLayers}
                 isVisible={activeTab === "sector"}
+                showToast={showToast}
+              />
+            </ErrorBoundary>
+          </div>
+
+          <div className={activeTab === "hotspot" ? "block" : "hidden"}>
+            <ErrorBoundary>
+              <HotspotAnalysisView
+                rawData={yearSeasonFilteredData}
+                allRawData={rawData}
+                headers={headers}
+                headerMap={headerMap}
+                sharedLayers={sharedLayers}
+                isVisible={activeTab === "hotspot"}
                 showToast={showToast}
               />
             </ErrorBoundary>

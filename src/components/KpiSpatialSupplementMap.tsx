@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { DataHeaders, ShapefileLayer } from "../types";
 import { captureGlossyCanvas } from "../utils/colorSanitizer";
+import { canvasToJpegBlobWithDpi, dpiToCaptureScale } from "../utils/jpegDpi";
 import { buildDistrictStateMap, isStateAll, isDistrictAll, toProperCase } from "../utils/shapefileFilter";
 import { INDIA_BOUNDARY } from "../data/india_boundary";
 import { BaseMapType } from "./KpiChoroplethMap";
@@ -1029,7 +1030,7 @@ export default function KpiSpatialSupplementMap({
     try {
       if (showToast) showToast("Rendering Publication 600 DPI Spatial Map JPEG...", "success");
       const canvas = await captureGlossyCanvas(exportContainerRef.current, {
-        scale: 4,
+        scale: dpiToCaptureScale(600),
         backgroundColor: "#ffffff",
       });
 
@@ -1037,27 +1038,15 @@ export default function KpiSpatialSupplementMap({
       const scopeTag = scopeLabel.replace(/[^a-zA-Z0-9]+/g, "_");
       const filename = `${modeTag}_${activeParam}_${scopeTag}_600DPI.jpg`;
 
-      const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob((b) => resolve(b), "image/jpeg", 0.96)
-      );
-      if (blob) {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.download = filename;
-        a.href = url;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url), 8000);
-      } else {
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.96);
-        const a = document.createElement("a");
-        a.download = filename;
-        a.href = dataUrl;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      }
+      const blob = await canvasToJpegBlobWithDpi(canvas, 600, 0.96);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.download = filename;
+      a.href = url;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 8000);
       if (showToast) showToast("Publication Map downloaded successfully!", "success");
     } catch (err) {
       console.error("Failed to export KPI spatial map:", err);

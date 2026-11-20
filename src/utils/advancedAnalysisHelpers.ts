@@ -9,6 +9,7 @@ export type AdvancedSubTab =
   | "aquiferTapped"
   | "stageExtraction"
   | "source"
+  | "sourceAllParams"
   | "comparison"
   | "biplots"
   | "correlation";

@@ -474,6 +474,71 @@ table td, table th, .tabular-nums, .font-mono {
     inset 0 -2px 5px 0 rgba(0, 0, 0, 0.05) !important;
 }
 
+/* Crisp single-elevation hairline surfaces for Sector Analysis, Hydro Merge, and Combination Analysis consoles */
+.glass-tab-view .sector-console,
+.glass-tab-view .hydromerge-console,
+.glass-tab-view .combination-console,
+.glass-tab-view .sector-console .bg-white,
+.glass-tab-view .hydromerge-console .bg-white,
+.glass-tab-view .combination-console .bg-white {
+  background: #ffffff !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: none !important;
+}
+.glass-tab-view .sector-console.bg-slate-50,
+.glass-tab-view .sector-console .bg-slate-50,
+.glass-tab-view .sector-console .bg-gray-50,
+.glass-tab-view .hydromerge-console .bg-slate-50,
+.glass-tab-view .hydromerge-console .bg-gray-50,
+.glass-tab-view .combination-console.bg-slate-50,
+.glass-tab-view .combination-console .bg-slate-50,
+.glass-tab-view .combination-console .bg-gray-50 {
+  background: #f8fafc !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: none !important;
+}
+
+.sector-console .leaflet-container,
+.hydromerge-console .leaflet-container,
+.combination-console .leaflet-container {
+  overflow: hidden !important;
+  background: #e2e8f0 !important;
+}
+
+/* Prevent Chromium plus-lighter + backdrop-filter tile washout and Tailwind img max-width collapse */
+.sector-console img.leaflet-tile,
+.hydromerge-console img.leaflet-tile,
+.combination-console img.leaflet-tile,
+.sector-console .leaflet-container img.leaflet-tile,
+.hydromerge-console .leaflet-container img.leaflet-tile,
+.combination-console .leaflet-container img.leaflet-tile {
+  mix-blend-mode: normal !important;
+  max-width: none !important;
+  max-height: none !important;
+}
+
+.sector-console img.leaflet-tile-loaded,
+.hydromerge-console img.leaflet-tile-loaded,
+.combination-console img.leaflet-tile-loaded,
+.sector-console .leaflet-container img.leaflet-tile-loaded,
+.hydromerge-console .leaflet-container img.leaflet-tile-loaded,
+.combination-console .leaflet-container img.leaflet-tile-loaded {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+.sector-console .leaflet-tile-pane,
+.hydromerge-console .leaflet-tile-pane,
+.combination-console .leaflet-tile-pane {
+  z-index: 200 !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
 /* Crystal Clear Typography Rules */
 .crystal-text {
   color: #0f172a !important;

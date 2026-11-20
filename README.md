@@ -1,67 +1,65 @@
 # Groundwater Compliance Reporting Engine
 
-A comprehensive web application for evaluating groundwater quality against Bureau of Indian Standards (**IS 10500:2012**), generating water quality alerts for heavy metals, spatial compliance mapping, Piper & USSL hydrochemical diagrams, monsoon impact analysis, PCA, and multi-format Excel bulletins.
+A web application for evaluating groundwater quality against Bureau of Indian Standards (**IS 10500:2012**), generating water quality alerts, spatial compliance mapping, Piper & USSL hydrochemical diagrams, monsoon impact analysis, PCA, and multi-format Excel/JPEG bulletins.
 
 ---
 
-## 🚀 One-Click GitHub Pages Deployment
+## Architecture & Deployment Modes
 
-This repository includes a pre-configured GitHub Actions workflow (`.github/workflows/deploy.yml`) that automatically builds and deploys the application to **GitHub Pages** whenever you push code to `main` or `master`.
+This repository supports two distinct deployment architectures:
 
-### How to Enable GitHub Pages on your GitHub Repo:
-1. Push this repository to GitHub.
-2. In your GitHub repository, click **Settings** (gear icon in the top navigation).
-3. On the left sidebar under *Code and automation*, click **Pages**.
-4. Under **Build and deployment** → **Source**, select **GitHub Actions** (instead of *Deploy from a branch*).
-5. Next time you push (or run the workflow manually from the **Actions** tab), GitHub will automatically build and publish your app at:
-   `https://<your-username>.github.io/<your-repo-name>/`
+1. **Static Frontend Mode (GitHub Pages / Static CDN)**
+   - `.github/workflows/deploy.yml` builds only the static Vite frontend (`./dist`) and publishes it to GitHub Pages.
+   - GitHub Pages **cannot** execute `server.ts`, host `/api/ai/*` endpoints, or store server-side secrets such as `GEMINI_API_KEY`.
+   - Core groundwater calculations, diagrams, Excel exports, and shapefile filtering run 100% client-side in the browser.
+
+2. **Full-Stack Node.js Mode (`server.ts` + Express + Static `dist/`)**
+   - Required if you expose the server-side AI endpoints (`POST /api/ai/chat`, `POST /api/ai/quick-audit`, `GET /api/health`).
+   - Run `npm run build` followed by `npm start` on a Node.js host (Node 20+ recommended) with `GEMINI_API_KEY` configured as a **server-side** environment variable.
+   - Never expose `GEMINI_API_KEY` in client code, `VITE_*` variables, or committed files.
 
 ---
 
-## 💻 Run Locally
+## Local Development & Supported Scripts
 
 ### Prerequisites
-- **Node.js** (v18 or higher recommended)
-- **npm** (comes with Node.js)
+- **Node.js** (v20 or higher recommended)
+- **npm**
 
-### Steps
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/<your-username>/<your-repo-name>.git
-   cd <your-repo-name>
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Start the development server:**
-   ```bash
-   npm run dev
-   ```
-   Open [http://localhost:3000](http://localhost:3000) in your browser.
-
-4. **Build and preview production bundle:**
-   ```bash
-   npm run build
-   npm run preview
-   ```
-
----
-
-## 🌐 Deploy to Vercel / Netlify / Cloudflare Pages
-
-This project is built with Vite and standard static SPA output in `dist/`. You can deploy it instantly on any modern web host:
-
-- **Build Command:** `npm run build`
-- **Output Directory:** `dist`
-- **Install Command:** `npm install`
+### Commands
+- Install dependencies cleanly from the lockfile:
+  ```bash
+  npm ci
+  ```
+- Start the full-stack development server (Express API + Vite middleware on `http://localhost:3000`):
+  ```bash
+  npm run dev
+  ```
+- Type-check all client and server TypeScript files:
+  ```bash
+  npm run lint
+  ```
+- Run the automated test suite (`tsx --test`):
+  ```bash
+  npm test
+  ```
+- Build the production frontend bundle into `dist/`:
+  ```bash
+  npm run build
+  ```
+- Start the production Express server (`tsx server.ts --production`, serving `dist/` and `/api/*`):
+  ```bash
+  npm start
+  ```
+- Preview the static `dist/` bundle without the Express API server:
+  ```bash
+  npm run preview
+  ```
 
 ---
 
-## ⚙️ Key Technical Configurations
+## Server-Side AI Endpoint Safeguards
 
-- **Universal Base Path**: Automatically adapts to GitHub Pages repository sub-paths (`/<repo>/`) during GitHub Actions CI, and to `./` for local runs, custom domains, Vercel, and Netlify.
-- **GitHub Pages Routing & Jekyll bypass**: Automatically generates `.nojekyll` and `404.html` fallback in `dist/` during every build to prevent 404s.
-- **Optimized Bundling**: Highcharts, SheetJS, ExcelJS, Leaflet, and Turf.js are cleanly split into modular vendor chunks for ultra-fast browser loading.
+`POST /api/ai/chat` and `POST /api/ai/quick-audit` include runtime schema validation, body size caps (`256kb` default), fixed-window per-IP rate limiting, bounded concurrent upstream calls, and upstream timeouts. These limits can be tuned via environment variables (see `.env.example`).
+
+Note: CORS alone is not authentication or abuse protection. If you deploy the Express server publicly, place it behind appropriate authentication, reverse-proxy rate limiting, or network access controls for your organization.

@@ -1,0 +1,1625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HydroMerge 3D Analytics</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- SheetJS -->
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Chart.js for Matching Analytics -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Proj4, JSZip, ShpJS & TurfJS for Spatial Analysis -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://unpkg.com/shpjs@latest/dist/shp.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* ==========================================
+           3D GLOSSY UI SYSTEM
+        ========================================== */
+
+        /* 3D Heavy Glass Cards */
+        .glass-card {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 2px solid rgba(255, 255, 255, 1);
+            border-radius: 1.25rem;
+            box-shadow: 0 8px 0 rgba(203, 213, 225, 0.7), 0 15px 25px rgba(0,0,0,0.06);
+            margin-bottom: 8px; 
+            transition: all 0.2s ease;
+        }
+
+        /* Glossy 3D Badges & Icons */
+        .glossy-circle {
+            border-radius: 50%;
+            box-shadow: 
+                inset 0 3px 5px rgba(255,255,255,0.9), 
+                inset 0 -4px 6px rgba(0,0,0,0.2), 
+                0 4px 6px rgba(0,0,0,0.15),
+                0 6px 0 rgba(0,0,0,0.1);
+            border: 2px solid transparent;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+            font-weight: 900;
+        }
+        /* Curvature Glare */
+        .glossy-circle::before {
+            content: '';
+            position: absolute;
+            top: 2%; left: 10%; width: 80%; height: 45%;
+            background: linear-gradient(to bottom, rgba(255,255,255,0.95), rgba(255,255,255,0.05));
+            border-radius: 50%;
+            pointer-events: none;
+        }
+        
+        .glossy-orange { background: radial-gradient(circle at 50% 20%, #fdba74, #ea580c); border-color: #c2410c; }
+        .glossy-green  { background: radial-gradient(circle at 50% 20%, #86efac, #16a34a); border-color: #15803d; }
+        .glossy-yellow { background: radial-gradient(circle at 50% 20%, #fef08a, #eab308); border-color: #a16207; }
+        .glossy-indigo { background: radial-gradient(circle at 50% 20%, #a5b4fc, #4f46e5); border-color: #3730a3; }
+        .glossy-rose   { background: radial-gradient(circle at 50% 20%, #fda4af, #e11d48); border-color: #be123c; }
+
+        /* 3D Glossy Push Buttons */
+        .btn-glossy-3d {
+            position: relative;
+            overflow: hidden;
+            transition: all 0.1s ease;
+            cursor: pointer;
+            border-radius: 0.75rem;
+            color: white;
+            font-weight: 800;
+            text-shadow: 0 1px 1px rgba(0,0,0,0.2);
+            border: 1px solid rgba(255,255,255,0.3);
+        }
+        /* Top Pill Glare */
+        .btn-glossy-3d::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 2%; width: 96%; height: 40%;
+            background: linear-gradient(to bottom, rgba(255,255,255,0.6), rgba(255,255,255,0));
+            border-radius: 0.5rem 0.5rem 100% 100% / 0.5rem 0.5rem 30% 30%;
+            pointer-events: none;
+        }
+        .btn-glossy-3d:active {
+            transform: translateY(5px);
+            margin-bottom: -5px; 
+        }
+        
+        .btn-orange-3d { background: radial-gradient(circle at 50% 0%, #f97316, #c2410c); box-shadow: 0 6px 0 #9a3412, 0 10px 15px rgba(234,88,12,0.3); }
+        .btn-orange-3d:active { box-shadow: 0 1px 0 #9a3412, 0 2px 6px rgba(234,88,12,0.3); }
+
+        .btn-green-3d { background: radial-gradient(circle at 50% 0%, #10b981, #047857); box-shadow: 0 6px 0 #065f46, 0 10px 15px rgba(16,185,129,0.3); }
+        .btn-green-3d:active { box-shadow: 0 1px 0 #065f46, 0 2px 6px rgba(16,185,129,0.3); }
+
+        .btn-indigo-3d { background: radial-gradient(circle at 50% 0%, #6366f1, #4338ca); box-shadow: 0 6px 0 #312e81, 0 10px 15px rgba(79,70,229,0.3); }
+        .btn-indigo-3d:active { box-shadow: 0 1px 0 #312e81, 0 2px 6px rgba(79,70,229,0.3); }
+
+        .btn-white-3d { 
+            background: linear-gradient(180deg, #ffffff, #f1f5f9); 
+            color: #475569; 
+            text-shadow: none; 
+            border: 2px solid #e2e8f0; 
+            box-shadow: 0 6px 0 #94a3b8, 0 10px 15px rgba(0,0,0,0.05); 
+        }
+        .btn-white-3d::before { background: linear-gradient(to bottom, rgba(255,255,255,1), rgba(255,255,255,0)); }
+        .btn-white-3d:active { box-shadow: 0 1px 0 #94a3b8, 0 2px 6px rgba(0,0,0,0.05); transform: translateY(5px); border-bottom-width: 2px;}
+
+        /* Dropzone 3D specific styling */
+        .dropzone-3d {
+            box-shadow: inset 0 3px 5px rgba(0,0,0,0.05), 0 2px 0 rgba(255,255,255,1);
+            border: 2px dashed #cbd5e1;
+            transition: all 0.2s ease;
+        }
+        .dropzone-3d:hover {
+            box-shadow: inset 0 3px 5px rgba(0,0,0,0.05), 0 4px 15px rgba(0,0,0,0.05);
+            border-style: solid;
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in { animation: fadeInUp 0.5s ease-out forwards; }
+        
+        #mapView { z-index: 1; border-radius: 1.25rem 0 0 0; }
+        
+        .leaflet-container.measuring {
+            cursor: crosshair !important;
+        }
+
+        /* Gradient text */
+        .text-gradient {
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-image: linear-gradient(to right, #ea580c, #16a34a);
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen overflow-hidden bg-slate-50 text-slate-800 relative">
+
+    <!-- Main Layout Wrapper -->
+    <div class="flex flex-col lg:flex-row flex-1 min-h-0 relative w-full">
+
+        <!-- LEFT PANEL (Controls & Charts - 25% Width on Desktop) -->
+        <div id="leftPanel" class="w-full lg:w-1/4 h-full overflow-y-auto p-4 md:p-6 lg:p-6 space-y-6 bg-gradient-to-br from-orange-50 via-white to-green-50 custom-scrollbar transition-colors duration-500 pb-16">
+            
+            <!-- Header -->
+            <div id="mainHeaderCard" class="glass-card p-6 border-t-4 border-t-orange-500 animate-fade-in relative overflow-visible mt-2">
+                <div class="absolute -top-6 -left-2 transform rotate-[-10deg]">
+                    <div id="headerIcon" class="glossy-circle glossy-orange w-14 h-14 flex-shrink-0 z-10 border-4 border-white">
+                        <i data-lucide="droplets" class="w-7 h-7 text-white drop-shadow-md"></i>
+                    </div>
+                </div>
+                <div class="ml-12 mt-1">
+                    <h1 class="text-xl lg:text-2xl font-black text-slate-900 tracking-tight text-gradient drop-shadow-sm" id="mainTitle">HydroMerge</h1>
+                    <p class="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1"> Data Integration</p>
+                </div>
+            </div>
+
+            <!-- Upload Section -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 2xl:grid-cols-2 gap-5 animate-fade-in" style="animation-delay: 0.1s;">
+                <!-- Sheet 1 (Orange Theme) -->
+                <div class="glass-card p-5 relative overflow-hidden group">
+                    <label class="flex items-center space-x-2 text-sm font-black text-slate-700 mb-4 border-b border-slate-100 pb-2">
+                        <span class="glossy-circle glossy-orange w-7 h-7 text-xs flex-shrink-0">1</span>
+                        <span class="tracking-wide">Data Set I</span>
+                    </label>
+                    
+                    <div class="relative w-full group/btn">
+                        <label for="file1" id="dropzone1" class="dropzone-3d relative flex flex-col items-center justify-center w-full min-h-[7rem] py-3 bg-slate-50/80 rounded-2xl cursor-pointer hover:border-orange-400">
+                            <div class="flex flex-col items-center justify-center pt-2 pb-2">
+                                <div id="iconBox1" class="glossy-circle glossy-orange w-12 h-12 mb-2 group-hover/btn:scale-110 transition-all duration-300">
+                                    <i data-lucide="cloud-upload" class="w-5 h-5 text-white"></i>
+                                </div>
+                                <p class="text-xs font-bold text-slate-700 group-hover/btn:text-orange-600 transition-colors">Upload S1</p>
+                                <p id="fileName1" class="text-[10px] font-bold text-orange-800 mt-2 hidden max-w-[120px] truncate px-3 py-1 bg-orange-100 border border-orange-200 shadow-sm rounded-full"></p>
+                                <p id="rowCount1" class="text-[9px] font-black text-orange-500 mt-1 uppercase hidden"></p>
+                            </div>
+                            <input id="file1" type="file" class="hidden" accept=".xlsx, .xls" onchange="handleFileUpload('file1', 'fileName1', 1, 'orange')" />
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Sheet 2 (Green Theme) -->
+                <div class="glass-card p-5 relative overflow-hidden group">
+                    <label class="flex items-center space-x-2 text-sm font-black text-slate-700 mb-4 border-b border-slate-100 pb-2">
+                        <span class="glossy-circle glossy-green w-7 h-7 text-xs flex-shrink-0">2</span>
+                        <span class="tracking-wide">Data Set II</span>
+                    </label>
+                    
+                    <div class="relative w-full group/btn">
+                        <label for="file2" id="dropzone2" class="dropzone-3d relative flex flex-col items-center justify-center w-full min-h-[7rem] py-3 bg-slate-50/80 rounded-2xl cursor-pointer hover:border-green-400">
+                            <div class="flex flex-col items-center justify-center pt-2 pb-2">
+                                <div id="iconBox2" class="glossy-circle glossy-green w-12 h-12 mb-2 group-hover/btn:scale-110 transition-all duration-300">
+                                    <i data-lucide="cloud-upload" class="w-5 h-5 text-white"></i>
+                                </div>
+                                <p class="text-xs font-bold text-slate-700 group-hover/btn:text-green-600 transition-colors">Upload S2</p>
+                                <p id="fileName2" class="text-[10px] font-bold text-green-800 mt-2 hidden max-w-[120px] truncate px-3 py-1 bg-green-100 border border-green-200 shadow-sm rounded-full"></p>
+                                <p id="rowCount2" class="text-[9px] font-black text-green-500 mt-1 uppercase hidden"></p>
+                            </div>
+                            <input id="file2" type="file" class="hidden" accept=".xlsx, .xls" onchange="handleFileUpload('file2', 'fileName2', 2, 'green')" />
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Configurations -->
+            <div class="space-y-5 animate-fade-in" style="animation-delay: 0.15s;">
+                <!-- Matching Columns -->
+                <div id="matchColContainer" class="hidden glass-card p-5">
+                    <div class="flex flex-col xl:flex-row items-start xl:items-center justify-between mb-4 border-b border-slate-100 pb-3 gap-2">
+                        <label class="flex items-center space-x-3 text-sm font-black text-slate-700">
+                            <span class="glossy-circle glossy-yellow w-7 h-7 text-xs flex-shrink-0">3</span>
+                            <span class="tracking-wide">Define Join Keys</span>
+                        </label>
+                        <button onclick="addJoinKeyRow()" class="btn-glossy-3d btn-white-3d px-3 py-1.5 text-[10px] flex items-center space-x-1">
+                            <i data-lucide="plus" class="w-3 h-3 text-yellow-600 font-black"></i> <span>Add Key</span>
+                        </button>
+                    </div>
+                    <div id="joinKeysList" class="space-y-3 max-h-56 overflow-y-auto pr-2 custom-scrollbar"></div>
+                </div>
+
+                <!-- Column Selection -->
+                <div id="columnSelectionContainer" class="hidden glass-card p-5">
+                    <label class="flex items-center space-x-3 text-sm font-black text-slate-700 mb-4 border-b border-slate-100 pb-3">
+                        <span class="glossy-circle glossy-indigo w-7 h-7 text-xs flex-shrink-0">4</span>
+                        <span class="tracking-wide">Filter Export</span>
+                    </label>
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                        <div class="bg-white border-2 border-slate-100 rounded-xl p-3 shadow-inner">
+                            <div class="flex justify-between items-center mb-3 px-1 border-b border-slate-100 pb-2">
+                                <span class="text-[10px] font-black text-slate-500 uppercase tracking-wider">Sheet 1</span>
+                                <div class="flex space-x-1">
+                                    <button onclick="toggleAll('s1', true)" class="btn-glossy-3d btn-white-3d text-[9px] px-2 py-1">All</button>
+                                    <button onclick="toggleAll('s1', false)" class="btn-glossy-3d btn-white-3d text-[9px] px-2 py-1">None</button>
+                                </div>
+                            </div>
+                            <div id="colList1" class="h-28 overflow-y-auto px-1 space-y-1"></div>
+                        </div>
+                        <div class="bg-white border-2 border-slate-100 rounded-xl p-3 shadow-inner">
+                            <div class="flex justify-between items-center mb-3 px-1 border-b border-slate-100 pb-2">
+                                <span class="text-[10px] font-black text-slate-500 uppercase tracking-wider">Sheet 2</span>
+                                <div class="flex space-x-1">
+                                    <button onclick="toggleAll('s2', true)" class="btn-glossy-3d btn-white-3d text-[9px] px-2 py-1">All</button>
+                                    <button onclick="toggleAll('s2', false)" class="btn-glossy-3d btn-white-3d text-[9px] px-2 py-1">None</button>
+                                </div>
+                            </div>
+                            <div id="colList2" class="h-28 overflow-y-auto px-1 space-y-1"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Bar -->
+            <div class="glass-card p-4 flex flex-col items-center justify-between gap-4 animate-fade-in" style="animation-delay: 0.2s;">
+                <div class="flex w-full gap-3">
+                    <button onclick="processFiles()" class="btn-glossy-3d btn-orange-3d flex-1 flex items-center justify-center space-x-2 px-4 py-3.5">
+                        <i data-lucide="zap" class="w-5 h-5"></i>
+                        <span class="tracking-wide text-xs">Merge</span>
+                    </button>
+                    <button onclick="resetApp()" class="btn-glossy-3d btn-white-3d flex items-center justify-center px-4 py-3.5" title="Reset All">
+                        <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+                    </button>
+                </div>
+                
+                <div id="exportOptions" class="hidden flex-col w-full gap-3 bg-slate-50/80 p-3 rounded-xl border border-slate-200 shadow-inner">
+                    <input type="text" id="exportFileName" value="HydroMerge_Output" class="w-full bg-white border-2 border-slate-200 text-slate-800 text-sm font-bold rounded-xl focus:border-green-500 outline-none px-3 py-2.5 shadow-sm" placeholder="File name">
+                    <button onclick="exportData()" class="btn-glossy-3d btn-green-3d w-full flex items-center justify-center space-x-2 px-4 py-3">
+                        <i data-lucide="download" class="w-4 h-4"></i>
+                        <span class="tracking-wide text-xs">Export Output</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div id="statusAlert" class="hidden w-full px-4 py-3 rounded-xl text-sm font-bold flex items-center justify-center space-x-2 border shadow-sm">
+                <i id="statusIcon" data-lucide="info" class="w-5 h-5"></i>
+                <span id="statusText">Ready for processing</span>
+            </div>
+
+            <!-- Chart View (Hidden until merge) -->
+            <div id="chartView" class="hidden glass-card p-6 flex-col animate-fade-in">
+                <h2 class="text-[10px] font-black uppercase tracking-widest text-slate-800 mb-5 border-b-2 border-slate-100 pb-3 flex items-center">
+                    <span class="glossy-circle glossy-indigo w-6 h-6 mr-2"><i data-lucide="bar-chart-2" class="w-3 h-3 text-white"></i></span> 
+                    Integration Stats
+                </h2>
+                
+                <!-- Expanded Grid for Row Counts and Match Counts -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full mb-6">
+                    <div class="bg-gradient-to-b from-white to-slate-50 p-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center">
+                        <p class="text-[8px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Total Rows S1</p>
+                        <h3 id="statTotal1" class="text-lg font-black text-slate-700">0</h3>
+                    </div>
+                    <div class="bg-gradient-to-b from-white to-slate-50 p-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center">
+                        <p class="text-[8px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Total Rows S2</p>
+                        <h3 id="statTotal2" class="text-lg font-black text-slate-700">0</h3>
+                    </div>
+                    <div class="sm:col-span-2 bg-gradient-to-b from-white to-green-50 p-3 rounded-xl border border-green-200 shadow-sm flex flex-col items-center justify-center text-center">
+                        <p class="text-[9px] font-black text-green-500 uppercase tracking-widest mb-1">Successfully Matched</p>
+                        <h3 id="statMatched" class="text-2xl font-black text-green-700 drop-shadow-sm">0</h3>
+                    </div>
+                    <div class="bg-gradient-to-b from-white to-orange-50 p-3 rounded-xl border border-orange-200 shadow-sm flex flex-col items-center justify-center text-center">
+                        <p class="text-[9px] font-black text-orange-500 uppercase tracking-widest mb-1">Unmatched S1</p>
+                        <h3 id="statUn1" class="text-xl font-black text-orange-700 drop-shadow-sm">0</h3>
+                    </div>
+                    <div class="bg-gradient-to-b from-white to-rose-50 p-3 rounded-xl border border-rose-200 shadow-sm flex flex-col items-center justify-center text-center">
+                        <p class="text-[9px] font-black text-rose-500 uppercase tracking-widest mb-1">Unmatched S2</p>
+                        <h3 id="statUn2" class="text-xl font-black text-rose-700 drop-shadow-sm">0</h3>
+                    </div>
+                    <div class="bg-gradient-to-b from-white to-slate-100 p-2 rounded-xl border border-slate-300 shadow-sm flex flex-col items-center justify-center text-center">
+                        <p class="text-[8px] font-bold text-slate-500 uppercase tracking-widest mb-0.5">Missing Keys S1</p>
+                        <h3 id="statMissing1" class="text-lg font-black text-slate-600 drop-shadow-sm">0</h3>
+                    </div>
+                    <div class="bg-gradient-to-b from-white to-slate-100 p-2 rounded-xl border border-slate-300 shadow-sm flex flex-col items-center justify-center text-center">
+                        <p class="text-[8px] font-bold text-slate-500 uppercase tracking-widest mb-0.5">Missing Keys S2</p>
+                        <h3 id="statMissing2" class="text-lg font-black text-slate-600 drop-shadow-sm">0</h3>
+                    </div>
+                </div>
+
+                <div class="w-full relative flex items-center justify-center bg-white p-4 rounded-xl border-2 border-slate-100 shadow-inner h-64">
+                    <canvas id="matchChart"></canvas>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- RIGHT PANEL (Map View - 75% Width on Desktop) -->
+        <div class="w-full lg:w-3/4 h-[500px] lg:h-full flex flex-col relative border-t lg:border-t-0 lg:border-l-4 border-white shadow-2xl z-10 bg-slate-100">
+            
+            <!-- Map Overlay Controls (Styled to fit 3D look) -->
+            <div class="absolute top-4 left-4 right-4 bg-white/90 backdrop-blur-xl p-3 border border-slate-200 rounded-2xl flex flex-wrap gap-3 items-center z-[1000] shadow-[0_10px_25px_rgba(0,0,0,0.1)] justify-between">
+                <div class="flex flex-wrap items-center gap-3">
+                    <div class="flex items-center space-x-2 bg-slate-50 px-2 py-1.5 rounded-lg border border-slate-200 shadow-inner">
+                        <input type="color" id="colorMatched" value="#10b981" class="cursor-pointer w-6 h-6 border border-slate-300 rounded" onchange="debounceUpdateMapMarkers()">
+                        <label class="text-[10px] font-black text-slate-700 uppercase tracking-wider">Matched</label>
+                    </div>
+                    <div class="flex items-center space-x-2 bg-slate-50 px-2 py-1.5 rounded-lg border border-slate-200 shadow-inner">
+                        <input type="color" id="colorUnmatched" value="#f43f5e" class="cursor-pointer w-6 h-6 border border-slate-300 rounded" onchange="debounceUpdateMapMarkers()">
+                        <label class="text-[10px] font-black text-slate-700 uppercase tracking-wider">Unmatched</label>
+                    </div>
+                    
+                    <div id="shapeColContainer" class="hidden flex items-center space-x-2 bg-slate-50 px-2 py-1.5 rounded-lg border border-slate-200 shadow-inner">
+                        <button onclick="toggleShapefileVisibility()" class="p-1 hover:bg-slate-200 rounded transition-colors" title="Toggle Shapefile View">
+                            <i id="toggleShapeIcon" data-lucide="eye" class="w-4 h-4 text-slate-600"></i>
+                        </button>
+                        <select id="shapeColMode" class="bg-transparent border-none text-slate-700 text-[10px] font-black uppercase tracking-wider outline-none cursor-pointer pr-1" onchange="updateShapefileColor()">
+                            <option value="single">Single Color</option>
+                            <option value="attribute">By Attribute</option>
+                        </select>
+                        <input type="color" id="colorShape" value="#cbd5e1" class="cursor-pointer w-6 h-6 border border-slate-300 rounded" onchange="updateShapefileColor()">
+                    </div>
+
+                    <div class="flex items-center space-x-2 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200 shadow-inner">
+                        <i data-lucide="layers" class="w-4 h-4 text-slate-500"></i>
+                        <select id="basemapSelector" class="bg-transparent border-none text-slate-700 text-[10px] font-black uppercase tracking-wider outline-none cursor-pointer" onchange="changeBasemap(this.value)">
+                            <option value="osm">OSM Light</option>
+                            <option value="gstreet">Google Maps</option>
+                            <option value="gsat">Satellite</option>
+                            <option value="ghyb">Hybrid</option>
+                            <option value="gter">Terrain</option>
+                            <option value="cartoDark">Dark Mode</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Shapefile Upload 3D Button -->
+                    <label class="btn-glossy-3d btn-indigo-3d flex items-center space-x-2 px-4 py-2 cursor-pointer">
+                        <i data-lucide="map" class="w-4 h-4 text-white"></i>
+                        <span class="text-[10px] font-black uppercase tracking-wider">Add Shape</span>
+                        <input type="file" id="shpUpload" multiple accept=".shp,.dbf,.shx,.prj,.cpg,.sbx,.sbn,.xml" class="hidden" onchange="handleShapefileUpload(event)">
+                    </label>
+
+                    <select id="layerSelector" class="hidden bg-indigo-50 border-2 border-indigo-200 text-indigo-900 text-[10px] font-black uppercase rounded-lg outline-none px-3 py-2 shadow-sm max-w-[130px] truncate" onchange="switchShapefileLayer(this.value)">
+                    </select>
+
+                    <select id="featureSelector" class="hidden bg-indigo-50 border-2 border-indigo-200 text-indigo-900 text-[10px] font-black uppercase rounded-lg outline-none px-3 py-2 shadow-sm max-w-[150px]" onchange="highlightFeature(this.value)">
+                        <option value="">-- Select Area --</option>
+                    </select>
+                    
+                    <button id="areaStatsBtn" onclick="calculateAreaStats()" class="hidden btn-glossy-3d btn-orange-3d flex items-center space-x-2 px-4 py-2">
+                        <i data-lucide="pie-chart" class="w-3.5 h-3.5"></i>
+                        <span class="text-[10px] font-black uppercase tracking-wider">Stats</span>
+                    </button>
+
+                    <!-- Measure Distance Button -->
+                    <button id="measureBtn" onclick="toggleMeasureMode()" class="flex items-center space-x-1 bg-white hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg border border-slate-200 shadow-[0_2px_0_0_#e2e8f0] active:shadow-none active:translate-y-[2px] transition-all">
+                        <i data-lucide="ruler" class="w-3.5 h-3.5 text-indigo-500"></i>
+                        <span class="text-[10px] font-black uppercase tracking-wider">Measure</span>
+                    </button>
+                </div>
+                
+                <div class="flex items-center space-x-3 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200 shadow-inner mt-2 sm:mt-0">
+                    <label class="text-[10px] font-black text-slate-700 uppercase tracking-wider"><i data-lucide="maximize" class="w-3 h-3 inline mr-1"></i> Size</label>
+                    <input type="range" id="markerSize" min="3" max="25" value="6" class="w-16 lg:w-24 accent-indigo-600 cursor-pointer" oninput="debounceUpdateMapMarkers()">
+                </div>
+            </div>
+
+            <!-- Spatial Analysis Bar (Floating at the bottom) -->
+            <div id="spatialAnalysisBar" class="hidden absolute bottom-8 left-1/2 transform -translate-x-1/2 bg-white/95 backdrop-blur-xl px-5 py-4 border-2 border-indigo-500 rounded-2xl shadow-[0_15px_30px_rgba(79,70,229,0.3)] z-[1000] w-[90%] md:w-auto transition-all duration-300 items-center justify-center gap-4">
+                <div class="flex flex-col md:flex-row items-center space-y-3 md:space-y-0 md:space-x-4 w-full justify-center">
+                    <span class="text-xs font-black text-indigo-800 uppercase flex items-center tracking-wider">
+                        <span class="glossy-circle glossy-indigo w-6 h-6 mr-2"><i data-lucide="grid" class="w-3 h-3 text-white"></i></span> 
+                        Grid Analysis
+                    </span>
+                    <div class="flex items-center space-x-2 bg-indigo-50/50 border-2 border-indigo-100 rounded-xl px-3 py-2 shadow-inner">
+                        <label class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Area (km²):</label>
+                        <input type="number" id="gridSizeKm" value="100" min="1" max="10000" class="w-16 text-sm font-black text-indigo-700 p-0 border-none outline-none bg-transparent text-center focus:ring-0">
+                    </div>
+                    <div class="flex space-x-2">
+                        <button onclick="generateGridAnalysis()" class="btn-glossy-3d btn-indigo-3d flex items-center px-5 py-2.5 text-[11px]">
+                            <i data-lucide="play" class="w-3.5 h-3.5 mr-2"></i> Analyze
+                        </button>
+                        <button onclick="clearGrid()" class="btn-glossy-3d btn-white-3d flex items-center px-4 py-2.5 text-[11px]">
+                            <i data-lucide="x" class="w-3.5 h-3.5 mr-2 text-rose-500"></i> Clear
+                        </button>
+                    </div>
+                </div>
+                <div id="gridResultText" class="w-full text-xs font-bold text-slate-700 hidden bg-indigo-50 px-4 py-2.5 rounded-xl border border-indigo-200 shadow-inner text-center mt-3">
+                    <!-- Result text will be injected here -->
+                </div>
+            </div>
+            
+            <!-- Leaflet Map Container -->
+            <div id="mapView" class="w-full flex-1 z-0 mt-2"></div>
+        </div>
+
+    </div> <!-- End Main Layout Wrapper -->
+
+    <!-- Area Stats Modal -->
+    <div id="areaStatsModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[2000] flex items-center justify-center p-4">
+        <div class="glass-card w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden animate-fade-in border-4 border-white">
+            <div class="p-5 border-b-2 border-slate-100 flex justify-between items-center bg-white/50">
+                <h3 class="font-black text-slate-800 flex items-center text-lg uppercase tracking-wider"><span class="glossy-circle glossy-orange w-8 h-8 mr-3"><i data-lucide="pie-chart" class="w-4 h-4 text-white"></i></span> Regional Sample Stats</h3>
+                <div class="flex space-x-3 items-center">
+                    <button onclick="exportDetailedAreaStats()" class="btn-glossy-3d btn-green-3d px-4 py-2 text-[10px] flex items-center space-x-1">
+                        <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i> <span>Export Detailed Report (.xlsx)</span>
+                    </button>
+                    <button onclick="document.getElementById('areaStatsModal').classList.add('hidden')" class="btn-glossy-3d btn-white-3d p-2"><i data-lucide="x" class="w-4 h-4 text-slate-500"></i></button>
+                </div>
+            </div>
+            <div class="p-0 overflow-y-auto custom-scrollbar flex-1 relative bg-white/80">
+                <div id="areaStatsLoading" class="hidden absolute inset-0 bg-white/90 z-10 flex flex-col items-center justify-center">
+                    <i data-lucide="loader-2" class="w-10 h-10 text-indigo-500 animate-spin mb-3"></i>
+                    <span class="text-sm font-black text-slate-600 uppercase tracking-widest">Calculating spatial coverage...</span>
+                </div>
+                <table class="w-full text-left text-sm text-slate-600">
+                    <thead class="bg-slate-100 text-[10px] uppercase font-black text-slate-500 sticky top-0 shadow-sm z-0 tracking-wider">
+                        <tr>
+                            <th class="px-5 py-4 border-b-2 border-slate-200">Principal Aquifer / Feature Name</th>
+                            <th class="px-5 py-4 text-center border-b-2 border-slate-200 text-emerald-600">Matched</th>
+                            <th class="px-5 py-4 text-center border-b-2 border-slate-200 text-rose-500">Unmatched</th>
+                            <th class="px-5 py-4 text-center border-b-2 border-slate-200 text-indigo-600 bg-indigo-50/50">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody id="areaStatsTableBody" class="divide-y divide-slate-100">
+                        <!-- Rows injected via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Init Icons
+        lucide.createIcons();
+
+        // Data Globals
+        let matchedData = [];
+        let unmatchedData1 = [];
+        let unmatchedData2 = [];
+        let missingData1 = [];
+        let missingData2 = [];
+        let headers1 = [];
+        let headers2 = [];
+        let totalRows1 = 0;
+        let totalRows2 = 0;
+        let currentDetailedAreaStats = []; // Holds the state-wise breakdown for Excel export
+        
+        // Dynamic Attribute Styling Palette
+        const attributeColors = {};
+        const palette = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16', '#0ea5e9', '#ef4444'];
+        let colorIdx = 0;
+        
+        function getAttributeColor(name) {
+            if (!attributeColors[name]) {
+                attributeColors[name] = palette[colorIdx % palette.length];
+                colorIdx++;
+            }
+            return attributeColors[name];
+        }
+
+        // Performance Helper: Yield thread to prevent "Page Unresponsive" freezing
+        const yieldToMain = () => new Promise(r => setTimeout(r, 0));
+        
+        // Map & Chart Instances
+        let mapInstance = null;
+        let markerLayerGroup = null; // High performance grouping
+        let measureLayerGroup = null; // Group for measurement lines and markers
+        let matchChartInstance = null;
+        
+        // Spatial & Shapefile Globals
+        let shapefileLayers = {}; // Stores multiple uploaded layers
+        let currentLayerId = null; // Tracks currently active layer
+        let customGeoLayer = null; // Active leaflet shape layer
+        let geoJsonData = null; // Active geoJson data
+        let selectedFeature = null;
+        let gridLayer = null;
+        let isShapeVisible = true;
+
+        let basemaps = {};
+        let currentBasemapLayer = null;
+        let mapUpdateTimer = null;
+        
+        // Measure Tool Globals
+        let isMeasureMode = false;
+        let measurePoints = [];
+
+        // Run map initialization on load
+        window.addEventListener('DOMContentLoaded', () => {
+            initMap();
+        });
+
+        // Handle Window Resizing for Map
+        window.addEventListener('resize', () => {
+            if (mapInstance) mapInstance.invalidateSize();
+        });
+
+        // ---------------- FILE UPLOAD & PARSING ----------------
+
+        function updateFileName(inputId, displayId, theme) {
+            const input = document.getElementById(inputId);
+            const display = document.getElementById(displayId);
+            const dropzone = document.getElementById(inputId === 'file1' ? 'dropzone1' : 'dropzone2');
+            const iconBox = document.getElementById(inputId === 'file1' ? 'iconBox1' : 'iconBox2');
+
+            if (input.files.length > 0) {
+                display.textContent = input.files[0].name;
+                display.classList.remove('hidden');
+                
+                iconBox.innerHTML = '<i data-lucide="check-circle-2" class="w-5 h-5 text-white"></i>';
+                lucide.createIcons();
+                
+                if (theme === 'orange') {
+                    dropzone.classList.add('border-orange-400', 'bg-orange-50/80', 'border-solid');
+                    dropzone.classList.remove('border-dashed', 'bg-slate-50/80');
+                } else if (theme === 'green') {
+                    dropzone.classList.add('border-green-400', 'bg-green-50/80', 'border-solid');
+                    dropzone.classList.remove('border-dashed', 'bg-slate-50/80');
+                }
+            }
+        }
+
+        async function handleFileUpload(inputId, displayId, fileNum, theme) {
+            updateFileName(inputId, displayId, theme);
+            const file = document.getElementById(inputId).files[0];
+            const rowCounter = document.getElementById(`rowCount${fileNum}`);
+            
+            if (!file) {
+                if (fileNum === 1) { headers1 = []; totalRows1 = 0; } else { headers2 = []; totalRows2 = 0; }
+                rowCounter.classList.add('hidden');
+                updateMatchColumnDropdown();
+                return;
+            }
+
+            try {
+                showStatus("Parsing document...", "loading");
+                const headers = await getHeaders(file);
+                const rawData = await readFile(file); // Get actual count
+                
+                if (fileNum === 1) { 
+                    headers1 = headers; 
+                    totalRows1 = rawData.length;
+                } else { 
+                    headers2 = headers; 
+                    totalRows2 = rawData.length;
+                }
+                
+                rowCounter.textContent = `${rawData.length} Rows Detected`;
+                rowCounter.classList.remove('hidden');
+                
+                updateMatchColumnDropdown();
+                showStatus("Document parsed.", "success");
+            } catch (err) {
+                console.error(err);
+                showStatus("Error reading files.", "error");
+            }
+        }
+
+        function getHeaders(file) {
+            return new Promise((resolve, reject) => {
+                let reader = new FileReader();
+                reader.onload = function(e) {
+                    setTimeout(() => {
+                        try {
+                            let data = new Uint8Array(e.target.result);
+                            let workbook = XLSX.read(data, {type: 'array'});
+                            let firstSheet = workbook.SheetNames[0];
+                            let jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet], { header: 1 });
+                            let headers = jsonData.length > 0 ? jsonData[0] : [];
+                            resolve(headers);
+                        } catch (err) { reject(err); }
+                    }, 50);
+                };
+                reader.onerror = reject;
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        function readFile(file) {
+            return new Promise((resolve, reject) => {
+                let reader = new FileReader();
+                reader.onload = function(e) {
+                    setTimeout(() => {
+                        try {
+                            let data = new Uint8Array(e.target.result);
+                            let workbook = XLSX.read(data, {type: 'array'});
+                            let firstSheet = workbook.SheetNames[0];
+                            let jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet], { defval: "" });
+                            resolve(jsonData);
+                        } catch (err) { reject(err); }
+                    }, 50);
+                };
+                reader.onerror = reject;
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        // ---------------- UI UPDATES ----------------
+
+        function updateMatchColumnDropdown() {
+            const containers = [document.getElementById('matchColContainer'), document.getElementById('columnSelectionContainer')];
+            const colLists = [document.getElementById('colList1'), document.getElementById('colList2')];
+
+            if (headers1.length > 0 || headers2.length > 0) {
+                const createCheckbox = (label, index, type) => {
+                    return `<div class="flex items-center py-1 hover:bg-slate-100 rounded px-2 transition-colors border-b border-slate-50 last:border-0">
+                        <input type="checkbox" id="cb_${type}_${index}" class="cb-${type} w-3.5 h-3.5 text-blue-600 bg-white border-slate-300 rounded focus:ring-blue-500 cursor-pointer shadow-inner" value="${label}" checked>
+                        <label for="cb_${type}_${index}" class="ml-2 text-xs font-bold text-slate-700 w-full cursor-pointer select-none truncate" title="${label}">${label}</label>
+                    </div>`;
+                };
+
+                const fillCols = (headers, listEl, type) => {
+                    if (headers.length === 0) { listEl.innerHTML = ''; return; }
+                    let valid = headers.filter(h => h && String(h).trim() !== '');
+                    
+                    let htmlChunk = '';
+                    valid.forEach((h, idx) => {
+                        htmlChunk += createCheckbox(h, idx, type);
+                    });
+                    listEl.innerHTML = htmlChunk;
+                };
+
+                fillCols(headers1, colLists[0], 's1');
+                fillCols(headers2, colLists[1], 's2');
+
+                const joinKeysList = document.getElementById('joinKeysList');
+                joinKeysList.innerHTML = '';
+                addJoinKeyRow(true);
+
+                containers.forEach(c => c.classList.remove('hidden'));
+            } else {
+                containers.forEach(c => c.classList.add('hidden'));
+            }
+        }
+
+        function addJoinKeyRow(isFirst = false) {
+            const list = document.getElementById('joinKeysList');
+            const rowId = 'joinKey_' + Date.now() + Math.floor(Math.random() * 1000);
+            
+            let s1Options = headers1.filter(h => h && String(h).trim() !== '').map(h => `<option value="${h}">${h}</option>`).join('');
+            let s2Options = headers2.filter(h => h && String(h).trim() !== '').map(h => `<option value="${h}">${h}</option>`).join('');
+            
+            const removeBtnHtml = isFirst 
+                ? `<div class="w-[30px] h-[30px]"></div>` 
+                : `<button onclick="document.getElementById('${rowId}').remove()" class="p-1.5 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-lg border border-rose-200 transition-colors mb-0.5 shadow-[0_2px_0_0_#fecdd3] active:shadow-none active:translate-y-[2px]" title="Remove Key">
+                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                   </button>`;
+
+            const rowHTML = `
+                <div id="${rowId}" class="join-key-row bg-white p-2.5 rounded-xl border border-slate-200 shadow-sm relative space-y-2">
+                    <div class="flex items-end space-x-2">
+                        <div class="flex-1">
+                            <label class="block text-[9px] font-bold text-orange-600 uppercase tracking-wider mb-1 ml-1">Sheet 1 Column</label>
+                            <select class="key-s1 w-full bg-slate-50 border border-slate-200 text-slate-800 text-[10px] rounded-lg focus:ring-2 focus:ring-orange-400 outline-none p-1.5 shadow-inner">
+                                <option value="">-- Select --</option>
+                                ${s1Options}
+                            </select>
+                        </div>
+                        <div class="flex-1">
+                            <label class="block text-[9px] font-bold text-green-600 uppercase tracking-wider mb-1 ml-1">Sheet 2 Column</label>
+                            <select class="key-s2 w-full bg-slate-50 border border-slate-200 text-slate-800 text-[10px] rounded-lg focus:ring-2 focus:ring-green-400 outline-none p-1.5 shadow-inner">
+                                <option value="">-- Select --</option>
+                                ${s2Options}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-between border-t border-slate-100 pt-2">
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="scissors" class="w-3.5 h-3.5 text-indigo-400"></i>
+                            <select class="key-len bg-slate-50 border border-slate-200 text-slate-700 text-[10px] font-bold rounded-lg outline-none px-2 py-1 cursor-pointer focus:ring-2 focus:ring-indigo-400 shadow-sm">
+                                <option value="0">Exact Match (Full)</option>
+                                <option value="3">First 3 Letters</option>
+                                <option value="4">First 4 Letters</option>
+                                <option value="5">First 5 Letters</option>
+                                <option value="6">First 6 Letters</option>
+                                <option value="7">First 7 Letters</option>
+                                <option value="8">First 8 Letters</option>
+                            </select>
+                        </div>
+                        ${removeBtnHtml}
+                    </div>
+                </div>
+            `;
+            list.insertAdjacentHTML('beforeend', rowHTML);
+            lucide.createIcons();
+
+            if (isFirst) {
+                const newRow = document.getElementById(rowId);
+                const sel1 = newRow.querySelector('.key-s1');
+                const sel2 = newRow.querySelector('.key-s2');
+                const findDefaultCol = (headers) => headers.find(h => h && ['well id', 'well_id', 'wellid', 'id', 'site id'].includes(String(h).toLowerCase().trim()));
+                const d1 = findDefaultCol(headers1); if (d1) sel1.value = d1;
+                const d2 = findDefaultCol(headers2); if (d2) sel2.value = d2;
+            }
+        }
+
+        function toggleAll(type, state) {
+            document.querySelectorAll(`.cb-${type}`).forEach(cb => cb.checked = state);
+        }
+
+        function showStatus(message, type) {
+            const alertEl = document.getElementById('statusAlert');
+            const iconEl = document.getElementById('statusIcon');
+            const textEl = document.getElementById('statusText');
+            
+            alertEl.className = "w-full px-5 py-3 rounded-xl text-sm font-black flex items-center justify-center space-x-3 border-2 shadow-sm animate-fade-in";
+            
+            if (type === 'error') {
+                alertEl.classList.add('bg-rose-50', 'text-rose-700', 'border-rose-200');
+                iconEl.setAttribute('data-lucide', 'alert-circle');
+            } else if (type === 'loading') {
+                alertEl.classList.add('bg-indigo-50', 'text-indigo-700', 'border-indigo-200');
+                iconEl.setAttribute('data-lucide', 'loader-2');
+                iconEl.classList.add('animate-spin');
+            } else if (type === 'success') {
+                alertEl.classList.add('bg-emerald-50', 'text-emerald-700', 'border-emerald-200');
+                iconEl.setAttribute('data-lucide', 'check-circle-2');
+                iconEl.classList.remove('animate-spin');
+            } else if (type === 'info') {
+                alertEl.classList.add('bg-slate-100', 'text-slate-700', 'border-slate-300');
+                iconEl.setAttribute('data-lucide', 'info');
+                iconEl.classList.remove('animate-spin');
+            }
+
+            alertEl.classList.remove('hidden');
+            textEl.textContent = message;
+            lucide.createIcons();
+        }
+
+        function resetApp() {
+            document.getElementById('file1').value = '';
+            document.getElementById('file2').value = '';
+
+            const drop1 = document.getElementById('dropzone1');
+            const drop2 = document.getElementById('dropzone2');
+            
+            drop1.className = 'dropzone-3d relative flex flex-col items-center justify-center w-full min-h-[7rem] py-3 bg-slate-50/80 rounded-2xl cursor-pointer hover:border-orange-400';
+            drop2.className = 'dropzone-3d relative flex flex-col items-center justify-center w-full min-h-[7rem] py-3 bg-slate-50/80 rounded-2xl cursor-pointer hover:border-green-400';
+            
+            document.getElementById('iconBox1').innerHTML = '<i data-lucide="cloud-upload" class="w-5 h-5 text-white"></i>';
+            document.getElementById('iconBox2').innerHTML = '<i data-lucide="cloud-upload" class="w-5 h-5 text-white"></i>';
+
+            document.getElementById('fileName1').classList.add('hidden');
+            document.getElementById('fileName2').classList.add('hidden');
+            document.getElementById('rowCount1').classList.add('hidden');
+            document.getElementById('rowCount2').classList.add('hidden');
+
+            document.getElementById('matchColContainer').classList.add('hidden');
+            document.getElementById('columnSelectionContainer').classList.add('hidden');
+            document.getElementById('chartView').classList.add('hidden');
+            document.getElementById('exportOptions').classList.add('hidden');
+            document.getElementById('statusAlert').classList.add('hidden');
+
+            matchedData = []; unmatchedData1 = []; unmatchedData2 = [];
+            missingData1 = []; missingData2 = []; currentDetailedAreaStats = [];
+            headers1 = []; headers2 = []; totalRows1 = 0; totalRows2 = 0;
+
+            if (mapInstance) {
+                if (markerLayerGroup) markerLayerGroup.clearLayers();
+                if (measureLayerGroup) measureLayerGroup.clearLayers();
+                mapInstance.setView([20.59, 78.96], 5);
+            }
+            
+            isMeasureMode = false;
+            measurePoints = [];
+            document.getElementById('measureBtn').className = "flex items-center space-x-1 bg-white hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg border border-slate-200 shadow-[0_2px_0_0_#e2e8f0] active:shadow-none active:translate-y-[2px] transition-all";
+            if (mapInstance && mapInstance._container) mapInstance._container.classList.remove('measuring');
+            
+            if (matchChartInstance) matchChartInstance.destroy();
+            
+            if (customGeoLayer) {
+                mapInstance.removeLayer(customGeoLayer);
+                customGeoLayer = null;
+                geoJsonData = null;
+                selectedFeature = null;
+                shapefileLayers = {};
+                currentLayerId = null;
+                isShapeVisible = true;
+                clearGrid();
+                
+                const layerSel = document.getElementById('layerSelector');
+                layerSel.classList.add('hidden');
+                layerSel.innerHTML = '';
+                
+                document.getElementById('featureSelector').classList.add('hidden');
+                document.getElementById('featureSelector').innerHTML = '<option value="">-- Select Area --</option>';
+                document.getElementById('shapeColContainer').classList.add('hidden');
+                document.getElementById('shpUpload').value = '';
+                document.getElementById('spatialAnalysisBar').classList.add('hidden');
+                document.getElementById('spatialAnalysisBar').classList.remove('flex');
+                document.getElementById('areaStatsBtn').classList.add('hidden');
+            }
+
+            lucide.createIcons();
+        }
+
+        // ---------------- MERGING LOGIC ----------------
+
+        function processMatchText(text, lengthLimit) {
+            if (text === undefined || text === null) return '';
+            let val = String(text).toLowerCase().trim();
+            val = val.replace(/[^a-z0-9]/g, '');
+            if (lengthLimit > 0) {
+                val = val.substring(0, lengthLimit);
+            }
+            return val;
+        }
+
+        async function processFiles() {
+            const f1 = document.getElementById('file1').files[0];
+            const f2 = document.getElementById('file2').files[0];
+
+            if (!f1 || !f2) return showStatus("Upload both sheets first.", "error");
+
+            const joinKeys = [];
+            document.querySelectorAll('.join-key-row').forEach(row => {
+                const col1 = row.querySelector('.key-s1').value;
+                const col2 = row.querySelector('.key-s2').value;
+                const len = parseInt(row.querySelector('.key-len').value) || 0;
+                if (col1 && col2) joinKeys.push({ col1, col2, len });
+            });
+
+            if (joinKeys.length === 0) return showStatus("Select at least one matching key pair.", "error");
+
+            const selCols1 = Array.from(document.querySelectorAll('.cb-s1:checked')).map(cb => cb.value);
+            const selCols2 = Array.from(document.querySelectorAll('.cb-s2:checked')).map(cb => cb.value);
+
+            showStatus("AI is fusing datasets...", "loading");
+            await yieldToMain();
+
+            try {
+                const data1 = await readFile(f1);
+                const data2 = await readFile(f2);
+                
+                totalRows1 = data1.length;
+                totalRows2 = data2.length;
+
+                matchedData = []; unmatchedData1 = []; unmatchedData2 = [];
+                missingData1 = []; missingData2 = [];
+                let matchedIndicesData2 = new Set();
+
+                const data2Map = new Map();
+                for (let idx = 0; idx < data2.length; idx++) {
+                    if (idx % 10000 === 0) await yieldToMain();
+                    let row2 = data2[idx];
+                    const allKeysEmpty = joinKeys.every(k => String(row2[k.col2] || '').trim() === '');
+                    if (allKeysEmpty) {
+                        missingData2.push(row2);
+                    } else {
+                        const key = joinKeys.map(k => processMatchText(row2[k.col2], k.len)).join('|||');
+                        if (!data2Map.has(key)) {
+                            data2Map.set(key, []);
+                        }
+                        data2Map.get(key).push({ row: row2, index: idx });
+                    }
+                }
+
+                let s2MatchTracker = new Map();
+                for (let idx = 0; idx < data1.length; idx++) {
+                    if (idx % 10000 === 0) await yieldToMain();
+                    let row1 = data1[idx];
+                    const allKeysEmpty = joinKeys.every(k => String(row1[k.col1] || '').trim() === '');
+                    if (allKeysEmpty) {
+                        missingData1.push(row1);
+                        continue;
+                    }
+                    const matchKey = joinKeys.map(k => processMatchText(row1[k.col1], k.len)).join('|||');
+                    if (data2Map.has(matchKey)) {
+                        let matches = data2Map.get(matchKey);
+                        let useIndex = s2MatchTracker.get(matchKey) || 0;
+                        let matchObj;
+                        
+                        // Handle 1-to-1 matching properly even if there are duplicates
+                        if (useIndex < matches.length) {
+                            matchObj = matches[useIndex];
+                            s2MatchTracker.set(matchKey, useIndex + 1);
+                            matchedIndicesData2.add(matchObj.index);
+                        } else {
+                            // If S1 has more duplicates than S2, fallback to using the last known matched S2 row
+                            matchObj = matches[matches.length - 1];
+                        }
+
+                        let combinedRow = {};
+                        selCols1.forEach(col => { if (row1[col] !== undefined) combinedRow[col] = row1[col]; });
+                        selCols2.forEach(col => {
+                            if (matchObj.row[col] !== undefined) {
+                                combinedRow[combinedRow.hasOwnProperty(col) ? `${col} (S2)` : col] = matchObj.row[col];
+                            }
+                        });
+                        matchedData.push(combinedRow);
+                    } else {
+                        unmatchedData1.push(row1);
+                    }
+                }
+
+                for (let idx = 0; idx < data2.length; idx++) {
+                    if (idx % 10000 === 0) await yieldToMain();
+                    let row2 = data2[idx];
+                    const allKeysEmpty = joinKeys.every(k => String(row2[k.col2] || '').trim() === '');
+                    if (!allKeysEmpty && !matchedIndicesData2.has(idx)) {
+                        unmatchedData2.push(row2);
+                    }
+                }
+
+                showStatus(`Success! ${matchedData.length} records integrated.`, "success");
+                
+                document.getElementById('chartView').classList.remove('hidden');
+                document.getElementById('chartView').classList.add('flex');
+                document.getElementById('exportOptions').classList.remove('hidden');
+                document.getElementById('exportOptions').classList.add('flex');
+                
+                renderMatchChart();
+                updateMapMarkers();
+
+                if (gridLayer) generateGridAnalysis();
+            } catch (err) {
+                showStatus("Error analyzing files.", "error");
+                console.error(err);
+            }
+        }
+
+        // ---------------- CHARTS LOGIC ----------------
+
+        function renderMatchChart() {
+            document.getElementById('statTotal1').innerText = totalRows1;
+            document.getElementById('statTotal2').innerText = totalRows2;
+            document.getElementById('statMatched').innerText = matchedData.length;
+            document.getElementById('statUn1').innerText = unmatchedData1.length;
+            document.getElementById('statUn2').innerText = unmatchedData2.length;
+            document.getElementById('statMissing1').innerText = missingData1.length;
+            document.getElementById('statMissing2').innerText = missingData2.length;
+
+            const ctx = document.getElementById('matchChart').getContext('2d');
+            if (matchChartInstance) matchChartInstance.destroy();
+
+            matchChartInstance = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Successfully Matched', 'Unmatched (Sheet 1)', 'Unmatched (Sheet 2)', 'Missing Keys (S1)', 'Missing Keys (S2)'],
+                    datasets: [{
+                        data: [matchedData.length, unmatchedData1.length, unmatchedData2.length, missingData1.length, missingData2.length],
+                        backgroundColor: ['#22c55e', '#f97316', '#e11d48', '#94a3b8', '#cbd5e1'],
+                        borderWidth: 0,
+                        hoverOffset: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom', labels: { padding: 15, usePointStyle: true, font: { size: 10, weight: '800' } } }
+                    },
+                    cutout: '70%'
+                }
+            });
+        }
+
+        // ---------------- MAP LOGIC ----------------
+
+        function initMap() {
+            if (!mapInstance) {
+                mapInstance = L.map('mapView', { zoomControl: false, preferCanvas: true }).setView([20.59, 78.96], 5);
+                L.control.zoom({ position: 'bottomright' }).addTo(mapInstance);
+                markerLayerGroup = L.featureGroup().addTo(mapInstance);
+                measureLayerGroup = L.featureGroup().addTo(mapInstance);
+                basemaps = {
+                    "osm": L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OSM' }),
+                    "gstreet": L.tileLayer('http://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',{ maxZoom: 20, subdomains:['mt0','mt1','mt2','mt3']}),
+                    "gsat": L.tileLayer('http://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',{ maxZoom: 20, subdomains:['mt0','mt1','mt2','mt3']}),
+                    "ghyb": L.tileLayer('http://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}',{ maxZoom: 20, subdomains:['mt0','mt1','mt2','mt3']}),
+                    "gter": L.tileLayer('http://{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',{ maxZoom: 20, subdomains:['mt0','mt1','mt2','mt3']}),
+                    "esriPhys": L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Physical_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 12 }),
+                    "cartoLight": L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 }),
+                    "cartoDark": L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 })
+                };
+                changeBasemap(document.getElementById('basemapSelector').value);
+                mapInstance.on('click', handleMapClick);
+            }
+            mapInstance.invalidateSize();
+        }
+
+        function changeBasemap(layerKey) {
+            if (!mapInstance) return;
+            if (currentBasemapLayer) mapInstance.removeLayer(currentBasemapLayer);
+            currentBasemapLayer = basemaps[layerKey];
+            if (currentBasemapLayer) { currentBasemapLayer.addTo(mapInstance); currentBasemapLayer.bringToBack(); }
+        }
+
+        function toggleMeasureMode() {
+            isMeasureMode = !isMeasureMode;
+            const btn = document.getElementById('measureBtn');
+            if (isMeasureMode) {
+                btn.className = "flex items-center space-x-1 bg-indigo-100 text-indigo-800 px-3 py-2 rounded-lg border border-indigo-300 shadow-[0_2px_0_0_#a5b4fc] active:shadow-none active:translate-y-[2px] transition-all";
+                mapInstance._container.classList.add('measuring');
+                showStatus("Measure Mode: Click two points on the map.", "info");
+            } else {
+                btn.className = "flex items-center space-x-1 bg-white hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg border border-slate-200 shadow-[0_2px_0_0_#e2e8f0] active:shadow-none active:translate-y-[2px] transition-all";
+                mapInstance._container.classList.remove('measuring');
+                measureLayerGroup.clearLayers();
+                measurePoints = [];
+                document.getElementById('statusAlert').classList.add('hidden');
+            }
+        }
+
+        function toggleShapefileVisibility() {
+            if (!customGeoLayer) return;
+            isShapeVisible = !isShapeVisible;
+            if (isShapeVisible) {
+                mapInstance.addLayer(customGeoLayer);
+                document.getElementById('toggleShapeIcon').setAttribute('data-lucide', 'eye');
+            } else {
+                mapInstance.removeLayer(customGeoLayer);
+                document.getElementById('toggleShapeIcon').setAttribute('data-lucide', 'eye-off');
+            }
+            lucide.createIcons();
+        }
+
+        function handleMapClick(e) {
+            if (!isMeasureMode) return;
+            if (measurePoints.length >= 2) { measureLayerGroup.clearLayers(); measurePoints = []; }
+            measurePoints.push(e.latlng);
+            L.circleMarker(e.latlng, { radius: 6, color: '#be123c', fillColor: '#f43f5e', fillOpacity: 1, weight: 2 }).addTo(measureLayerGroup);
+            if (measurePoints.length === 2) {
+                const pt1 = measurePoints[0]; const pt2 = measurePoints[1];
+                const line = L.polyline([pt1, pt2], {color: '#be123c', weight: 3, dashArray: '6, 6'}).addTo(measureLayerGroup);
+                const distanceKm = turf.distance([pt1.lng, pt1.lat], [pt2.lng, pt2.lat], {units: 'kilometers'});
+                const distanceStr = distanceKm < 1 ? (distanceKm * 1000).toFixed(1) + ' meters' : distanceKm.toFixed(2) + ' km';
+                line.bindTooltip(`<b>Distance:</b> ${distanceStr}`, { permanent: true, className: "font-black text-rose-700 bg-white border border-rose-200 shadow-md px-3 py-1", direction: 'center' }).openTooltip();
+                showStatus(`Measured: ${distanceStr}`, "success");
+            }
+        }
+
+        function findGeoKeys(data) {
+            if(!data || !data.length) return null;
+            let keys = Object.keys(data[0]);
+            return { lat: keys.find(k => /^(lat|latitude)/i.test(k)), lng: keys.find(k => /^(lon|long|longitude|lng)/i.test(k)) };
+        }
+
+        function debounceUpdateMapMarkers() {
+            if (mapUpdateTimer) clearTimeout(mapUpdateTimer);
+            mapUpdateTimer = setTimeout(() => { updateMapMarkers(); }, 150);
+        }
+
+        async function updateMapMarkers() {
+            if (!mapInstance || !markerLayerGroup) return;
+            markerLayerGroup.clearLayers();
+            const cM = document.getElementById('colorMatched').value;
+            const cU = document.getElementById('colorUnmatched').value;
+            const r = parseInt(document.getElementById('markerSize').value);
+            const bounds = [];
+            const draw = async (dataset, color, label) => {
+                if (!dataset || !dataset.length) return;
+                let geo = findGeoKeys(dataset);
+                if (!geo || !geo.lat || !geo.lng) return; 
+                let markersToBatch = [];
+                for (let i = 0; i < dataset.length; i++) {
+                    if (i % 5000 === 0) await yieldToMain();
+                    let row = dataset[i];
+                    let lat = parseFloat(row[geo.lat]), lng = parseFloat(row[geo.lng]);
+                    if (!isNaN(lat) && !isNaN(lng)) {
+                        let pop = `<div class="text-[12px]"><h4 class="font-bold border-b pb-1 mb-1 text-indigo-700 uppercase tracking-wider">${label} Point</h4>`;
+                        Object.keys(row).slice(0,6).forEach(k => { if(row[k]) pop += `<p class="m-0 text-slate-600"><b>${k}:</b> ${row[k]}</p>`; });
+                        pop += `</div>`;
+                        let marker = L.circleMarker([lat, lng], { radius: r, fillColor: color, color: "#fff", weight: 1.5, fillOpacity: 0.9 }).bindPopup(pop);
+                        markersToBatch.push(marker);
+                        bounds.push([lat, lng]);
+                    }
+                }
+                markersToBatch.forEach(m => markerLayerGroup.addLayer(m));
+            };
+            await draw(matchedData, cM, "Matched"); 
+            await draw(unmatchedData2, cU, "Unmatched");
+            if (bounds.length && !selectedFeature) mapInstance.fitBounds(bounds, { padding: [30, 30] });
+        }
+
+        function getFeatureName(properties) {
+            if (!properties) return "Unknown Area";
+            
+            const keys = Object.keys(properties);
+            const lowerKeys = keys.map(k => k.toLowerCase());
+            let finalName = "Unknown Area";
+            
+            // 1. Highest Priority: Look specifically for Aquifer / Lithology related names
+            const aqKeywords = ['aquifer', 'aq_name', 'aq_type', 'prncpl_aq', 'principal', 'aqf', 'aq', 'litho', 'desc', 'rock', 'forma', 'geology', 'system', 'type'];
+            for (let keyword of aqKeywords) {
+                let foundIndex = lowerKeys.findIndex(k => k.includes(keyword));
+                if (foundIndex !== -1) {
+                    let val = properties[keys[foundIndex]];
+                    if (val && String(val).trim() !== '' && isNaN(val)) {
+                        finalName = String(val).trim();
+                        break;
+                    }
+                }
+            }
+
+            // 2. Secondary Priority: Standard region names
+            if (finalName === "Unknown Area") {
+                const standardKeywords = ['name', 'state', 'district', 'basin', 'region'];
+                for (let keyword of standardKeywords) {
+                    let foundIndex = lowerKeys.findIndex(k => k.includes(keyword));
+                    if (foundIndex !== -1) {
+                        let val = properties[keys[foundIndex]];
+                        if (val && String(val).trim() !== '' && isNaN(val)) {
+                            finalName = String(val).trim();
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // 3. Fallback: Find the FIRST string property that isn't a number or ID
+            if (finalName === "Unknown Area") {
+                for (let key of keys) {
+                    let val = properties[key];
+                    if (typeof val === 'string' && val.trim() !== '' && isNaN(val)) {
+                        if (!key.toLowerCase().includes('shape') && !key.toLowerCase().includes('id') && !key.toLowerCase().includes('code')) {
+                            finalName = val.trim();
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // 4. Absolute fallback
+            if (finalName === "Unknown Area") {
+                for (let key of keys) {
+                    if (properties[key] && String(properties[key]).trim() !== '') {
+                        finalName = String(properties[key]).trim();
+                        break;
+                    }
+                }
+            }
+            
+            // Normalize casing (Title Case) to prevent duplicate groups like "Alluvium", "Alluvium  ", and "ALLUVIUM"
+            if (finalName !== "Unknown Area") {
+                return finalName.split(' ')
+                    .filter(word => word.trim().length > 0)
+                    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                    .join(' ');
+            }
+            
+            return finalName;
+        }
+
+        async function handleShapefileUpload(event) {
+            const files = event.target.files;
+            if (!files || files.length === 0) return;
+            showStatus("Loading shapefile layer...", "loading");
+            try {
+                const zip = new JSZip();
+                let hasShp = false;
+                let shpName = "Layer " + (Object.keys(shapefileLayers).length + 1);
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i]; const name = file.name;
+                    if (name.toLowerCase().endsWith('.xml')) continue;
+                    if (name.toLowerCase().endsWith('.shp')) { hasShp = true; shpName = name.replace(/\.shp$/i, ''); }
+                    const arrayBuffer = await file.arrayBuffer(); zip.file(name, arrayBuffer);
+                }
+                if (!hasShp) { showStatus("Missing .shp file in selection.", "error"); return; }
+                const zipBuffer = await zip.generateAsync({type: "arraybuffer"});
+                let parsedGeoJson = await shp(zipBuffer);
+                if (Array.isArray(parsedGeoJson)) parsedGeoJson = parsedGeoJson[0];
+                const layerId = 'shp_' + Date.now();
+                const newLayer = L.geoJSON(parsedGeoJson, {
+                    style: defaultStateStyle,
+                    onEachFeature: function(feature, layer) {
+                        const featName = getFeatureName(feature.properties);
+                        layer.bindTooltip(featName, {sticky: true, className: "font-black text-sm text-indigo-900 border-2 border-indigo-200 shadow-md"});
+                        layer.on({ click: function() { document.getElementById('featureSelector').value = featName; highlightFeature(featName); } });
+                    }
+                });
+                shapefileLayers[layerId] = { id: layerId, name: shpName, geoJson: parsedGeoJson, leafletLayer: newLayer };
+                const layerSel = document.getElementById('layerSelector');
+                const opt = document.createElement('option'); opt.value = layerId; opt.textContent = shpName;
+                layerSel.appendChild(opt); layerSel.classList.remove('hidden'); layerSel.value = layerId;
+                document.getElementById('shapeColContainer').classList.remove('hidden');
+                document.getElementById('areaStatsBtn').classList.remove('hidden');
+                
+                isShapeVisible = true;
+                document.getElementById('toggleShapeIcon').setAttribute('data-lucide', 'eye');
+                lucide.createIcons();
+                
+                switchShapefileLayer(layerId);
+                showStatus(`Shapefile '${shpName}' loaded.`, "success");
+                event.target.value = '';
+            } catch (err) { console.error(err); showStatus("Error loading shapefile.", "error"); }
+        }
+
+        function switchShapefileLayer(layerId) {
+            if (!shapefileLayers[layerId]) return;
+            if (customGeoLayer) mapInstance.removeLayer(customGeoLayer);
+            currentLayerId = layerId; geoJsonData = shapefileLayers[layerId].geoJson; customGeoLayer = shapefileLayers[layerId].leafletLayer;
+            if (isShapeVisible) customGeoLayer.addTo(mapInstance).bringToBack();
+            if(currentBasemapLayer) currentBasemapLayer.bringToBack();
+            mapInstance.fitBounds(customGeoLayer.getBounds(), { padding: [20, 20] });
+            populateFeatureDropdown(geoJsonData);
+            document.getElementById('featureSelector').classList.remove('hidden');
+            updateShapefileColor();
+        }
+
+        function populateFeatureDropdown(geoJson) {
+            const selector = document.getElementById('featureSelector');
+            selector.innerHTML = '<option value="">-- Select Area --</option><option value="ALL_MAP">[ Entire Map / All Areas ]</option>';
+            const featureNames = new Set();
+            geoJson.features.forEach(f => { const name = getFeatureName(f.properties); if (name && name !== "Unknown Area") featureNames.add(name); });
+            Array.from(featureNames).sort().forEach(name => { const opt = document.createElement('option'); opt.value = name; opt.textContent = name; selector.appendChild(opt); });
+        }
+
+        function highlightFeature(targetFeatName) {
+            if (!customGeoLayer) return;
+            selectedFeature = null;
+            if (targetFeatName === "ALL_MAP") {
+                 customGeoLayer.eachLayer(layer => layer.setStyle(highlightStateStyle(layer.feature)));
+                 selectedFeature = geoJsonData; 
+            } else {
+                customGeoLayer.eachLayer(layer => {
+                    const name = getFeatureName(layer.feature.properties);
+                    if (targetFeatName && name === targetFeatName) { 
+                        layer.setStyle(highlightStateStyle(layer.feature)); 
+                        layer.bringToFront(); 
+                        selectedFeature = layer.feature; 
+                    } else { 
+                        layer.setStyle(defaultStateStyle(layer.feature)); 
+                    }
+                });
+            }
+            const bar = document.getElementById('spatialAnalysisBar');
+            if (selectedFeature) {
+                bar.classList.remove('hidden'); bar.classList.add('flex', 'flex-col', 'md:flex-row');
+                if (isShapeVisible) {
+                    mapInstance.fitBounds(targetFeatName === "ALL_MAP" ? customGeoLayer.getBounds() : L.geoJSON(selectedFeature).getBounds(), { padding: [20, 20] });
+                }
+            } else {
+                bar.classList.add('hidden'); bar.classList.remove('flex', 'flex-col', 'md:flex-row');
+                clearGrid();
+            }
+            if (gridLayer) gridLayer.bringToFront();
+            if (markerLayerGroup) markerLayerGroup.bringToFront();
+        }
+
+        function getStyleForFeature(feature, isHighlight) {
+            const mode = document.getElementById('shapeColMode').value;
+            let fillColor = document.getElementById('colorShape').value;
+            
+            // Override with Dynamic Attribute Coloring if selected
+            if (mode === 'attribute' && feature) {
+                const name = getFeatureName(feature.properties);
+                fillColor = getAttributeColor(name);
+            }
+            
+            if (isHighlight) {
+                return { fillColor: fillColor, weight: 3, opacity: 1, color: '#4f46e5', fillOpacity: 0.65 };
+            } else {
+                return { fillColor: fillColor, weight: 1.5, opacity: 1, color: '#64748b', fillOpacity: 0.30 };
+            }
+        }
+
+        function defaultStateStyle(feature) { return getStyleForFeature(feature, false); }
+        function highlightStateStyle(feature) { return getStyleForFeature(feature, true); }
+        function updateShapefileColor() { if (!customGeoLayer) return; highlightFeature(document.getElementById('featureSelector').value); }
+
+        // --- RAW MATH RAY-CASTING ENGINE (Ignores broken shapefile topologies) ---
+        function isPointInGeom(pt, geometry) {
+            if (!geometry || !geometry.coordinates) return false;
+            let type = geometry.type;
+            let coords = geometry.coordinates;
+            
+            function pointInRing(pt, ring) {
+                let isInside = false;
+                for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                    let xi = ring[i][0], yi = ring[i][1];
+                    let xj = ring[j][0], yj = ring[j][1];
+                    let intersect = ((yi > pt[1]) !== (yj > pt[1])) && (pt[0] < (xj - xi) * (pt[1] - yi) / (yj - yi) + xi);
+                    if (intersect) isInside = !isInside;
+                }
+                return isInside;
+            }
+
+            if (type === "Polygon") {
+                if (!pointInRing(pt, coords[0])) return false;
+                for (let i = 1; i < coords.length; i++) {
+                    if (pointInRing(pt, coords[i])) return false; // In hole
+                }
+                return true;
+            } else if (type === "MultiPolygon") {
+                for (let p = 0; p < coords.length; p++) {
+                    let polyCoords = coords[p];
+                    if (pointInRing(pt, polyCoords[0])) {
+                        let inHole = false;
+                        for (let i = 1; i < polyCoords.length; i++) {
+                            if (pointInRing(pt, polyCoords[i])) {
+                                inHole = true;
+                                break;
+                            }
+                        }
+                        if (!inHole) return true;
+                    }
+                }
+                return false;
+            }
+            return false;
+        }
+
+        // --- DETAILED EXPORT FUNCTION ---
+        function exportDetailedAreaStats() {
+            if (!currentDetailedAreaStats || currentDetailedAreaStats.length === 0) {
+                return showStatus("No detailed stats to export.", "error");
+            }
+            let name = document.getElementById('exportFileName').value.trim() || "HydroMerge_Output";
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(currentDetailedAreaStats), "State_Aquifer_Breakdown");
+            XLSX.writeFile(wb, name + "_Regional_Stats.xlsx");
+        }
+
+        function getStateValueFromRow(row) {
+            if (!row) return "Unknown State";
+            let keys = Object.keys(row);
+            let stateKey = keys.find(k => {
+                let lower = k.toLowerCase();
+                return lower === 'state' || lower === 'state_name' || lower === 'state name';
+            });
+            if (stateKey && row[stateKey]) return String(row[stateKey]).trim();
+            return "Unknown State";
+        }
+
+        function calculateAreaStats() {
+            if (!geoJsonData) return showStatus("Load shapefile first.", "error");
+            document.getElementById('areaStatsModal').classList.remove('hidden');
+            document.getElementById('areaStatsLoading').classList.remove('hidden');
+            const tbody = document.getElementById('areaStatsTableBody');
+            tbody.innerHTML = ''; 
+            currentDetailedAreaStats = []; // Reset detailed stats global
+            
+            setTimeout(async () => {
+                try {
+                    // 1. FAST POINT EXTRACTION WITH ROW DATA
+                    const matchedPts = []; 
+                    const unmatchedPts = [];
+                    
+                    const geoM = findGeoKeys(matchedData);
+                    const geoU = findGeoKeys(unmatchedData2);
+                    
+                    const addFastPts = (dataset, geoKeys, targetArr) => {
+                        if (!dataset || !geoKeys) return;
+                        for(let i=0; i<dataset.length; i++) {
+                            let lat = parseFloat(dataset[i][geoKeys.lat]);
+                            let lng = parseFloat(dataset[i][geoKeys.lng]);
+                            if (!isNaN(lat) && !isNaN(lng)) {
+                                targetArr.push({ coords: [lng, lat], id: i, row: dataset[i] });
+                            }
+                        }
+                    };
+                    
+                    addFastPts(matchedData, geoM, matchedPts); 
+                    addFastPts(unmatchedData2, geoU, unmatchedPts);
+
+                    // Group features by regional name (Crucial for fragmented aquifers)
+                    let regionPolys = {};
+                    geoJsonData.features.forEach(f => { 
+                        if (!f.geometry || !f.geometry.type.includes('Polygon')) return; // Skip lines/points
+                        let name = getFeatureName(f.properties); 
+                        if (!regionPolys[name]) regionPolys[name] = []; 
+                        regionPolys[name].push(f); 
+                    });
+
+                    let results = [];
+                    let regionNames = Object.keys(regionPolys);
+
+                    // 2. HIGH-SPEED RAY-CASTING INTERSECTION & STATE GROUPING
+                    for (let r = 0; r < regionNames.length; r++) {
+                        let regionName = regionNames[r];
+                        if (r % 5 === 0) await yieldToMain(); // Yield frequently
+                        
+                        let polys = regionPolys[regionName];
+                        let stateTracker = {}; // Format: { "Gujarat": { matched: 0, unmatched: 0 } }
+
+                        const countAndGroupPoints = (ptsArray, typeKey) => {
+                            let matchedIndices = new Set();
+                            for (let p = 0; p < polys.length; p++) {
+                                let poly = polys[p];
+                                let bbox;
+                                try { bbox = turf.bbox(poly); } catch(e) { continue; } // Pre-fetch mathematical envelope
+
+                                for (let i = 0; i < ptsArray.length; i++) {
+                                    let pt = ptsArray[i];
+                                    if (matchedIndices.has(pt.id)) continue; 
+
+                                    // Fast AABB Bounding Box Check
+                                    if (pt.coords[0] >= bbox[0] && pt.coords[0] <= bbox[2] && pt.coords[1] >= bbox[1] && pt.coords[1] <= bbox[3]) {
+                                        // Bulletproof ray-casting verification
+                                        if (isPointInGeom(pt.coords, poly.geometry)) {
+                                            matchedIndices.add(pt.id);
+                                            
+                                            // Extract "State" and aggregate
+                                            let stateName = getStateValueFromRow(pt.row);
+                                            if (!stateTracker[stateName]) stateTracker[stateName] = { matched: 0, unmatched: 0 };
+                                            stateTracker[stateName][typeKey]++;
+                                        }
+                                    }
+                                }
+                            }
+                            return matchedIndices.size;
+                        };
+
+                        let totalMatched = countAndGroupPoints(matchedPts, 'matched');
+                        let totalUnmatched = countAndGroupPoints(unmatchedPts, 'unmatched');
+
+                        // Save the detailed breakdown for this aquifer into the global export array
+                        for (let stateName in stateTracker) {
+                            currentDetailedAreaStats.push({
+                                "Principal Aquifer": regionName,
+                                "State": stateName,
+                                "Matched Samples": stateTracker[stateName].matched,
+                                "Unmatched Samples": stateTracker[stateName].unmatched,
+                                "Total Samples": stateTracker[stateName].matched + stateTracker[stateName].unmatched
+                            });
+                        }
+
+                        // Save the high-level summary for the HTML modal
+                        results.push({ name: regionName, matched: totalMatched, unmatched: totalUnmatched, total: totalMatched + totalUnmatched });
+                    }
+
+                    // Render Table
+                    results.sort((a, b) => b.total - a.total);
+                    tbody.innerHTML = results.map(res => `<tr><td class="px-5 py-4 font-bold text-slate-800 border-b border-slate-100">${res.name}</td><td class="px-5 py-4 text-center text-emerald-600 font-black border-b border-slate-100">${res.matched}</td><td class="px-5 py-4 text-center text-rose-500 font-black border-b border-slate-100">${res.unmatched}</td><td class="px-5 py-4 text-center text-indigo-700 font-black bg-indigo-50/50 border-b border-slate-100">${res.total}</td></tr>`).join('');
+                    document.getElementById('areaStatsLoading').classList.add('hidden');
+                    
+                } catch (e) { 
+                    console.error("Area Stats Error: ", e); 
+                    document.getElementById('areaStatsLoading').classList.add('hidden'); 
+                    showStatus("Error calculating regional stats.", "error");
+                }
+            }, 50);
+        }
+
+        function generateGridAnalysis() {
+            if (!selectedFeature) return showStatus("Highlight area first.", "error");
+            const areaSqKm = parseFloat(document.getElementById('gridSizeKm').value);
+            if (!areaSqKm || areaSqKm <= 0) return showStatus("Enter valid grid area.", "error");
+            
+            // Turf.js needs the length of the side of the square. 
+            // Side length = square root of the Area.
+            const size = Math.sqrt(areaSqKm); 
+            
+            showStatus("Analyzing and clipping grids (Optimized)...", "loading");
+            setTimeout(async () => {
+                try {
+                    const mapBbox = turf.bbox(selectedFeature);
+                    const grid = turf.squareGrid(mapBbox, size, { units: 'kilometers' });
+                    
+                    let featuresToCheck = selectedFeature.type === "FeatureCollection" ? selectedFeature.features : [selectedFeature];
+
+                    // 1. HIGH-SPEED POINT EXTRACTION & PRE-FILTERING
+                    const geoM = findGeoKeys(matchedData);
+                    const geoU = findGeoKeys(unmatchedData2);
+                    const points = [];
+
+                    const addFastPts = (dataset, geoKeys) => {
+                        if (!dataset || !geoKeys) return;
+                        for(let i=0; i<dataset.length; i++) {
+                            let lat = parseFloat(dataset[i][geoKeys.lat]);
+                            let lng = parseFloat(dataset[i][geoKeys.lng]);
+                            // Pre-filter points that fall within the general map bounding box
+                            if (lng >= mapBbox[0] && lng <= mapBbox[2] && lat >= mapBbox[1] && lat <= mapBbox[3]) {
+                                points.push([lng, lat]);
+                            }
+                        }
+                    };
+                    addFastPts(matchedData, geoM);
+                    addFastPts(unmatchedData2, geoU);
+
+                    let clippedGrids = [];
+                    let emptyCount = 0;
+
+                    // 2. PROCESS, COUNT, AND CLIP
+                    for (let i = 0; i < grid.features.length; i++) {
+                        if (i % 200 === 0) await yieldToMain(); // Yield frequently to keep UI buttery smooth
+                        let cell = grid.features[i];
+                        let cellBbox = turf.bbox(cell);
+                        
+                        // --- HIGH PERFORMANCE POINT COUNTING ---
+                        // Math Check: Since grids are perfect squares, point-in-bbox == point-in-polygon
+                        let ptCount = 0;
+                        for (let p = 0; p < points.length; p++) {
+                            let pt = points[p];
+                            if (pt[0] >= cellBbox[0] && pt[0] <= cellBbox[2] && pt[1] >= cellBbox[1] && pt[1] <= cellBbox[3]) {
+                                ptCount++;
+                            }
+                        }
+                        
+                        cell.properties.pointCount = ptCount;
+                        cell.properties.isEmpty = (ptCount === 0);
+
+                        // --- ROBUST & FAST CLIPPING ---
+                        let finalCell = null;
+
+                        for (let j = 0; j < featuresToCheck.length; j++) {
+                            let feat = featuresToCheck[j];
+                            
+                            // Fast AABB pre-check to ignore features entirely outside this grid cell
+                            let featBbox = turf.bbox(feat);
+                            if (cellBbox[0] > featBbox[2] || cellBbox[2] < featBbox[0] || cellBbox[1] > featBbox[3] || cellBbox[3] < featBbox[1]) {
+                                continue; 
+                            }
+
+                            try {
+                                if (turf.booleanWithin(cell, feat)) {
+                                    finalCell = cell; // Fully inside, no need to intersect
+                                    break; 
+                                }
+                            } catch(e) {} // Ignore topology errors
+
+                            try {
+                                if (turf.booleanIntersects(cell, feat)) {
+                                    try {
+                                        let clippedPiece = turf.intersect(cell, feat);
+                                        if (clippedPiece) {
+                                            if (!finalCell) {
+                                                finalCell = clippedPiece;
+                                            } else {
+                                                // Combine pieces if grid cell straddles multiple state borders
+                                                finalCell = turf.union(finalCell, clippedPiece) || finalCell;
+                                            }
+                                        } else {
+                                            finalCell = cell; // Fallback to square if intersection fails
+                                        }
+                                    } catch(e) {
+                                        finalCell = cell; // Fallback for complex topology crashes
+                                    }
+                                }
+                            } catch(e) {}
+                        }
+
+                        if (finalCell) {
+                            finalCell.properties = { ...cell.properties };
+                            if (finalCell.properties.isEmpty) emptyCount++;
+                            clippedGrids.push(finalCell);
+                        }
+                    }
+
+                    clearGrid();
+                    gridLayer = L.geoJSON(turf.featureCollection(clippedGrids), {
+                        style: feature => feature.properties.isEmpty ? 
+                            { color: '#be123c', weight: 1.5, fillColor: '#f43f5e', fillOpacity: 0.45 } : 
+                            { color: '#047857', weight: 1.5, fillColor: '#10b981', fillOpacity: 0.45 },
+                        onEachFeature: (feature, layer) => layer.bindTooltip(feature.properties.isEmpty ? "Empty" : `Samples: ${feature.properties.pointCount}`)
+                    }).addTo(mapInstance);
+                    
+                    const resText = document.getElementById('gridResultText');
+                    resText.innerHTML = `<span class="text-rose-600 text-lg">${emptyCount}</span> of ${clippedGrids.length} clipped grids are empty.`;
+                    resText.classList.remove('hidden');
+                    showStatus("Grid analysis complete.", "success");
+                } catch (e) { 
+                    console.error(e); 
+                    showStatus("Error during grid generation.", "error"); 
+                }
+            }, 50);
+        }
+
+        function clearGrid() { if (gridLayer) mapInstance.removeLayer(gridLayer); gridLayer = null; document.getElementById('gridResultText').classList.add('hidden'); }
+
+        function exportData() {
+            if (!matchedData.length && !unmatchedData1.length && !unmatchedData2.length && !missingData1.length && !missingData2.length) return;
+            let name = document.getElementById('exportFileName').value.trim() || "HydroMerge_Output"; 
+            const wb = XLSX.utils.book_new();
+            if (matchedData.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(matchedData), "Matched");
+            if (unmatchedData1.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(unmatchedData1), "Unmatched_Sheet1");
+            if (unmatchedData2.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(unmatchedData2), "Unmatched_Sheet2");
+            if (missingData1.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(missingData1), "Missing_Keys_S1");
+            if (missingData2.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(missingData2), "Missing_Keys_S2");
+            XLSX.writeFile(wb, name + ".xlsx");
+        }
+    </script>
+</body>
+</html>

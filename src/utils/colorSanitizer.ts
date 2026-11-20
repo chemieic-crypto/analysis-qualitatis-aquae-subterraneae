@@ -519,7 +519,10 @@ export const safeHtml2canvas = async (
   };
 
   try {
-    const renderScale = Math.min(3, Math.max(2, finalOptions.scale || 3));
+    const maxSafeDim = Math.max(targetWidth, targetHeight, 1);
+    const maxDimScale = 15000 / maxSafeDim;
+    const maxAreaScale = Math.sqrt(180_000_000 / Math.max(1, targetWidth * targetHeight));
+    const renderScale = Math.min(8.34, maxDimScale, maxAreaScale, Math.max(2, finalOptions.scale || 3));
     const effectiveWindowW = finalOptions.windowWidth || Math.max(1600, targetWidth);
     const effectiveWindowH = finalOptions.windowHeight || Math.max(1200, targetHeight);
 
@@ -606,8 +609,10 @@ export const captureGlossyCanvas = async (
   const bg = options?.backgroundColor ?? "#ffffff";
   const w = Math.max(1, element.offsetWidth || element.scrollWidth || 1200);
   const h = Math.max(1, element.offsetHeight || element.scrollHeight || 800);
-  // Keep within browser max canvas dimension (16384px) while keeping maximum sharpness
-  const safeScale = Math.max(1.5, Math.min(requestedScale, 13000 / Math.max(w, h)));
+  // Keep within browser max canvas dimension (16384px) and pixel area while keeping maximum sharpness (600-800 DPI)
+  const maxDimScale = 15500 / Math.max(w, h);
+  const maxAreaScale = Math.sqrt(180_000_000 / Math.max(1, w * h));
+  const safeScale = Math.max(1.5, Math.min(requestedScale, maxDimScale, maxAreaScale));
 
   try {
     const canvas = await domToCanvas(element, {
@@ -615,7 +620,7 @@ export const captureGlossyCanvas = async (
       backgroundColor: bg,
       width: w,
       height: h,
-      timeout: 8000,
+      timeout: 15000,
       filter: (node: Node) => {
         if (node instanceof Element) {
           if (
@@ -655,7 +660,7 @@ export const captureGlossyCanvas = async (
   }
 
   return safeHtml2canvas(element, {
-    scale: Math.min(4, requestedScale),
+    scale: safeScale,
     useCORS: true,
     allowTaint: false,
     backgroundColor: bg,

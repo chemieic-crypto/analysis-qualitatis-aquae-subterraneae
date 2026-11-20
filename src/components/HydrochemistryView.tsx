@@ -77,7 +77,6 @@ const COLUMN_DEFINITIONS = [
   { id: "Al", label: "Aluminium (Al)", aliases: ["al", "aluminium", "aluminum", "al (mg/l)", "aluminium (al)"] },
   { id: "Ba", label: "Barium (Ba)", aliases: ["ba", "barium", "ba (mg/l)", "barium (ba)"] },
   { id: "B", label: "Boron (B)", aliases: ["b", "boron", "b (mg/l)", "boron (b)"] },
-  { id: "Mo", label: "Molybdenum (Mo)", aliases: ["mo", "molybdenum", "mo (mg/l)", "molybdenum (mo)"] },
   { id: "Season", label: "Season / Period", aliases: ["season", "period"] },
   { id: "Year", label: "Year", aliases: ["year"] }
 ];
@@ -319,8 +318,7 @@ export default function HydrochemistryView({
         "Mn": columnMapping["Mn"] ? getNum("Mn") : undefined,
         "Al": columnMapping["Al"] ? getNum("Al") : undefined,
         "Ba": columnMapping["Ba"] ? getNum("Ba") : undefined,
-        "B": columnMapping["B"] ? getNum("B") : undefined,
-        "Mo": columnMapping["Mo"] ? getNum("Mo") : undefined
+        "B": columnMapping["B"] ? getNum("B") : undefined
       };
     });
   }, [mainRawData, columnMapping]);

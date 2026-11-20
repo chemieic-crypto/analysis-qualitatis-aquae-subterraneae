@@ -280,17 +280,6 @@ export const ALERT_REMEDIAL_MEASURES: AlertRemedialMeasure[] = [
     ]
   },
   {
-    id: "Mo",
-    title: "Risk Perception & Remedial Measures for Molybdenum",
-    riskPerception:
-      "Elevated molybdenum intake can lead to gout-like symptoms, joint deformities, and secondary copper deficiency in humans.",
-    sections: [
-      {
-        desc: "Strong base anion exchange, coagulation with iron salts at lower pH (<6.5), and Reverse Osmosis."
-      }
-    ]
-  },
-  {
     id: "Hg",
     title: "Risk Perception & Remedial Measures for Mercury",
     riskPerception:
@@ -338,7 +327,6 @@ const PARAM_KEY_TO_ALERT_ID: Record<string, string> = {
   Al: "Al",
   Ba: "Ba",
   B: "B",
-  Mo: "Mo",
   Hg: "Hg"
 };
 

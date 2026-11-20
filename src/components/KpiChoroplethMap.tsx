@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { captureGlossyCanvas } from "../utils/colorSanitizer";
+import { canvasToJpegBlobWithDpi, dpiToCaptureScale } from "../utils/jpegDpi";
 import { DataHeaders, ShapefileLayer } from "../types";
 import { norm, buildDistrictStateMap, isStateAll, isDistrictAll, featureMatchesSelection, toProperCase } from "../utils/shapefileFilter";
 import { PARAM_CONFIG } from "../data/config";
@@ -294,7 +295,7 @@ export default function KpiChoroplethMap({
       // 1. Primary capture via captureGlossyCanvas (native glossy rendering, zero text clipping)
       try {
         canvas = await captureGlossyCanvas(mapExportContainerRef.current, {
-          scale: 4,
+          scale: dpiToCaptureScale(600),
           backgroundColor: "#ffffff",
           onclone: (clonedDoc) => {
             const hideEls = clonedDoc.querySelectorAll('[data-export-hide="true"]');
@@ -338,9 +339,10 @@ export default function KpiChoroplethMap({
 
           const baseW = svgEl.clientWidth || 600;
           const baseH = svgEl.clientHeight || 800;
+          const fallbackScale = dpiToCaptureScale(600);
           const fallbackCanvas = document.createElement("canvas");
-          fallbackCanvas.width = baseW * 6;
-          fallbackCanvas.height = baseH * 6;
+          fallbackCanvas.width = Math.round(baseW * fallbackScale);
+          fallbackCanvas.height = Math.round(baseH * fallbackScale);
 
           const ctx = fallbackCanvas.getContext("2d");
           if (ctx) {
@@ -369,30 +371,10 @@ export default function KpiChoroplethMap({
         document.body.removeChild(link);
       };
 
-      let exported = false;
-      try {
-        const blob = await new Promise<Blob | null>((resolve) => {
-          try {
-            canvas!.toBlob((b) => resolve(b), "image/jpeg", 0.95);
-          } catch (e) {
-            resolve(null);
-          }
-        });
-
-        if (blob) {
-          const blobUrl = URL.createObjectURL(blob);
-          triggerDownload(blobUrl);
-          setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-          exported = true;
-        }
-      } catch (blobErr) {
-        console.warn("toBlob failed, attempting toDataURL:", blobErr);
-      }
-
-      if (!exported) {
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
-        triggerDownload(dataUrl);
-      }
+      const blob = await canvasToJpegBlobWithDpi(canvas, 600, 0.96);
+      const blobUrl = URL.createObjectURL(blob);
+      triggerDownload(blobUrl);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
 
       if (showToast) showToast("Successfully exported High Density 600 DPI Map Image!", "success");
     } catch (err) {

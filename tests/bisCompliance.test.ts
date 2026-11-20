@@ -100,4 +100,10 @@ describe("BIS IS 10500:2012 Parameter Configuration & Compliance Rules", () => {
     assert.equal(PARAM_CONFIG.EC.b1, 750);
     assert.equal(PARAM_CONFIG.EC.b2, 3000);
   });
+
+  it("does not include Molybdenum (Mo) in parameter configuration", () => {
+    assert.equal((DEFAULT_PARAM_CONFIG as Record<string, unknown>).Mo, undefined);
+    assert.equal((PARAM_CONFIG as Record<string, unknown>).Mo, undefined);
+  });
 });
+
