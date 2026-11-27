@@ -5,6 +5,7 @@ import ExcelJS from "exceljs";
 import { downloadExcelJSWorkbook } from "../utils/excelFormatter";
 import { safeMin, safeMax, getPercentile } from "../utils/math";
 import { initHighchartsModule } from "../utils/chartHelpers";
+import { canonicalCaseKey, toProperCaseLabel } from "../utils/textNormalization";
 import GraphSettingsPanel, { GraphSettings, DEFAULT_GRAPH_SETTINGS } from "./GraphSettingsPanel";
 
 // Initialize the 3D module
@@ -460,8 +461,8 @@ export default function AdvancedAnalysisView({
       const state = getStateValue(row);
       const district = getDistrictValue(row);
       const block = getBlockValue(row);
-      const source = sourceColumn ? String(row[sourceColumn] || "Unspecified").trim() : "Unspecified";
-      const location = headers.location ? String(row[headers.location] || "Unknown").trim() : "Unknown";
+      const source = sourceColumn ? (toProperCaseLabel(row[sourceColumn]) || "Unspecified") : "Unspecified";
+      const location = headers.location ? (toProperCaseLabel(row[headers.location]) || "Unknown") : "Unknown";
       const wellId = headers.wellId ? String(row[headers.wellId] || "Unknown").trim() : "Unknown";
 
       if (comparisonGroupLevel === "state") {
@@ -491,8 +492,8 @@ export default function AdvancedAnalysisView({
       const state = getStateValue(firstRow);
       const district = getDistrictValue(firstRow);
       const block = getBlockValue(firstRow);
-      const source = sourceColumn ? String(firstRow[sourceColumn] || "Unspecified").trim() : "Unspecified";
-      const location = headers.location ? String(firstRow[headers.location] || "Unknown").trim() : "Unknown";
+      const source = sourceColumn ? (toProperCaseLabel(firstRow[sourceColumn]) || "Unspecified") : "Unspecified";
+      const location = headers.location ? (toProperCaseLabel(firstRow[headers.location]) || "Unknown") : "Unknown";
       const wellId = headers.wellId ? String(firstRow[headers.wellId] || "Unknown").trim() : "Unknown";
 
       let displayName = groupKey;
@@ -1487,8 +1488,8 @@ export default function AdvancedAnalysisView({
       const state = getStateValue(row) || "Unspecified State";
       const district = getDistrictValue(row) || "Unspecified District";
       const block = getBlockValue(row) || "Unspecified Block";
-      const aquifer = String(row[keyToUse] || "").trim() || "Unspecified Aquifer";
-      const combKey = `${geo}::${aquifer}`;
+      const aquifer = toProperCaseLabel(row[keyToUse]) || "Unspecified Aquifer";
+      const combKey = `${canonicalCaseKey(geo)}::${canonicalCaseKey(aquifer)}`;
       
       if (!groups[combKey]) {
         groups[combKey] = { 
@@ -1653,8 +1654,8 @@ export default function AdvancedAnalysisView({
       const state = getStateValue(row) || "Unspecified State";
       const district = getDistrictValue(row) || "Unspecified District";
       const block = getBlockValue(row) || "Unspecified Block";
-      const aquifer = String(row[keyToUse] || "").trim() || "Unspecified Aquifer";
-      const combKey = `${geo}::${aquifer}`;
+      const aquifer = toProperCaseLabel(row[keyToUse]) || "Unspecified Aquifer";
+      const combKey = `${canonicalCaseKey(geo)}::${canonicalCaseKey(aquifer)}`;
       
       if (!groups[combKey]) {
         groups[combKey] = { 
@@ -1827,8 +1828,8 @@ export default function AdvancedAnalysisView({
       const state = getStateValue(row) || "Unspecified State";
       const district = getDistrictValue(row) || "Unspecified District";
       const block = getBlockValue(row) || "Unspecified Block";
-      const aquifer = String(row[keyToUse] || "").trim() || "Unspecified Category";
-      const combKey = `${geo}::${aquifer}`;
+      const aquifer = toProperCaseLabel(row[keyToUse]) || "Unspecified Category";
+      const combKey = `${canonicalCaseKey(geo)}::${canonicalCaseKey(aquifer)}`;
       
       if (!groups[combKey]) {
         groups[combKey] = { 
@@ -2000,8 +2001,8 @@ export default function AdvancedAnalysisView({
       const state = getStateValue(row) || "Unspecified State";
       const district = getDistrictValue(row) || "Unspecified District";
       const block = getBlockValue(row) || "Unspecified Block";
-      const aquifer = String(row[keyToUse] || "").trim() || "Unspecified Source";
-      const combKey = `${geo}::${aquifer}`;
+      const aquifer = toProperCaseLabel(row[keyToUse]) || "Unspecified Source";
+      const combKey = `${canonicalCaseKey(geo)}::${canonicalCaseKey(aquifer)}`;
       
       if (!groups[combKey]) {
         groups[combKey] = { 

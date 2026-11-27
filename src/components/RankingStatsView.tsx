@@ -20,6 +20,7 @@ import {
 import * as XLSX from "xlsx";
 import ExcelJS from "exceljs";
 import { downloadExcelJSWorkbook } from "../utils/excelFormatter";
+import { canonicalCaseKey, toProperCaseLabel } from "../utils/textNormalization";
 
 function toProperCase(str: string): string {
   if (!str) return "N/A";
@@ -247,14 +248,15 @@ export default function RankingStatsView({
     const stateGroups: Record<string, { state: string; values: number[]; minObj: any; maxObj: any; sum: number }> = {};
 
     rawData.forEach(row => {
-      const state = String(row[headers.state || "State"] || "").trim();
-      if (!state || state === "undefined") return;
+      const state = toProperCaseLabel(row[headers.state || "State"]);
+      if (!state || state.toLowerCase() === "undefined") return;
 
       const v = getParamVal(row, activeParam);
       if (isNaN(v)) return;
 
-      if (!stateGroups[state]) {
-        stateGroups[state] = {
+      const stateKey = canonicalCaseKey(state);
+      if (!stateGroups[stateKey]) {
+        stateGroups[stateKey] = {
           state,
           values: [],
           minObj: null,
@@ -263,21 +265,21 @@ export default function RankingStatsView({
         };
       }
 
-      stateGroups[state].values.push(v);
-      stateGroups[state].sum += v;
+      stateGroups[stateKey].values.push(v);
+      stateGroups[stateKey].sum += v;
 
       const locInfo = {
         val: v,
-        loc: String(row[headers.location || "Location"] || "N/A").trim(),
-        district: String(row[headers.district || "District"] || "N/A").trim(),
-        block: String(row[headers.block || "Block"] || "N/A").trim()
+        loc: toProperCaseLabel(row[headers.location || "Location"]) || "N/A",
+        district: toProperCaseLabel(row[headers.district || "District"]) || "N/A",
+        block: toProperCaseLabel(row[headers.block || "Block"]) || "N/A"
       };
 
-      if (!stateGroups[state].minObj || v < stateGroups[state].minObj.val) {
-        stateGroups[state].minObj = locInfo;
+      if (!stateGroups[stateKey].minObj || v < stateGroups[stateKey].minObj.val) {
+        stateGroups[stateKey].minObj = locInfo;
       }
-      if (!stateGroups[state].maxObj || v > stateGroups[state].maxObj.val) {
-        stateGroups[state].maxObj = locInfo;
+      if (!stateGroups[stateKey].maxObj || v > stateGroups[stateKey].maxObj.val) {
+        stateGroups[stateKey].maxObj = locInfo;
       }
     });
 
@@ -316,21 +318,25 @@ export default function RankingStatsView({
     }> = {};
 
     rawData.forEach(row => {
-      const geoVal = String(row[geoKey] || "").trim();
-      if (!geoVal || geoVal === "undefined") return;
+      const geoVal = toProperCaseLabel(row[geoKey]);
+      if (!geoVal || geoVal.toLowerCase() === "undefined") return;
 
-      const stVal = String(row[headers.state || "State"] || "N/A").trim();
-      const dtVal = String(row[headers.district || "District"] || "N/A").trim();
-      const blkVal = String(row[headers.block || "Block"] || "N/A").trim();
+      const stVal = toProperCaseLabel(row[headers.state || "State"]) || "N/A";
+      const dtVal = toProperCaseLabel(row[headers.district || "District"]) || "N/A";
+      const blkVal = toProperCaseLabel(row[headers.block || "Block"]) || "N/A";
 
       const v = getParamVal(row, activeParam);
       if (isNaN(v)) return;
 
-      let mapKey = geoVal;
+      const geoKeyNorm = canonicalCaseKey(geoVal);
+      const stKeyNorm = canonicalCaseKey(stVal);
+      const dtKeyNorm = canonicalCaseKey(dtVal);
+
+      let mapKey = geoKeyNorm;
       if (geoKey === headers.district) {
-        mapKey = `${stVal}___${geoVal}`;
+        mapKey = `${stKeyNorm}___${geoKeyNorm}`;
       } else if (geoKey === headers.block) {
-        mapKey = `${stVal}___${dtVal}___${geoVal}`;
+        mapKey = `${stKeyNorm}___${dtKeyNorm}___${geoKeyNorm}`;
       }
 
       if (!aggregationMap[mapKey]) {

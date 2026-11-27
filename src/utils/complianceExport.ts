@@ -3,6 +3,7 @@ import { DataHeaders, ParamConfigItem } from "../types";
 import { PARAM_CONFIG } from "../data/config";
 import { getStats } from "./math";
 import { ensureSheetJSNumbers } from "./excelFormatter";
+import { canonicalCaseKey, toProperCaseLabel } from "./textNormalization";
 
 export type ReportingLevel = "State" | "District" | "Block";
 
@@ -150,16 +151,20 @@ export function computeComplianceDataRows(
   const globalVals: number[] = [];
 
   filteredDataset.forEach((row) => {
-    const rowSt = String(row[headers.state || ""] || "").trim();
-    const rowDt = String(row[headers.district || ""] || "").trim();
-    const rowBlk = String(row[headers.block || ""] || "").trim();
-    const loc = String(row[groupKey] || "Unknown").trim();
+    const rowSt = toProperCaseLabel(row[headers.state || ""]);
+    const rowDt = toProperCaseLabel(row[headers.district || ""]);
+    const rowBlk = toProperCaseLabel(row[headers.block || ""]);
+    const loc = toProperCaseLabel(row[groupKey]) || "Unknown";
 
-    let compositeKey = loc;
+    const stKey = canonicalCaseKey(rowSt);
+    const dtKey = canonicalCaseKey(rowDt);
+    const locKey = canonicalCaseKey(loc);
+
+    let compositeKey = locKey;
     if (level === "District") {
-      compositeKey = rowSt ? `${rowSt}___${loc}` : loc;
+      compositeKey = stKey ? `${stKey}___${locKey}` : locKey;
     } else if (level === "Block") {
-      compositeKey = `${rowSt}___${rowDt}___${loc}`;
+      compositeKey = `${stKey}___${dtKey}___${locKey}`;
     }
 
     if (!groupMap[compositeKey]) {

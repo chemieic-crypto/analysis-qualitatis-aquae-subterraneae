@@ -23,6 +23,7 @@ import {
 import * as XLSX from "xlsx";
 import ExcelJS from "exceljs";
 import { downloadExcelJSWorkbook } from "../utils/excelFormatter";
+import { canonicalCaseKey, toProperCaseLabel } from "../utils/textNormalization";
 import { downloadMhtmlWordDoc } from "../utils/export";
 
 interface MasterSummaryViewProps {
@@ -164,18 +165,21 @@ export default function MasterSummaryView({
       );
     }
     if (selectedDistrict && isDistrict) {
+      const selDistKey = canonicalCaseKey(selectedDistrict);
       filtered = filtered.filter(
-        (d) => String(d[headers.district || ""] || "").trim() === selectedDistrict
+        (d) => canonicalCaseKey(d[headers.district || ""]) === selDistKey
       );
     }
 
-    // Group samples by Level ID
+    // Group samples by Level ID (case-insensitive, Proper Case display)
     const groupMap: Record<string, { state: string; district: string; samples: any[] }> = {};
     filtered.forEach((row) => {
-      const state = String(row[headers.state || ""] || "Unknown").trim();
-      const district = String(row[headers.district || ""] || "Unknown").trim();
-      
-      const key = isDistrict ? `${state}|${district}` : state;
+      const state = toProperCaseLabel(row[headers.state || ""]) || "Unknown";
+      const district = toProperCaseLabel(row[headers.district || ""]) || "Unknown";
+
+      const key = isDistrict
+        ? `${canonicalCaseKey(state)}|${canonicalCaseKey(district)}`
+        : canonicalCaseKey(state);
       if (!groupMap[key]) {
         groupMap[key] = { state, district, samples: [] };
       }
@@ -329,16 +333,19 @@ export default function MasterSummaryView({
       );
     }
     if (selectedDistrict && isDistrict) {
+      const selDistKey = canonicalCaseKey(selectedDistrict);
       filtered = filtered.filter(
-        (d) => String(d[headers.district || ""] || "").trim() === selectedDistrict
+        (d) => canonicalCaseKey(d[headers.district || ""]) === selDistKey
       );
     }
 
     const groupMap: Record<string, { state: string; district: string; samples: any[] }> = {};
     filtered.forEach((row) => {
-      const state = String(row[headers.state || ""] || "Unknown").trim();
-      const district = String(row[headers.district || ""] || "Unknown").trim();
-      const key = isDistrict ? `${state}|${district}` : state;
+      const state = toProperCaseLabel(row[headers.state || ""]) || "Unknown";
+      const district = toProperCaseLabel(row[headers.district || ""]) || "Unknown";
+      const key = isDistrict
+        ? `${canonicalCaseKey(state)}|${canonicalCaseKey(district)}`
+        : canonicalCaseKey(state);
       if (!groupMap[key]) {
         groupMap[key] = { state, district, samples: [] };
       }
@@ -415,8 +422,8 @@ export default function MasterSummaryView({
             if (isExceed) {
               above++;
               if (subGroupKey) {
-                const subVal = String(sample[subGroupKey] || "Unknown").trim();
-                if (subVal !== "Unknown" && subVal) affectedSubGroups.add(subVal);
+                const subVal = toProperCaseLabel(sample[subGroupKey]);
+                if (subVal && subVal !== "Unknown") affectedSubGroups.add(subVal);
               }
             }
           }
@@ -524,21 +531,25 @@ export default function MasterSummaryView({
 
     let filtered = rawData;
     if (selectedState) {
+      const selStKey = canonicalCaseKey(selectedState);
       filtered = filtered.filter(
-        (d) => String(d[headers.state || ""] || "").trim() === selectedState
+        (d) => canonicalCaseKey(d[headers.state || ""]) === selStKey
       );
     }
     if (selectedDistrict && isDistrict) {
+      const selDistKey = canonicalCaseKey(selectedDistrict);
       filtered = filtered.filter(
-        (d) => String(d[headers.district || ""] || "").trim() === selectedDistrict
+        (d) => canonicalCaseKey(d[headers.district || ""]) === selDistKey
       );
     }
 
     const groupMap: Record<string, { state: string; district: string; samples: any[] }> = {};
     filtered.forEach((row) => {
-      const state = String(row[headers.state || ""] || "Unknown").trim();
-      const district = String(row[headers.district || ""] || "Unknown").trim();
-      const key = isDistrict ? `${state}|${district}` : state;
+      const state = toProperCaseLabel(row[headers.state || ""]) || "Unknown";
+      const district = toProperCaseLabel(row[headers.district || ""]) || "Unknown";
+      const key = isDistrict
+        ? `${canonicalCaseKey(state)}|${canonicalCaseKey(district)}`
+        : canonicalCaseKey(state);
       if (!groupMap[key]) {
         groupMap[key] = { state, district, samples: [] };
       }

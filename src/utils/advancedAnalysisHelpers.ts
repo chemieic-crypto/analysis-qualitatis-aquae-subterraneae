@@ -1,6 +1,7 @@
 import { DataHeaders } from "../types";
 import { PARAM_CONFIG } from "../data/config";
 import { safeMin, safeMax } from "./math";
+import { toProperCaseLabel } from "./textNormalization";
 
 export type AdvancedSubTab =
   | "frequency"
@@ -33,29 +34,29 @@ export const VIRTUAL_PARAM_CONFIGS: Record<string, { b1: number; b2: number; uni
 
 export const getRowStateValue = (row: Record<string, unknown>, headers: DataHeaders): string => {
   const col = headers.state;
-  if (col && row[col] !== undefined && row[col] !== null) return String(row[col]).trim();
+  if (col && row[col] !== undefined && row[col] !== null) return toProperCaseLabel(row[col]);
   const fallbackKey = Object.keys(row).find(k =>
     ["state", "st_name", "state_name", "state name"].includes(k.toLowerCase().trim())
   );
-  return fallbackKey ? String(row[fallbackKey]).trim() : "";
+  return fallbackKey ? toProperCaseLabel(row[fallbackKey]) : "";
 };
 
 export const getRowDistrictValue = (row: Record<string, unknown>, headers: DataHeaders): string => {
   const col = headers.district;
-  if (col && row[col] !== undefined && row[col] !== null) return String(row[col]).trim();
+  if (col && row[col] !== undefined && row[col] !== null) return toProperCaseLabel(row[col]);
   const fallbackKey = Object.keys(row).find(k =>
     ["district", "dist", "dst_name", "district_name", "district name"].includes(k.toLowerCase().trim())
   );
-  return fallbackKey ? String(row[fallbackKey]).trim() : "";
+  return fallbackKey ? toProperCaseLabel(row[fallbackKey]) : "";
 };
 
 export const getRowBlockValue = (row: Record<string, unknown>, headers: DataHeaders): string => {
   const col = headers.block;
-  if (col && row[col] !== undefined && row[col] !== null) return String(row[col]).trim();
+  if (col && row[col] !== undefined && row[col] !== null) return toProperCaseLabel(row[col]);
   const fallbackKey = Object.keys(row).find(k =>
     ["block", "tehsil", "taluk", "subdistrict", "sub-district", "block_name", "block name"].includes(k.toLowerCase().trim())
   );
-  return fallbackKey ? String(row[fallbackKey]).trim() : "";
+  return fallbackKey ? toProperCaseLabel(row[fallbackKey]) : "";
 };
 
 export const getSmartStepAndMax = (param: string): { step: string; max: string } => {

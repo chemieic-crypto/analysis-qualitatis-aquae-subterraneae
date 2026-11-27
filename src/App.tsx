@@ -11,6 +11,11 @@ import {
 } from "./utils/spreadsheetImport";
 import { buildComplianceWorkbook } from "./utils/complianceExport";
 import { downloadStyledSheetJSWorkbook } from "./utils/excelFormatter";
+import {
+  canonicalCaseKey,
+  normalizeDatasetRowsToProperCase,
+  toProperCaseLabel,
+} from "./utils/textNormalization";
 import MappingModal from "./components/MappingModal";
 import DetailedView from "./components/DetailedView";
 import ComparisonsView from "./components/ComparisonsView";
@@ -429,9 +434,20 @@ export default function App() {
     reader.readAsArrayBuffer(file);
   };
 
-  const handleSaveMapping = (finalHeaders: DataHeaders, finalHeaderMap: Record<string, string>) => {
+  const handleSaveMapping = (
+    finalHeaders: DataHeaders,
+    finalHeaderMap: Record<string, string>,
+    autoProperCase = true
+  ) => {
+    let normSummary = { mergedCaseVariantsCount: 0, normalizedCellsCount: 0, affectedColumns: [] as string[] };
     if (tempRawData && tempRawData.length > 0) {
-      setRawData(tempRawData);
+      if (autoProperCase) {
+        const result = normalizeDatasetRowsToProperCase(tempRawData, finalHeaders);
+        normSummary = result;
+        setRawData(result.rows);
+      } else {
+        setRawData(tempRawData);
+      }
       setTempRawData([]);
     }
     setHeaders(finalHeaders);
@@ -452,7 +468,19 @@ export default function App() {
       setCombinedParams([...finalHeaders.params]);
     }
 
-    showToast("Data columns mapped and synchronized successfully!", "success");
+    if (autoProperCase && normSummary.mergedCaseVariantsCount > 0) {
+      showToast(
+        `Data mapped & normalized: auto-merged ${normSummary.mergedCaseVariantsCount} UPPER/lower case duplicate${normSummary.mergedCaseVariantsCount === 1 ? "" : "s"} into Proper Case!`,
+        "success"
+      );
+    } else if (autoProperCase && normSummary.normalizedCellsCount > 0) {
+      showToast(
+        `Data mapped & converted ${normSummary.normalizedCellsCount.toLocaleString()} categorical entries to Proper Case!`,
+        "success"
+      );
+    } else {
+      showToast("Data columns mapped and synchronized successfully!", "success");
+    }
   };
 
   const handleCancelMapping = () => {
@@ -541,10 +569,11 @@ export default function App() {
         allKeys.forEach((k) => headersSet.add(k));
         const uniqueHeaders = Array.from(headersSet);
 
-        setRawData(parsedData);
+        const { guessed, map } = guessDataHeaders(uniqueHeaders);
+        const normalizedDefault = normalizeDatasetRowsToProperCase(parsedData as Record<string, any>[], guessed);
+        setRawData(normalizedDefault.rows);
         setUploadedHeaders(uniqueHeaders);
 
-        const { guessed, map } = guessDataHeaders(uniqueHeaders);
         setHeaders(guessed);
         setHeaderMap(map);
 
@@ -555,37 +584,49 @@ export default function App() {
           setCombinedParams([...guessed.params]);
         }
 
-        showToast(`Auto-loaded default data: ${filename} successfully!`, "success");
+        const mergeNote =
+          normalizedDefault.mergedCaseVariantsCount > 0
+            ? ` (auto-merged ${normalizedDefault.mergedCaseVariantsCount} case duplicates to Proper Case)`
+            : "";
+        showToast(`Auto-loaded default data: ${filename}${mergeNote}!`, "success");
       } catch (err) {
         console.error("Error parsing auto-loaded default data:", err);
       }
     });
   }, []);
 
-  // State Options dropdown values List
+  // State Options dropdown values List (case-insensitive deduplication in Proper Case)
   const stateList = useMemo(() => {
     const key = headers.state || "";
     if (!key) return [];
-    return [...new Set(rawData.map((d) => String(d[key] || "").trim()))]
-      .filter((v) => v && v !== "Unknown")
-      .sort();
+    const seen: Record<string, string> = {};
+    rawData.forEach((d) => {
+      const label = toProperCaseLabel(d[key]);
+      if (label && label !== "Unknown") {
+        const ck = canonicalCaseKey(label);
+        if (!seen[ck]) seen[ck] = label;
+      }
+    });
+    return Object.values(seen).sort((a, b) => a.localeCompare(b));
   }, [rawData, headers.state]);
 
-  // District options list linked automatically to selected state
+  // District options list linked automatically to selected state (case-insensitive)
   const districtList = useMemo(() => {
     if (!selectedState) return [];
     const stateKey = headers.state || "";
     const distKey = headers.district || "";
     if (!distKey) return [];
-    return [
-      ...new Set(
-        rawData
-          .filter((d) => String(d[stateKey] || "").trim() === selectedState)
-          .map((d) => String(d[distKey] || "").trim())
-      ),
-    ]
-      .filter((v) => v && v !== "Unknown")
-      .sort();
+    const selStateKey = canonicalCaseKey(selectedState);
+    const seen: Record<string, string> = {};
+    rawData.forEach((d) => {
+      if (canonicalCaseKey(d[stateKey]) !== selStateKey) return;
+      const label = toProperCaseLabel(d[distKey]);
+      if (label && label !== "Unknown") {
+        const ck = canonicalCaseKey(label);
+        if (!seen[ck]) seen[ck] = label;
+      }
+    });
+    return Object.values(seen).sort((a, b) => a.localeCompare(b));
   }, [rawData, selectedState, headers.state, headers.district]);
 
   // Year options list
@@ -597,13 +638,19 @@ export default function App() {
       .sort();
   }, [rawData, headers.year]);
 
-  // Season options list
+  // Season options list (case-insensitive deduplication in Proper Case)
   const seasonList = useMemo(() => {
     const key = headers.season || "";
     if (!key || !rawData || rawData.length === 0) return [];
-    return [...new Set(rawData.map((d) => String(d[key] || "").trim()))]
-      .filter((v) => v && v !== "Unknown" && v !== "")
-      .sort();
+    const seen: Record<string, string> = {};
+    rawData.forEach((d) => {
+      const label = toProperCaseLabel(d[key]);
+      if (label && label !== "Unknown") {
+        const ck = canonicalCaseKey(label);
+        if (!seen[ck]) seen[ck] = label;
+      }
+    });
+    return Object.values(seen).sort((a, b) => a.localeCompare(b));
   }, [rawData, headers.season]);
 
   const handleStateChange = (stateVal: string) => {
@@ -698,6 +745,7 @@ export default function App() {
         uploadedHeaders={uploadedHeaders}
         initialHeaders={tempHeaders}
         initialHeaderMap={tempHeaderMap}
+        previewRows={tempRawData}
         onSave={handleSaveMapping}
         onCancel={handleCancelMapping}
       />

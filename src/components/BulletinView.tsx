@@ -7,6 +7,7 @@ import { generateParamDonutChart, generateOfflineChartBase64, buildColumnsChartO
 import { downloadMhtmlWordDoc, convertHtmlToWordDocHtml, convertHtmlToMhtml, convertHtmlToDocxBlob, buildStandaloneHtml } from "../utils/export";
 import ExcelJS from "exceljs";
 import { downloadExcelJSWorkbook, getExcelJSBlob } from "../utils/excelFormatter";
+import { canonicalCaseKey, toProperCaseLabel } from "../utils/textNormalization";
 import {
   generateMonsoonDualOgiveSVG,
   generateMonsoonBoxPlotSVG,
@@ -3670,11 +3671,12 @@ export default function BulletinView({
         };
 
         pairedList.forEach((item) => {
-          const gName = item[groupKey] || "Unknown";
+          const gName = toProperCaseLabel(item[groupKey]) || "Unknown";
           if (gName === "Unknown") return;
 
-          if (!groups[gName]) {
-            groups[gName] = {
+          const gKeyNorm = canonicalCaseKey(gName);
+          if (!groups[gKeyNorm]) {
+            groups[gKeyNorm] = {
               name: gName,
               analyzed: 0,
               improved: 0,
@@ -3685,7 +3687,7 @@ export default function BulletinView({
             };
           }
 
-          const g = groups[gName];
+          const g = groups[gKeyNorm];
           g.analyzed++;
 
           const preVal = item.preVal;

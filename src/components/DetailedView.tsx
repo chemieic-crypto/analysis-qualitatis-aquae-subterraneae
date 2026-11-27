@@ -5,6 +5,7 @@ import { DataHeaders, GroupedStatRow, ShapefileLayer } from "../types";
 import { PARAM_CONFIG, hasBisLimit } from "../data/config";
 import { getStats, safeMin, safeMax } from "../utils/math";
 import { buildDonutChartOptions, generateOfflineChartBase64, initHighchartsModule } from "../utils/chartHelpers";
+import { canonicalCaseKey, toProperCaseLabel } from "../utils/textNormalization";
 import { Settings2, Image, ChevronDown, Check, Circle, Maximize2, Send, X, BarChart3, SlidersHorizontal, Activity, Table, PieChart, TrendingUp, Type, AlignLeft, AlignCenter, AlignRight, Bold, Italic, RotateCcw } from "lucide-react";
 
 
@@ -503,7 +504,7 @@ export default function DetailedView({
 
     const samplesByGroup: Record<string, any[]> = {};
     filtered.forEach((row) => {
-      const gName = String(row[groupKey] || "Unknown").trim();
+      const gName = toProperCaseLabel(row[groupKey]) || "Unknown";
       if (!samplesByGroup[gName]) {
         samplesByGroup[gName] = [];
       }
@@ -516,11 +517,11 @@ export default function DetailedView({
     });
 
     filtered.forEach((row) => {
-      const gName = String(row[groupKey] || "Unknown").trim();
+      const gName = toProperCaseLabel(row[groupKey]) || "Unknown";
       if (!validGroups.includes(gName)) return;
 
       let sName = "All Data";
-      const rawS = headers.season ? String(row[headers.season] || "").trim() : "";
+      const rawS = headers.season ? toProperCaseLabel(row[headers.season]) : "";
       const rawY = headers.year ? String(row[headers.year] || "").trim() : "";
       
       if (rawS && rawS !== "Unknown" && rawY && rawY !== "Unknown") {
@@ -592,7 +593,7 @@ export default function DetailedView({
     const allGroups = new Set<string>();
 
     filtered.forEach((row) => {
-      const gName = String(row[groupKey] || "Unknown").trim();
+      const gName = toProperCaseLabel(row[groupKey]) || "Unknown";
       allGroups.add(gName);
 
       const pKey = getPeriodKey(row);
@@ -1519,17 +1520,21 @@ export default function DetailedView({
 
     const groupMap: Record<string, { displayName: string; vals: number[] }> = {};
     filtered.forEach((row) => {
-      const rowSt = String(row[headers.state || ""] || "").trim();
-      const rowDt = String(row[headers.district || ""] || "").trim();
-      const locName = String(row[groupKey] || "Unknown").trim();
+      const rowSt = toProperCaseLabel(row[headers.state || ""]);
+      const rowDt = toProperCaseLabel(row[headers.district || ""]);
+      const locName = toProperCaseLabel(row[groupKey]) || "Unknown";
       if (!locName || locName === "Unknown") return;
 
-      let key = locName;
+      const stKey = canonicalCaseKey(rowSt);
+      const dtKey = canonicalCaseKey(rowDt);
+      const locKey = canonicalCaseKey(locName);
+
+      let key = locKey;
       let displayName = cleanLocationName(locName, rowSt, rowDt);
       if (reportingLevel === "District") {
-        key = rowSt ? `${rowSt}___${locName}` : locName;
+        key = stKey ? `${stKey}___${locKey}` : locKey;
       } else if (reportingLevel === "Block") {
-        key = `${rowSt}___${rowDt}___${locName}`;
+        key = `${stKey}___${dtKey}___${locKey}`;
       }
 
       const val = getParamVal(row, activeParam);
@@ -1895,16 +1900,20 @@ export default function DetailedView({
     let globalSarS4 = 0;
 
     filtered.forEach((row) => {
-      const rowSt = String(row[headers.state || ""] || "").trim();
-      const rowDt = String(row[headers.district || ""] || "").trim();
-      const rowBlk = String(row[headers.block || ""] || "").trim();
-      const locName = String(row[groupKey] || "Unknown").trim();
+      const rowSt = toProperCaseLabel(row[headers.state || ""]);
+      const rowDt = toProperCaseLabel(row[headers.district || ""]);
+      const rowBlk = toProperCaseLabel(row[headers.block || ""]);
+      const locName = toProperCaseLabel(row[groupKey]) || "Unknown";
 
-      let gKey = locName;
+      const stKey = canonicalCaseKey(rowSt);
+      const dtKey = canonicalCaseKey(rowDt);
+      const locKey = canonicalCaseKey(locName);
+
+      let gKey = locKey;
       if (reportingLevel === "District") {
-        gKey = rowSt ? `${rowSt}___${locName}` : locName;
+        gKey = stKey ? `${stKey}___${locKey}` : locKey;
       } else if (reportingLevel === "Block") {
-        gKey = `${rowSt}___${rowDt}___${locName}`;
+        gKey = `${stKey}___${dtKey}___${locKey}`;
       }
 
       if (!groups[gKey]) {

@@ -1,6 +1,7 @@
 import { DataHeaders } from "../types";
 import { PARAM_CONFIG, hasBisLimit } from "../data/config";
 import { getRowStateValue, getRowDistrictValue, getRowBlockValue } from "./advancedAnalysisHelpers";
+import { canonicalCaseKey, toProperCaseLabel } from "./textNormalization";
 
 export interface SourceParamStatRow {
   sourceName: string;
@@ -222,15 +223,15 @@ function isValueAbovePermissible(val: number, meta: InternalParamMeta): boolean 
 
 function extractSourceName(row: Record<string, any>, sourceColumn: string): string {
   const rawSrc = row[sourceColumn];
-  return rawSrc !== undefined && rawSrc !== null && String(rawSrc).trim() !== ""
-    ? String(rawSrc).trim()
-    : "Not Specified";
+  if (rawSrc === undefined || rawSrc === null) return "Not Specified";
+  const proper = toProperCaseLabel(rawSrc);
+  return proper || "Not Specified";
 }
 
 export function getRowLocationValue(row: Record<string, unknown>, headers: DataHeaders): string {
   const locCol = headers.location;
   if (locCol && row[locCol] !== undefined && row[locCol] !== null && String(row[locCol]).trim() !== "") {
-    return String(row[locCol]).trim();
+    return toProperCaseLabel(row[locCol]) || "—";
   }
   const wellCol = headers.wellId;
   if (wellCol && row[wellCol] !== undefined && row[wellCol] !== null && String(row[wellCol]).trim() !== "") {
@@ -255,7 +256,8 @@ export function getRowLocationValue(row: Record<string, unknown>, headers: DataH
     ].includes(k.toLowerCase().trim())
   );
   if (fallbackKey && row[fallbackKey] !== undefined && row[fallbackKey] !== null && String(row[fallbackKey]).trim() !== "") {
-    return String(row[fallbackKey]).trim();
+    const isIdCol = /id$/i.test(fallbackKey.trim());
+    return isIdCol ? String(row[fallbackKey]).trim() : (toProperCaseLabel(row[fallbackKey]) || "—");
   }
   return "—";
 }
@@ -467,11 +469,11 @@ export function computeStateWiseSelectedSummary(
 
   const sourceFilterSet =
     options.selectedSources && options.selectedSources.length > 0
-      ? new Set(options.selectedSources)
+      ? new Set(options.selectedSources.map((s) => canonicalCaseKey(s)))
       : null;
 
   const numParams = metas.length;
-  const stateBuckets = new Map<string, { rowCount: number; paramValues: number[][] }>();
+  const stateBuckets = new Map<string, { displayName: string; rowCount: number; paramValues: number[][] }>();
   const overallParamValues: number[][] = Array.from({ length: numParams }, () => []);
   let totalFilteredRows = 0;
 
@@ -481,20 +483,22 @@ export function computeStateWiseSelectedSummary(
 
     if (sourceFilterSet) {
       const srcName = extractSourceName(row, sourceColumn);
-      if (!sourceFilterSet.has(srcName)) continue;
+      if (!sourceFilterSet.has(canonicalCaseKey(srcName))) continue;
     }
 
     totalFilteredRows++;
     const rawState = getRowStateValue(row, headers);
     const stateName = rawState || "Not Specified";
+    const stateKey = canonicalCaseKey(stateName);
 
-    let bucket = stateBuckets.get(stateName);
+    let bucket = stateBuckets.get(stateKey);
     if (!bucket) {
       bucket = {
+        displayName: stateName,
         rowCount: 0,
         paramValues: Array.from({ length: numParams }, () => [])
       };
-      stateBuckets.set(stateName, bucket);
+      stateBuckets.set(stateKey, bucket);
     }
     bucket.rowCount++;
 
@@ -507,12 +511,13 @@ export function computeStateWiseSelectedSummary(
     }
   }
 
-  const sortedStates = Array.from(stateBuckets.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  const sortedStates = Array.from(stateBuckets.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
   const rows: StateParamStatRow[] = [];
   const states: StateOverviewItem[] = [];
 
   for (let s = 0; s < sortedStates.length; s++) {
-    const [stateName, bucket] = sortedStates[s];
+    const bucket = sortedStates[s];
+    const stateName = bucket.displayName;
     let exceedingParamCount = 0;
 
     for (let p = 0; p < numParams; p++) {
@@ -588,7 +593,7 @@ export function computeSourceExceedingLocations(
 
   const sourceFilterSet =
     options.selectedSources && options.selectedSources.length > 0
-      ? new Set(options.selectedSources)
+      ? new Set(options.selectedSources.map((s) => canonicalCaseKey(s)))
       : null;
 
   const results: SourceExceedingLocationRow[] = [];
@@ -598,7 +603,7 @@ export function computeSourceExceedingLocations(
     if (!row) continue;
 
     const srcName = extractSourceName(row, sourceColumn);
-    if (sourceFilterSet && !sourceFilterSet.has(srcName)) continue;
+    if (sourceFilterSet && !sourceFilterSet.has(canonicalCaseKey(srcName))) continue;
 
     const exceedingDetails: ExceedingParamDetail[] = [];
 
@@ -716,12 +721,12 @@ export function computeStateAffectedSummary(
 
   const sourceFilterSet =
     options.selectedSources && options.selectedSources.length > 0
-      ? new Set(options.selectedSources)
+      ? new Set(options.selectedSources.map((s) => canonicalCaseKey(s)))
       : null;
 
   const stateMap = new Map<
     string,
-    { totalSamples: number; affectedLocationsCount: number; paramCounts: Map<string, StateAffectedParamBreakdownItem> }
+    { displayName: string; totalSamples: number; affectedLocationsCount: number; paramCounts: Map<string, StateAffectedParamBreakdownItem> }
   >();
   const overallParamCounts = new Map<string, StateAffectedParamBreakdownItem>();
   let overallTotalSamples = 0;
@@ -733,20 +738,22 @@ export function computeStateAffectedSummary(
 
     if (sourceFilterSet) {
       const srcName = extractSourceName(row, sourceColumn);
-      if (!sourceFilterSet.has(srcName)) continue;
+      if (!sourceFilterSet.has(canonicalCaseKey(srcName))) continue;
     }
 
     const rawState = getRowStateValue(row, headers);
     const stateName = rawState || "Not Specified";
+    const stateKey = canonicalCaseKey(stateName);
 
-    let bucket = stateMap.get(stateName);
+    let bucket = stateMap.get(stateKey);
     if (!bucket) {
       bucket = {
+        displayName: stateName,
         totalSamples: 0,
         affectedLocationsCount: 0,
         paramCounts: new Map<string, StateAffectedParamBreakdownItem>()
       };
-      stateMap.set(stateName, bucket);
+      stateMap.set(stateKey, bucket);
     }
 
     bucket.totalSamples++;
@@ -789,12 +796,12 @@ export function computeStateAffectedSummary(
     return { list, names };
   };
 
-  const rows: StateAffectedSummaryRow[] = Array.from(stateMap.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([stateName, bucket]) => {
+  const rows: StateAffectedSummaryRow[] = Array.from(stateMap.values())
+    .sort((a, b) => a.displayName.localeCompare(b.displayName))
+    .map((bucket) => {
       const { list, names } = formatBreakdown(bucket.paramCounts);
       return {
-        stateName,
+        stateName: bucket.displayName,
         isOverall: false,
         totalSamples: bucket.totalSamples,
         affectedLocationsCount: bucket.affectedLocationsCount,

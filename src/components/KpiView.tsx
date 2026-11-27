@@ -4,6 +4,7 @@ import { canvasToJpegBlobWithDpi, dpiToCaptureScale } from "../utils/jpegDpi";
 import { DataHeaders, ShapefileLayer } from "../types";
 import { PARAM_CONFIG, hasBisLimit } from "../data/config";
 import { toProperCase } from "../utils/shapefileFilter";
+import { toProperCaseLabel } from "../utils/textNormalization";
 import {
   Activity,
   Award,
@@ -553,9 +554,9 @@ export default function KpiView({
     const regionExceedanceMap: Record<string, { total: number; exceed: number; displayName: string }> = {};
 
     rawData.forEach((row) => {
-      const st = String(row[stateCol] || "").trim();
-      const dt = String(row[districtCol] || "").trim();
-      const blk = String(row[blockCol] || row["BLOCK"] || row["Block"] || "").trim();
+      const st = toProperCaseLabel(row[stateCol]);
+      const dt = toProperCaseLabel(row[districtCol]);
+      const blk = toProperCaseLabel(row[blockCol] || row["BLOCK"] || row["Block"]);
 
       if (st) uniqueStates.add(st);
 

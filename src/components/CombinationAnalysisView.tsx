@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import ExcelJS from "exceljs";
 import { downloadExcelJSWorkbook } from "../utils/excelFormatter";
+import { canonicalCaseKey, toProperCaseLabel } from "../utils/textNormalization";
 
 interface CombinationAnalysisViewProps {
   rawData: any[];
@@ -847,11 +848,12 @@ export function CombinationAnalysisView({
 
     const groups: Record<string, any> = {};
     currentFilteredData.forEach((r) => {
-      const s = String(r[col] || "Unknown");
-      if (!groups[s]) {
-        groups[s] = { state: s, total: 0, clean: 0, one: 0, two: 0, three: 0, fourPlus: 0, params: new Set<string>() };
+      const s = toProperCaseLabel(r[col]) || "Unknown";
+      const sKey = canonicalCaseKey(s);
+      if (!groups[sKey]) {
+        groups[sKey] = { state: s, total: 0, clean: 0, one: 0, two: 0, three: 0, fourPlus: 0, params: new Set<string>() };
       }
-      const g = groups[s];
+      const g = groups[sKey];
       g.total++;
       if (r.failCount === 0) g.clean++;
       else if (r.failCount === 1) g.one++;
@@ -873,9 +875,9 @@ export function CombinationAnalysisView({
 
     const groups: Record<string, any> = {};
     currentFilteredData.forEach((r) => {
-      const d = String(r[dCol] || "Unknown");
-      const s = sCol ? String(r[sCol] || "Unknown") : "Unknown";
-      const key = `${d}||${s}`;
+      const d = toProperCaseLabel(r[dCol]) || "Unknown";
+      const s = sCol ? (toProperCaseLabel(r[sCol]) || "Unknown") : "Unknown";
+      const key = `${canonicalCaseKey(d)}||${canonicalCaseKey(s)}`;
       if (!groups[key]) {
         groups[key] = { district: d, state: s, total: 0, clean: 0, one: 0, two: 0, three: 0, fourPlus: 0, params: new Set<string>() };
       }

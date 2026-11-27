@@ -1,15 +1,17 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { DataHeaders } from "../types";
 import { PARAM_CONFIG } from "../data/config";
-import { GitMerge, X, CheckCircle, MapPin, FlaskConical, Download } from "lucide-react";
+import { GitMerge, X, CheckCircle, MapPin, FlaskConical, Download, Sparkles } from "lucide-react";
 import { downloadWaterQualityTemplate } from "../utils/templateGenerator";
+import { previewCaseDuplicates } from "../utils/textNormalization";
 
 interface MappingModalProps {
   isOpen: boolean;
   uploadedHeaders: string[];
   initialHeaders: DataHeaders;
   initialHeaderMap: Record<string, string>;
-  onSave: (mappedHeaders: DataHeaders, headerMap: Record<string, string>) => void;
+  previewRows?: Record<string, any>[];
+  onSave: (mappedHeaders: DataHeaders, headerMap: Record<string, string>, autoProperCase?: boolean) => void;
   onCancel: () => void;
 }
 
@@ -18,6 +20,7 @@ export default function MappingModal({
   uploadedHeaders,
   initialHeaders,
   initialHeaderMap,
+  previewRows = [],
   onSave,
   onCancel,
 }: MappingModalProps) {
@@ -33,12 +36,35 @@ export default function MappingModal({
   const [aquiferCol, setAquiferCol] = useState("");
   const [sourceCol, setSourceCol] = useState("");
   const [depthCol, setDepthCol] = useState("");
+  const [autoProperCase, setAutoProperCase] = useState(true);
 
   // Parameter mappings: key is PARAM_CONFIG key, value is uploaded Excel header
   const [paramMappings, setParamMappings] = useState<Record<string, string>>({});
 
+  const casePreview = useMemo(() => {
+    if (!isOpen || !previewRows.length) {
+      return { mergedCaseVariantsCount: 0, cellsToNormalizeCount: 0, affectedColumns: [] as string[], mergedExamples: [] as Array<{ column: string; variants: string[]; mergedTo: string }> };
+    }
+    return previewCaseDuplicates(previewRows, {
+      state: stateCol || undefined,
+      district: districtCol || undefined,
+      block: blockCol || undefined,
+      wellId: wellIdCol || undefined,
+      location: locationCol || undefined,
+      longitude: lonCol || undefined,
+      latitude: latCol || undefined,
+      year: yearCol || undefined,
+      season: seasonCol || undefined,
+      aquifer: aquiferCol || undefined,
+      source: sourceCol || undefined,
+      depth: depthCol || undefined,
+      params: Object.values(paramMappings).filter(Boolean)
+    });
+  }, [isOpen, previewRows, stateCol, districtCol, blockCol, wellIdCol, locationCol, lonCol, latCol, yearCol, seasonCol, aquiferCol, sourceCol, depthCol, paramMappings]);
+
   useEffect(() => {
     if (isOpen) {
+      setAutoProperCase(true);
       setStateCol(initialHeaders.state || "");
       setDistrictCol(initialHeaders.district || "");
       setBlockCol(initialHeaders.block || "");
@@ -106,7 +132,7 @@ export default function MappingModal({
       }
     });
 
-    onSave(finalHeaders, finalHeaderMap);
+    onSave(finalHeaders, finalHeaderMap, autoProperCase);
   };
 
   return (
@@ -139,7 +165,61 @@ export default function MappingModal({
 
         {/* Mappings Form */}
         <div className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6">
-          
+
+          {/* Auto Proper Case & Case-Insensitive Merging Option (Enabled by Default) */}
+          <div className="bg-emerald-50/85 border border-emerald-200/80 rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <label className="flex items-start gap-3 cursor-pointer select-none flex-1">
+              <input
+                type="checkbox"
+                checked={autoProperCase}
+                onChange={(e) => setAutoProperCase(e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded accent-emerald-600 cursor-pointer shrink-0"
+              />
+              <div>
+                <div className="text-xs font-extrabold text-emerald-950 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  Auto-Merge UPPER / lower Case Duplicates into Proper Case
+                </div>
+                <p className="text-[11px] font-medium text-emerald-800/90 mt-0.5 leading-relaxed">
+                  Automatically combines entries with identical spelling regardless of letter case (e.g.{" "}
+                  <span className="font-mono font-bold">RAJASTHAN</span>,{" "}
+                  <span className="font-mono font-bold">rajasthan</span> →{" "}
+                  <span className="font-bold">Rajasthan</span>) across State, District, Block, Location, Source, Aquifer &amp; Season so tables never split duplicates.
+                </p>
+                {casePreview.mergedExamples.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {casePreview.mergedExamples.slice(0, 4).map((ex, idx) => (
+                      <span
+                        key={idx}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/90 border border-emerald-200 text-[10px] font-semibold text-emerald-900"
+                      >
+                        <span className="text-slate-500">{ex.column}:</span>
+                        <span className="line-through text-rose-600/80">{ex.variants.join(" / ")}</span>
+                        <span>→</span>
+                        <span className="font-extrabold text-emerald-700">{ex.mergedTo}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </label>
+            <div className="shrink-0 text-right">
+              {casePreview.mergedCaseVariantsCount > 0 ? (
+                <span className="inline-block px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-extrabold shadow-sm">
+                  {casePreview.mergedCaseVariantsCount} Case Duplicate{casePreview.mergedCaseVariantsCount === 1 ? "" : "s"} Ready to Merge
+                </span>
+              ) : casePreview.cellsToNormalizeCount > 0 ? (
+                <span className="inline-block px-2.5 py-1 rounded-lg bg-teal-600 text-white text-[10px] font-extrabold shadow-sm">
+                  {casePreview.cellsToNormalizeCount.toLocaleString()} Cells → Proper Case
+                </span>
+              ) : (
+                <span className="inline-block px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 text-[10px] font-extrabold border border-emerald-200">
+                  Auto-Enabled
+                </span>
+              )}
+            </div>
+          </div>
+
           {/* Geographical & Coordinate Identifiers */}
           <div className="bg-white/40 p-5 rounded-2xl shadow-inner border border-white/60 backdrop-blur-sm">
             <h3 className="font-bold text-slate-700 mb-4 uppercase text-xs tracking-widest border-b border-white/60 pb-3 flex items-center gap-2 drop-shadow-sm">

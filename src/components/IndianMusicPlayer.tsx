@@ -20,31 +20,12 @@ import {
   Sparkles,
 } from "lucide-react";
 import { AMBIENT_RAGA_PRESETS, AmbientRagaPreset, IndianRagaSynth } from "../utils/ragaSynth";
-
-interface MusicTrackItem {
-  id: string;
-  title: string;
-  artist: string;
-  album: string;
-  category: string;
-  genre: string;
-  artworkUrl: string | null;
-  previewUrl: string;
-  durationSec: number;
-  releaseYear: string | null;
-}
-
-interface RadioStationItem {
-  id: string;
-  name: string;
-  tags: string;
-  language: string;
-  country: string;
-  bitrate: number;
-  favicon: string | null;
-  streamUrl: string;
-  category: string;
-}
+import {
+  fetchTrendingMusicTracks,
+  fetchLiveRadioStations,
+  type MusicTrackItem,
+  type RadioStationItem,
+} from "../utils/musicCatalogClient";
 
 type PlayerMode = "tracks" | "radio";
 
@@ -114,16 +95,40 @@ export default function IndianMusicPlayer() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const synthRef = useRef<IndianRagaSynth | null>(null);
   const tracksRef = useRef<MusicTrackItem[]>([]);
+  const stationsRef = useRef<RadioStationItem[]>([]);
   const currentTrackRef = useRef<MusicTrackItem | null>(null);
+  const currentStationRef = useRef<RadioStationItem | null>(null);
   const loopOneRef = useRef<boolean>(false);
+  const playRequestIdRef = useRef<number>(0);
+  const consecutiveErrorCountRef = useRef<number>(0);
+  const pendingAutoPlayRef = useRef<boolean>(false);
+  const catalogFetchIdRef = useRef<number>(0);
+  const volumeRef = useRef<number>(volume);
+  const isMutedRef = useRef<boolean>(isMuted);
+
+  useEffect(() => {
+    volumeRef.current = volume;
+  }, [volume]);
+
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
 
   useEffect(() => {
     tracksRef.current = tracks;
   }, [tracks]);
 
   useEffect(() => {
+    stationsRef.current = stations;
+  }, [stations]);
+
+  useEffect(() => {
     currentTrackRef.current = currentTrack;
   }, [currentTrack]);
+
+  useEffect(() => {
+    currentStationRef.current = currentStation;
+  }, [currentStation]);
 
   useEffect(() => {
     loopOneRef.current = loopOne;
@@ -171,6 +176,8 @@ export default function IndianMusicPlayer() {
   const playTrack = useCallback(
     (track: MusicTrackItem) => {
       stopSynth();
+      pendingAutoPlayRef.current = false;
+      const reqId = ++playRequestIdRef.current;
       setCurrentStation(null);
       setCurrentTrack(track);
       setErrorMsg(null);
@@ -181,28 +188,38 @@ export default function IndianMusicPlayer() {
       if (!audio) return;
       audio.pause();
       audio.src = track.previewUrl;
-      audio.volume = isMuted ? 0 : volume;
-      audio.muted = isMuted;
+      audio.currentTime = 0;
+      audio.volume = isMutedRef.current ? 0 : volumeRef.current;
+      audio.muted = isMutedRef.current;
       audio.load();
       setIsBuffering(true);
       audio
         .play()
         .then(() => {
+          if (playRequestIdRef.current !== reqId) return;
+          consecutiveErrorCountRef.current = 0;
           setIsPlaying(true);
           setIsBuffering(false);
         })
-        .catch(() => {
+        .catch((err) => {
+          if (playRequestIdRef.current !== reqId) return;
+          // Ignore AbortError caused by quickly clicking another track
+          if (err && typeof err === "object" && (err as { name?: string }).name === "AbortError") {
+            return;
+          }
           setIsPlaying(false);
           setIsBuffering(false);
-          setErrorMsg("Playback blocked or stream unavailable. Try another track or Ambient Raga.");
+          setErrorMsg("Could not play this preview stream. Try another track or tap Play again.");
         });
     },
-    [isMuted, stopSynth, volume]
+    [stopSynth]
   );
 
   const playStation = useCallback(
     (station: RadioStationItem) => {
       stopSynth();
+      pendingAutoPlayRef.current = false;
+      const reqId = ++playRequestIdRef.current;
       setCurrentTrack(null);
       setCurrentStation(station);
       setErrorMsg(null);
@@ -213,27 +230,35 @@ export default function IndianMusicPlayer() {
       if (!audio) return;
       audio.pause();
       audio.src = station.streamUrl;
-      audio.volume = isMuted ? 0 : volume;
-      audio.muted = isMuted;
+      audio.volume = isMutedRef.current ? 0 : volumeRef.current;
+      audio.muted = isMutedRef.current;
       audio.load();
       setIsBuffering(true);
       audio
         .play()
         .then(() => {
+          if (playRequestIdRef.current !== reqId) return;
+          consecutiveErrorCountRef.current = 0;
           setIsPlaying(true);
           setIsBuffering(false);
         })
-        .catch(() => {
+        .catch((err) => {
+          if (playRequestIdRef.current !== reqId) return;
+          if (err && typeof err === "object" && (err as { name?: string }).name === "AbortError") {
+            return;
+          }
           setIsPlaying(false);
           setIsBuffering(false);
-          setErrorMsg("Radio stream could not connect. Please pick another station or switch to Trending Songs.");
+          setErrorMsg("Radio stream could not connect. Pick another station or switch to Trending Songs.");
         });
     },
-    [isMuted, stopSynth, volume]
+    [stopSynth]
   );
 
   const playSynthPreset = useCallback(
     (preset: AmbientRagaPreset) => {
+      pendingAutoPlayRef.current = false;
+      playRequestIdRef.current++;
       const audio = audioRef.current;
       if (audio) {
         audio.pause();
@@ -257,47 +282,49 @@ export default function IndianMusicPlayer() {
     [isMuted, volume]
   );
 
-  // Fetch catalog whenever category, mode, or activeSearch changes
+  // Fetch catalog whenever category, mode, or activeSearch changes (works on GitHub Pages & Express)
   const fetchCatalog = useCallback(
     async (categoryId: string, targetMode: PlayerMode, queryText: string) => {
+      const fetchId = ++catalogFetchIdRef.current;
       setIsLoading(true);
       setErrorMsg(null);
 
       try {
         if (targetMode === "tracks") {
-          const params = new URLSearchParams({ category: categoryId });
-          if (queryText.trim()) params.set("q", queryText.trim());
-          const res = await fetch(`/api/music/tracks?${params.toString()}`);
-          const data = await res.json();
-          if (!res.ok) {
-            throw new Error(data?.error || "Failed to load trending songs.");
-          }
-          const list: MusicTrackItem[] = Array.isArray(data?.tracks) ? data.tracks : [];
+          const list = await fetchTrendingMusicTracks(categoryId, queryText);
+          if (catalogFetchIdRef.current !== fetchId) return;
           setTracks(list);
           if (list.length === 0) {
             setErrorMsg("No matching tracks found. Try another keyword or switch category.");
+            pendingAutoPlayRef.current = false;
+          } else if (pendingAutoPlayRef.current) {
+            pendingAutoPlayRef.current = false;
+            playTrack(list[0]);
           }
         } else {
-          const params = new URLSearchParams({ category: categoryId });
-          const res = await fetch(`/api/music/radio?${params.toString()}`);
-          const data = await res.json();
-          if (!res.ok) {
-            throw new Error(data?.error || "Failed to load live radio stations.");
-          }
-          const list: RadioStationItem[] = Array.isArray(data?.stations) ? data.stations : [];
+          const list = await fetchLiveRadioStations(categoryId);
+          if (catalogFetchIdRef.current !== fetchId) return;
           setStations(list);
           if (list.length === 0) {
             setErrorMsg("No live HTTPS stations found for this genre right now. Switch to Trending Songs.");
+            pendingAutoPlayRef.current = false;
+          } else if (pendingAutoPlayRef.current) {
+            pendingAutoPlayRef.current = false;
+            playStation(list[0]);
           }
         }
       } catch (err: unknown) {
+        if (catalogFetchIdRef.current !== fetchId) return;
+        pendingAutoPlayRef.current = false;
         const msg = err instanceof Error ? err.message : "Could not load music catalog.";
         setErrorMsg(msg);
       } finally {
-        setIsLoading(false);
+        if (catalogFetchIdRef.current === fetchId) {
+          setIsLoading(false);
+        }
       }
     },
-    []
+    [playStation, playTrack]
   );
 
   useEffect(() => {
@@ -345,6 +372,31 @@ export default function IndianMusicPlayer() {
     const onError = () => {
       setIsBuffering(false);
       setIsPlaying(false);
+      // Automatically skip up to 3 unavailable tracks/stations so playback stays smooth
+      if (consecutiveErrorCountRef.current < 3) {
+        consecutiveErrorCountRef.current += 1;
+        const activeT = currentTrackRef.current;
+        const tList = tracksRef.current;
+        if (activeT && tList.length > 1) {
+          const idx = tList.findIndex((t) => t.id === activeT.id);
+          const next = tList[(idx + 1) % tList.length];
+          if (next) {
+            playTrack(next);
+            return;
+          }
+        }
+        const activeS = currentStationRef.current;
+        const sList = stationsRef.current;
+        if (activeS && sList.length > 1) {
+          const idx = sList.findIndex((s) => s.id === activeS.id);
+          const next = sList[(idx + 1) % sList.length];
+          if (next) {
+            playStation(next);
+            return;
+          }
+        }
+      }
+      setErrorMsg("Stream unavailable right now. Please select another track or Ambient Raga.");
     };
 
     audio.addEventListener("timeupdate", onTimeUpdate);
@@ -364,7 +416,7 @@ export default function IndianMusicPlayer() {
       audio.removeEventListener("ended", onEnded);
       audio.removeEventListener("error", onError);
     };
-  }, [playTrack]);
+  }, [playStation, playTrack]);
 
   const handleTogglePlayPause = () => {
     if (activeSynthPreset) {
@@ -389,7 +441,7 @@ export default function IndianMusicPlayer() {
         audio
           .play()
           .then(() => setIsPlaying(true))
-          .catch(() => setErrorMsg("Unable to resume playback."));
+          .catch(() => setErrorMsg("Unable to resume playback. Tap a track to restart."));
       }
       return;
     }
@@ -399,8 +451,13 @@ export default function IndianMusicPlayer() {
       playTrack(tracks[0]);
     } else if (mode === "radio" && stations.length > 0) {
       playStation(stations[0]);
+    } else if (isLoading) {
+      // Wait for the active catalog request to finish instead of jumping to synth
+      pendingAutoPlayRef.current = true;
+      setIsBuffering(true);
     } else {
-      playSynthPreset(AMBIENT_RAGA_PRESETS[0]);
+      pendingAutoPlayRef.current = true;
+      fetchCatalog(activeCategory, mode, mode === "tracks" ? activeSearch : "");
     }
   };
 
@@ -494,7 +551,7 @@ export default function IndianMusicPlayer() {
       className="fixed bottom-4 left-4 z-[150] flex flex-col items-start gap-2 font-sans max-w-[calc(100vw-2rem)]"
     >
       {/* Hidden persistent HTML5 Audio Element */}
-      <audio ref={audioRef} preload="none" />
+      <audio ref={audioRef} preload="metadata" playsInline />
 
       {/* EXPANDED MUSIC STUDIO DRAWER */}
       {isExpanded && (
