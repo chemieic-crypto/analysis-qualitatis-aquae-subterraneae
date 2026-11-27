@@ -6,6 +6,7 @@ import { DataHeaders, ShapefileLayer } from "../types";
 import { norm, buildDistrictStateMap, isStateAll, isDistrictAll, featureMatchesSelection, toProperCase } from "../utils/shapefileFilter";
 import { PARAM_CONFIG } from "../data/config";
 import { INDIA_BOUNDARY } from "../data/india_boundary";
+import { computeFitTransform, getProjectedFeaturesBBox, getSvgPathBBox } from "../utils/kpiMapBounds";
 import {
   Globe,
   Plus,
@@ -36,7 +37,8 @@ import {
   Image,
   Loader2,
   Award,
-  MapPin
+  MapPin,
+  Focus
 } from "lucide-react";
 import shp from "shpjs";
 
@@ -97,6 +99,7 @@ interface KpiChoroplethMapProps {
   isRangeModalOpen?: boolean;
   setIsRangeModalOpen?: (val: boolean) => void;
   externalFileInputRef?: React.RefObject<HTMLInputElement | null>;
+  fitBoundaryTrigger?: number;
 }
 
 // Default 5 Range Color Classes matching the uploaded KPI design
@@ -205,7 +208,8 @@ export default function KpiChoroplethMap({
   setBaseMapType: propSetBaseMapType,
   isRangeModalOpen: propIsRangeModalOpen,
   setIsRangeModalOpen: propSetIsRangeModalOpen,
-  externalFileInputRef
+  externalFileInputRef,
+  fitBoundaryTrigger = 0
 }: KpiChoroplethMapProps) {
   // Base Map State
   const [internalBaseMapType, setInternalBaseMapType] = useState<BaseMapType>("vector");
@@ -532,22 +536,7 @@ export default function KpiChoroplethMap({
     return INDIA_STATES_SIMPLIFIED.find((s) => norm(s.name) === norm(selectedState || "")) || null;
   }, [selectedState]);
 
-  // Auto-center and zoom onto selected State inside 600x800 frame (center 314, 408)
-  useEffect(() => {
-    if (!isStateAll(selectedState) && selectedStateObj && selectedStateObj.center && !hasShapefile) {
-      const [rawCx, rawCy] = selectedStateObj.center;
-      const cx = rawCx * 1.12 - 40;
-      const cy = rawCy * 1.44 + 22;
-      setZoomLevel(2.2);
-      setPanOffset({
-        x: (314 - cx) * 2.2,
-        y: (408 - cy) * 2.2
-      });
-    } else {
-      setZoomLevel(1);
-      setPanOffset({ x: 0, y: 0 });
-    }
-  }, [selectedState, selectedDistrict, selectedStateObj, hasShapefile]);
+  // Auto-centering and exact boundary framing is handled below once geo bounds & projection helpers are initialized.
 
   // Assign color to a region based on range classes
   const getRegionColor = (pct: number): { color: string; label: string } => {
@@ -973,6 +962,75 @@ export default function KpiChoroplethMap({
     return [x, y];
   };
 
+  // Compute and apply exact zoom & pan transform to perfectly frame the selected State / District (or India) boundary
+  const fitSelectedBoundary = (showFeedback = false) => {
+    const plotFrame = {
+      left: INNER_LEFT + PLOT_PAD,
+      top: INNER_TOP + PLOT_PAD,
+      width: INNER_W - PLOT_PAD * 2,
+      height: INNER_H - PLOT_PAD * 2,
+      originX: 314,
+      originY: 408,
+    };
+
+    const targetLabel = !isDistrictAll(selectedDistrict)
+      ? `${toProperCase(selectedDistrict!)} District${!isStateAll(selectedState) ? `, ${toProperCase(selectedState!)}` : ""}`
+      : !isStateAll(selectedState)
+      ? toProperCase(selectedState!)
+      : "All India";
+
+    if (geoFeatures.length > 0) {
+      const targetFeatures = filteredGeoFeatures.length > 0 ? filteredGeoFeatures : geoFeatures;
+      const bbox = getProjectedFeaturesBBox(targetFeatures, (lon, lat) =>
+        projectCoords(lon, lat, PORTRAIT_W, PORTRAIT_H, mainGeoBounds)
+      );
+      const { zoomLevel: nextZoom, panOffset: nextPan } = computeFitTransform(bbox, plotFrame, {
+        fillRatio: 0.92,
+        minZoom: 0.85,
+        maxZoom: 8.0,
+      });
+      setZoomLevel(nextZoom);
+      setPanOffset(nextPan);
+    } else if (!isStateAll(selectedState) && selectedStateObj) {
+      const bbox = getSvgPathBBox(selectedStateObj.path, {
+        scaleX: 1.12,
+        scaleY: 1.44,
+        translateX: -40,
+        translateY: 22,
+      });
+      const { zoomLevel: nextZoom, panOffset: nextPan } = computeFitTransform(bbox, plotFrame, {
+        fillRatio: 0.82,
+        minZoom: 0.9,
+        maxZoom: 7.5,
+      });
+      setZoomLevel(nextZoom);
+      setPanOffset(nextPan);
+    } else {
+      setZoomLevel(1);
+      setPanOffset({ x: 0, y: 0 });
+    }
+
+    if (showFeedback && showToast) {
+      showToast(`Map zoomed to frame ${targetLabel} boundary`, "success");
+    }
+  };
+
+  // Auto-frame whenever State, District, or active shapefile changes
+  useEffect(() => {
+    fitSelectedBoundary(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedState, selectedDistrict, selectedStateObj, hasShapefile, filteredGeoFeatures.length]);
+
+  // Trigger exact boundary framing when user clicks the KpiView "Zoom to Boundary" button
+  const lastFitTriggerRef = useRef<number>(fitBoundaryTrigger);
+  useEffect(() => {
+    if (fitBoundaryTrigger > 0 && fitBoundaryTrigger !== lastFitTriggerRef.current) {
+      lastFitTriggerRef.current = fitBoundaryTrigger;
+      fitSelectedBoundary(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitBoundaryTrigger]);
+
   // Geographical bounds for Base Map tile calculation
   const boundsForTiles = useMemo(() => {
     if (mainGeoBounds) return mainGeoBounds;
@@ -1175,7 +1233,7 @@ export default function KpiChoroplethMap({
       >
         <div className="flex items-center gap-1.5 shrink-0">
           <button
-            onClick={() => setZoomLevel((z) => Math.min(3.5, z + 0.25))}
+            onClick={() => setZoomLevel((z) => Math.min(8, Number((z + 0.25).toFixed(2))))}
             className="px-2 py-1 rounded text-[10px] font-extrabold bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 cursor-pointer flex items-center gap-1"
             title="Zoom In"
           >
@@ -1183,12 +1241,20 @@ export default function KpiChoroplethMap({
             <span>Zoom+</span>
           </button>
           <button
-            onClick={() => setZoomLevel((z) => Math.max(0.6, z - 0.25))}
+            onClick={() => setZoomLevel((z) => Math.max(0.6, Number((z - 0.25).toFixed(2))))}
             className="px-2 py-1 rounded text-[10px] font-extrabold bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 cursor-pointer flex items-center gap-1"
             title="Zoom Out"
           >
             <Minus className="w-3 h-3" />
             <span>Zoom-</span>
+          </button>
+          <button
+            onClick={() => fitSelectedBoundary(true)}
+            className="px-2 py-1 rounded text-[10px] font-extrabold bg-sky-600 hover:bg-sky-700 text-white border border-sky-700 cursor-pointer flex items-center gap-1"
+            title="Auto-zoom to perfectly frame selected State or District boundary"
+          >
+            <Focus className="w-3 h-3" />
+            <span>Fit</span>
           </button>
           <button
             onClick={() => {

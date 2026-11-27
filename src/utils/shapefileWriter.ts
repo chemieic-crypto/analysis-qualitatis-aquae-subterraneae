@@ -342,6 +342,173 @@ export function buildMapInfoRasterTab(
 }
 
 /**
+ * Generates native MapInfo Interchange Format (.mif + .mid) files with WGS84 CoordSys
+ * (Earth Projection 1, 104) so vector layers import cleanly into any version of MapInfo Pro.
+ */
+export function buildMapInfoMifMid(
+  kind: "point" | "polyline" | "polygon",
+  features: any[],
+  fieldDefs: ShapefileFieldDef[]
+): { mif: string; mid: string } {
+  const mifHeader: string[] = [
+    "Version 300",
+    'Charset "WindowsLatin1"',
+    'Delimiter ","',
+    "CoordSys Earth Projection 1, 104",
+    `Columns ${fieldDefs.length}`,
+    ...fieldDefs.map((f) => {
+      if (f.type === "N") {
+        return f.decimals && f.decimals > 0
+          ? `  ${f.name} Decimal(${f.length},${f.decimals})`
+          : `  ${f.name} Integer`;
+      }
+      return `  ${f.name} Char(${Math.max(1, Math.min(254, f.length))})`;
+    }),
+    "Data",
+    ""
+  ];
+
+  const mifBody: string[] = [];
+  const midRows: string[] = [];
+
+  const formatCoord = (lng: number, lat: number) =>
+    `${Number.isFinite(lng) ? lng.toFixed(7) : "0"} ${Number.isFinite(lat) ? lat.toFixed(7) : "0"}`;
+
+  features.forEach((feat, recIdx) => {
+    const props = feat?.properties || {};
+    const midCells = fieldDefs.map((f) => {
+      let val = props[f.origKey];
+      if (val === undefined || val === null) {
+        val = f.origKey === "ID" ? recIdx + 1 : "";
+      }
+      if (f.type === "N") {
+        const num = Number(val);
+        if (val !== "" && Number.isFinite(num)) {
+          return f.decimals && f.decimals > 0 ? num.toFixed(f.decimals) : String(Math.round(num));
+        }
+        return "0";
+      }
+      const clean = String(val)
+        .replace(/[\r\n]+/g, " ")
+        .replace(/"/g, '""')
+        .slice(0, Math.max(1, Math.min(254, f.length)));
+      return `"${clean}"`;
+    });
+    midRows.push(midCells.join(","));
+
+    if (kind === "point") {
+      const pt = feat as ShapefilePointFeature;
+      mifBody.push(`Point ${formatCoord(pt.lng, pt.lat)}`);
+      mifBody.push("    Symbol (35,16711680,10)");
+    } else if (kind === "polyline") {
+      const pl = feat as ShapefilePolyLineFeature;
+      const validParts = (pl.parts || []).filter((p) => Array.isArray(p) && p.length >= 2);
+      if (validParts.length === 0) {
+        mifBody.push("None");
+      } else if (validParts.length === 1) {
+        const part = validParts[0];
+        mifBody.push(`Pline ${part.length}`);
+        part.forEach(([lng, lat]) => mifBody.push(formatCoord(lng, lat)));
+        mifBody.push("    Pen (2,2,255)");
+      } else {
+        mifBody.push(`Pline Multiple ${validParts.length}`);
+        validParts.forEach((part) => {
+          mifBody.push(`  ${part.length}`);
+          part.forEach(([lng, lat]) => mifBody.push(formatCoord(lng, lat)));
+        });
+        mifBody.push("    Pen (2,2,255)");
+      }
+    } else {
+      const poly = feat as ShapefilePolygonFeature;
+      const validRings = (poly.rings || []).filter((r) => Array.isArray(r) && r.length >= 3);
+      if (validRings.length === 0) {
+        mifBody.push("None");
+      } else {
+        mifBody.push(`Region  ${validRings.length}`);
+        validRings.forEach((ring) => {
+          const first = ring[0];
+          const last = ring[ring.length - 1];
+          const isClosed =
+            Math.abs(first[0] - last[0]) < 1e-9 && Math.abs(first[1] - last[1]) < 1e-9;
+          const closedRing = isClosed ? ring : [...ring, first];
+          mifBody.push(`  ${closedRing.length}`);
+          closedRing.forEach(([lng, lat]) => mifBody.push(formatCoord(lng, lat)));
+        });
+        mifBody.push("    Pen (1,2,3355443)");
+        mifBody.push("    Brush (2,16777215,16777215)");
+      }
+    }
+  });
+
+  return {
+    mif: [...mifHeader, ...mifBody, ""].join("\r\n"),
+    mid: midRows.length > 0 ? `${midRows.join("\r\n")}\r\n` : ""
+  };
+}
+
+/**
+ * Generates an ESRI ASCII Raster Grid (.asc) resampled onto uniform square WGS84 cells
+ * (north-to-south row order) for universal compatibility in ArcGIS Pro/Desktop and MapInfo Pro Raster.
+ * Input `grid` rows are ordered south-to-north (row 0 = minLat, row rowStep-1 = maxLat).
+ */
+export function buildEsriAsciiGrid(
+  grid: number[][],
+  bounds: { minLng: number; maxLng: number; minLat: number; maxLat: number },
+  nodataValue: number = -9999
+): { asc: string; ncols: number; nrows: number; cellsize: number } {
+  const srcRows = grid.length;
+  const srcCols = srcRows > 0 ? (grid[0]?.length || 0) : 0;
+  const lngSpan = Math.max(1e-6, bounds.maxLng - bounds.minLng);
+  const latSpan = Math.max(1e-6, bounds.maxLat - bounds.minLat);
+
+  if (srcRows < 1 || srcCols < 1) {
+    const emptyAsc = [
+      "ncols         1",
+      "nrows         1",
+      `xllcorner     ${bounds.minLng.toFixed(8)}`,
+      `yllcorner     ${bounds.minLat.toFixed(8)}`,
+      `cellsize      ${lngSpan.toFixed(8)}`,
+      `NODATA_value  ${nodataValue}`,
+      `${nodataValue}`,
+      ""
+    ].join("\r\n");
+    return { asc: emptyAsc, ncols: 1, nrows: 1, cellsize: lngSpan };
+  }
+
+  const ncols = srcCols;
+  const cellsize = lngSpan / ncols;
+  const nrows = Math.max(2, Math.min(600, Math.round(latSpan / cellsize)));
+
+  const lines: string[] = [
+    `ncols         ${ncols}`,
+    `nrows         ${nrows}`,
+    `xllcorner     ${bounds.minLng.toFixed(8)}`,
+    `yllcorner     ${bounds.minLat.toFixed(8)}`,
+    `cellsize      ${cellsize.toFixed(8)}`,
+    `NODATA_value  ${nodataValue}`
+  ];
+
+  // Write North-to-South (top row = nrows - 1 down to 0)
+  for (let outR = nrows - 1; outR >= 0; outR--) {
+    const latFrac = (outR + 0.5) / nrows;
+    const srcR = Math.max(0, Math.min(srcRows - 1, Math.floor(latFrac * srcRows)));
+    const rowVals: string[] = new Array(ncols);
+    for (let c = 0; c < ncols; c++) {
+      const val = grid[srcR]?.[c];
+      rowVals[c] = typeof val === "number" && Number.isFinite(val) ? val.toFixed(4) : String(nodataValue);
+    }
+    lines.push(rowVals.join(" "));
+  }
+
+  return {
+    asc: `${lines.join("\r\n")}\r\n`,
+    ncols,
+    nrows,
+    cellsize
+  };
+}
+
+/**
  * Builds Point Shapefile (.shp and .shx, ShapeType = 1).
  */
 export function buildPointShapefile(points: ShapefilePointFeature[]): {
@@ -758,6 +925,9 @@ function appendShapefileLayerToZip(
   zip.file(`${cleanBase}.prj`, WGS84_PRJ);
   zip.file(`${cleanBase}.cpg`, "UTF-8\n");
   zip.file(`${cleanBase}.tab`, buildMapInfoShapefileTab(fieldDefs));
+  const mifMid = buildMapInfoMifMid(kind, features, fieldDefs);
+  zip.file(`${cleanBase}.mif`, mifMid.mif);
+  zip.file(`${cleanBase}.mid`, mifMid.mid);
 }
 
 /**

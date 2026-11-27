@@ -42,7 +42,9 @@ import {
   AlertTriangle,
   Scissors,
   Tag,
-  Check
+  Check,
+  Ruler,
+  Database
 } from "lucide-react";
 import * as turf from "@turf/turf";
 import { PARAM_CONFIG, hasBisLimit } from "../data/config";
@@ -52,11 +54,37 @@ import {
   createShapefileFromGeoJson,
   createGisPackageZip,
   buildMapInfoRasterTab,
+  buildEsriAsciiGrid,
   WGS84_PRJ,
   GisPackageLayerInput,
   GisPackageExtraFile,
   downloadBlob
 } from "../utils/shapefileWriter";
+import {
+  createGeoPackageBlob,
+  parseGeoPackageArrayBuffer,
+  GeoPackageLayerInput
+} from "../utils/geoPackageEngine";
+import {
+  createFloat32GeoTiffBlob,
+  createRgbaGeoTiffBlob,
+  buildInterpolationFloat32Grid,
+  parseGeoTiffArrayBuffer,
+  buildImportedGeoTiffCanvas,
+  sampleImportedGeoTiffValue,
+  ImportedGeoTiffLayer
+} from "../utils/geoTiffEngine";
+import {
+  MAP_SCALE_PRESETS,
+  ScaleBarPos,
+  ScaleBarSettings,
+  ScaleBarStyle,
+  ScaleBarUnit,
+  computeCurrentMapScaleRF,
+  computeScaleBarSpec,
+  computeZoomFactorForTargetScale,
+  formatScaleRF
+} from "../utils/mapScaleHelpers";
 import { 
   featureMatchesSelection, 
   getFilteredGeoJson, 
@@ -521,22 +549,20 @@ export default function GisMapView({
 
     // 1. Check if clicking on the Scale Bar decoration
     if (showScaleBar) {
-      const { mapMinLng, finalLngSpan, centerLat } = mapExtent;
-      const widthKm = finalLngSpan * 111 * Math.cos(centerLat * Math.PI / 180);
-      const pxPerKm = mw / widthKm;
-      const roundDivisions = [1, 2, 5, 10, 25, 50, 100, 200, 500];
-      const targetKmRaw = (120 * dpr) / pxPerKm;
-      const targetKm = roundDivisions.reduce((prev, curr) => 
-        Math.abs(curr - targetKmRaw) < Math.abs(prev - targetKmRaw) ? curr : prev
-      );
-      const scaleW = targetKm * pxPerKm;
-      const scaleX = margin + 15 * dpr + scaleBarOffsetX * dpr;
-      const scaleY = currentHeight - margin - 20 * dpr + scaleBarOffsetY * dpr;
+      const { finalLngSpan, centerLat } = mapExtent;
+      const spec = computeScaleBarSpec({
+        finalLngSpan,
+        centerLat,
+        canvasW: canvasWidth,
+        canvasH: canvasHeight,
+        margin: 55,
+        settings: scaleBarSettings
+      });
 
-      const scaleBoxX = scaleX - 5 * dpr;
-      const scaleBoxY = scaleY - 18 * dpr;
-      const scaleBoxW = scaleW + 25 * dpr;
-      const scaleBoxH = 30 * dpr;
+      const scaleBoxX = spec.boxX * dpr;
+      const scaleBoxY = spec.boxY * dpr;
+      const scaleBoxW = spec.boxW * dpr;
+      const scaleBoxH = spec.boxH * dpr;
 
       if (clickX >= scaleBoxX && clickX <= scaleBoxX + scaleBoxW && clickY >= scaleBoxY && clickY <= scaleBoxY + scaleBoxH) {
         setDraggedElement("scaleBar");
@@ -870,7 +896,37 @@ export default function GisMapView({
     }
 
     // 3. Handle map panning
-    if (!isDraggingRef.current) return;
+    if (!isDraggingRef.current) {
+      // Sample imported Float32 GeoTIFF verification rasters on hover
+      const visibleNumericTiffs = importedGeoTiffs.filter((t) => t.visible && t.isSingleBandNumeric);
+      if (visibleNumericTiffs.length > 0) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        const dpr = getDpr();
+        const cw = canvasWidth * dpr;
+        const ch = canvasHeight * dpr;
+        const px = mouseX * (cw / Math.max(1, rect.width));
+        const py = mouseY * (ch / Math.max(1, rect.height));
+        const margin = 55 * dpr;
+        const mw = cw - 2 * margin;
+        const mh = ch - 2 * margin;
+        const { mapMinLng, finalLngSpan, mapMinLat, finalLatSpan } = mapExtent;
+        const lng = mapMinLng + ((px - margin) / Math.max(1, mw)) * finalLngSpan;
+        const lat = mapMinLat + ((ch - margin - py) / Math.max(1, mh)) * finalLatSpan;
+        const topLayer = visibleNumericTiffs[visibleNumericTiffs.length - 1];
+        const sampled = sampleImportedGeoTiffValue(topLayer, lng, lat);
+        setHoveredRasterSample({
+          layerName: topLayer.name,
+          lat,
+          lng,
+          value: sampled
+        });
+      } else if (hoveredRasterSample !== null) {
+        setHoveredRasterSample(null);
+      }
+      return;
+    }
     const dx = e.clientX - dragStartRef.current.x;
     const dy = e.clientY - dragStartRef.current.y;
 
@@ -892,6 +948,7 @@ export default function GisMapView({
     setDraggedLabel(null);
     setDraggedElement(null);
     setDraggedPanelId(null);
+    setHoveredRasterSample(null);
   };
 
   const handleCanvasDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -984,7 +1041,18 @@ export default function GisMapView({
   const [northArrowPos, setNorthArrowPos] = useState<"top-left" | "top-right" | "bottom-left" | "bottom-right">("top-right");
   
   const [showScaleBar, setShowScaleBar] = useState<boolean>(true);
-  const [scaleBarUnit, setScaleBarUnit] = useState<"km" | "mi">("km");
+  const [scaleBarUnit, setScaleBarUnit] = useState<ScaleBarUnit>("km");
+  const [scaleBarStyle, setScaleBarStyle] = useState<ScaleBarStyle>("alternating");
+  const [scaleBarMode, setScaleBarMode] = useState<"auto" | "custom">("auto");
+  const [scaleBarCustomLength, setScaleBarCustomLength] = useState<number>(50);
+  const [scaleBarDivisions, setScaleBarDivisions] = useState<2 | 4 | 5>(4);
+  const [scaleBarShowRf, setScaleBarShowRf] = useState<boolean>(true);
+  const [scaleBarFontSize, setScaleBarFontSize] = useState<number>(8);
+  const [scaleBarHeight, setScaleBarHeight] = useState<number>(5);
+  const [scaleBarColor, setScaleBarColor] = useState<string>("#0f172a");
+  const [scaleBarShowBox, setScaleBarShowBox] = useState<boolean>(true);
+  const [scaleBarPos, setScaleBarPos] = useState<ScaleBarPos>("bottom-left");
+  const [customScaleInput, setCustomScaleInput] = useState<string>("");
   const [gridInterval, setGridInterval] = useState<number>(0.5); // degrees
   const [gridColor, setGridColor] = useState<string>("#cbd5e1");
   const [gridOpacity, setGridOpacity] = useState<number>(40);
@@ -1018,9 +1086,32 @@ export default function GisMapView({
   const [agencyLogoType, setAgencyLogoType] = useState<"CGWB" | "MoJS" | "StateGWD" | "Custom">("CGWB");
   const [agencyLogoPos, setAgencyLogoPos] = useState<"top-left" | "top-right" | "bottom-left" | "bottom-right">("top-left");
 
-  // Export Settings
+  // Export Settings — Primary Formats: GeoPackage (.gpkg) for Point Maps, GeoTIFF (.tif) for Interpolation Maps
   const [exportDpi, setExportDpi] = useState<number>(600);
-  const [exportFormat, setExportFormat] = useState<"jpeg" | "png" | "tiff" | "svg" | "shapefile">("png");
+  const [exportFormat, setExportFormat] = useState<"gpkg" | "geotiff" | "jpeg" | "png" | "tiff" | "svg" | "shapefile">("geotiff");
+  const [geoTiffExportMode, setGeoTiffExportMode] = useState<"float32" | "rgba">("float32");
+
+  // Imported GeoTIFF (.tif/.tiff) layers for cross-software verification directly inside Map Module
+  const [importedGeoTiffs, setImportedGeoTiffs] = useState<ImportedGeoTiffLayer[]>([]);
+  const geoTiffCanvasCacheRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
+  const [hoveredRasterSample, setHoveredRasterSample] = useState<{
+    layerName: string;
+    lat: number;
+    lng: number;
+    value: number | null;
+  } | null>(null);
+
+  const isPointMapPrimary = selectedParam === "STATIONS" || !showRaster;
+
+  // Automatically promote GeoPackage (.gpkg) for Point Maps and GeoTIFF (.tif) for Interpolation Maps
+  useEffect(() => {
+    setExportFormat((prev) => {
+      if (prev === "gpkg" || prev === "geotiff") {
+        return isPointMapPrimary ? "gpkg" : "geotiff";
+      }
+      return prev;
+    });
+  }, [isPointMapPrimary]);
 
   // Seasonal Comparison Toggles
   const [generateComparisonMode, setGenerateComparisonMode] = useState<boolean>(true);
@@ -1515,6 +1606,63 @@ export default function GisMapView({
   }, [parsedData, isComparisonActive, fitToShapefile, shapefileBounds, sheetLayout, zoomScaleFactor, panOffsetLat, panOffsetLng]);
 
   const baseMapExtent = mapExtent;
+
+  const scaleBarSettings: ScaleBarSettings = useMemo(
+    () => ({
+      unit: scaleBarUnit,
+      style: scaleBarStyle,
+      mode: scaleBarMode,
+      customLength: scaleBarCustomLength,
+      divisions: scaleBarDivisions,
+      showRf: scaleBarShowRf,
+      fontSize: scaleBarFontSize,
+      barHeight: scaleBarHeight,
+      color: scaleBarColor,
+      showBox: scaleBarShowBox,
+      pos: scaleBarPos,
+      offsetX: scaleBarOffsetX,
+      offsetY: scaleBarOffsetY
+    }),
+    [
+      scaleBarUnit,
+      scaleBarStyle,
+      scaleBarMode,
+      scaleBarCustomLength,
+      scaleBarDivisions,
+      scaleBarShowRf,
+      scaleBarFontSize,
+      scaleBarHeight,
+      scaleBarColor,
+      scaleBarShowBox,
+      scaleBarPos,
+      scaleBarOffsetX,
+      scaleBarOffsetY
+    ]
+  );
+
+  const currentMapScaleRF = useMemo(() => {
+    return computeCurrentMapScaleRF(baseMapExtent.finalLngSpan, baseMapExtent.centerLat, canvasWidth - 110);
+  }, [baseMapExtent.finalLngSpan, baseMapExtent.centerLat, canvasWidth]);
+
+  const applyCustomMapScale = useCallback(
+    (targetDenominator: number) => {
+      if (!Number.isFinite(targetDenominator) || targetDenominator < 500) {
+        showToast("Enter a valid map scale denominator (e.g., 250000 for 1:250,000).", "info");
+        return;
+      }
+      const baseLngSpanAtZoom1 = baseMapExtent.finalLngSpan / Math.max(1e-6, zoomScaleFactor);
+      const nextZoom = computeZoomFactorForTargetScale(
+        targetDenominator,
+        baseLngSpanAtZoom1,
+        baseMapExtent.centerLat,
+        canvasWidth - 110
+      );
+      setZoomScaleFactor(nextZoom);
+      setCustomScaleInput(String(Math.round(targetDenominator)));
+      showToast(`Map scale locked to ${formatScaleRF(targetDenominator)}`, "success");
+    },
+    [baseMapExtent.finalLngSpan, baseMapExtent.centerLat, zoomScaleFactor, canvasWidth]
+  );
 
   // Filter datasets
   const leftPanelData = useMemo(() => {
@@ -2196,6 +2344,38 @@ export default function GisMapView({
       }
     }
 
+    // 2b. Render Imported Verification GeoTIFF (.tif / .tiff) Raster Layers aligned to WGS84 coordinates
+    if (importedGeoTiffs.length > 0) {
+      importedGeoTiffs.forEach((gtLayer) => {
+        if (!gtLayer.visible) return;
+        let cachedCanvas = geoTiffCanvasCacheRef.current.get(gtLayer.id);
+        if (!cachedCanvas) {
+          const built = buildImportedGeoTiffCanvas(gtLayer);
+          if (built) {
+            geoTiffCanvasCacheRef.current.set(gtLayer.id, built);
+            cachedCanvas = built;
+          }
+        }
+        if (!cachedCanvas) return;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(margin, margin, mw, mh);
+        ctx.clip();
+        ctx.globalAlpha = Math.max(0.05, Math.min(1, gtLayer.opacity / 100));
+        ctx.imageSmoothingEnabled = smoothBlending;
+        ctx.imageSmoothingQuality = "high";
+
+        const gx1 = getX(gtLayer.bounds.minLng);
+        const gx2 = getX(gtLayer.bounds.maxLng);
+        const gy1 = getY(gtLayer.bounds.maxLat);
+        const gy2 = getY(gtLayer.bounds.minLat);
+
+        ctx.drawImage(cachedCanvas, gx1, gy1, gx2 - gx1, gy2 - gy1);
+        ctx.restore();
+      });
+    }
+
     // 3. Draw Latitude and Longitude Grid & Topographic Neatline tickmarks
     if (showGrid) {
       ctx.save();
@@ -2344,13 +2524,34 @@ export default function GisMapView({
               } else if (geom.type === "Point" && geom.coordinates) {
                 const px = getX(geom.coordinates[0]);
                 const py = getY(geom.coordinates[1]);
+                const ptFill =
+                  typeof f?.properties?.COLOR_HEX === "string" && f.properties.COLOR_HEX.startsWith("#")
+                    ? f.properties.COLOR_HEX
+                    : customFill;
+                ctx.globalAlpha = 1.0;
                 ctx.beginPath();
-                ctx.arc(px, py, 4 * scale, 0, Math.PI * 2);
-                ctx.fillStyle = customFill;
+                ctx.arc(px, py, 4.2 * scale, 0, Math.PI * 2);
+                ctx.fillStyle = ptFill;
                 ctx.fill();
-                ctx.strokeStyle = layer.strokeColor || "#3b82f6";
-                ctx.lineWidth = (layer.strokeWidth || 1.0) * scale;
+                ctx.strokeStyle = layer.strokeColor || "#0f172a";
+                ctx.lineWidth = Math.max(0.8, (layer.strokeWidth || 1.0) * 0.75) * scale;
                 ctx.stroke();
+              } else if (geom.type === "MultiPoint" && Array.isArray(geom.coordinates)) {
+                const ptFill =
+                  typeof f?.properties?.COLOR_HEX === "string" && f.properties.COLOR_HEX.startsWith("#")
+                    ? f.properties.COLOR_HEX
+                    : customFill;
+                ctx.globalAlpha = 1.0;
+                geom.coordinates.forEach((coord: number[]) => {
+                  if (!coord || coord.length < 2) return;
+                  ctx.beginPath();
+                  ctx.arc(getX(coord[0]), getY(coord[1]), 4.2 * scale, 0, Math.PI * 2);
+                  ctx.fillStyle = ptFill;
+                  ctx.fill();
+                  ctx.strokeStyle = layer.strokeColor || "#0f172a";
+                  ctx.lineWidth = Math.max(0.8, (layer.strokeWidth || 1.0) * 0.75) * scale;
+                  ctx.stroke();
+                });
               } else if (geom.type === "GeometryCollection") {
                 geom.geometries?.forEach((g: any) => drawFeatureGeometry(g, f));
               }
@@ -2725,47 +2926,119 @@ export default function GisMapView({
       ctx.restore();
     }
 
-    // 6. Professional Scale Bar Calculation
+    // 6. Professional Customizable Scale Bar & Representative Fraction
     if (showScaleBar) {
       ctx.save();
-      // Ground scale math
-      const widthKm = finalLngSpan * 111 * Math.cos(centerLat * Math.PI / 180);
-      const pxPerKm = mw / widthKm;
-      
-      // Select best rounded division dynamically
-      const roundDivisions = [1, 2, 5, 10, 25, 50, 100, 200, 500];
-      const targetKmRaw = (120 * scale) / pxPerKm;
-      const targetKm = roundDivisions.reduce((prev, curr) => 
-        Math.abs(curr - targetKmRaw) < Math.abs(prev - targetKmRaw) ? curr : prev
-      );
+      const spec = computeScaleBarSpec({
+        finalLngSpan,
+        centerLat,
+        canvasW: w / scale,
+        canvasH: h / scale,
+        margin: margin / scale,
+        settings: scaleBarSettings
+      });
 
-      const scaleW = targetKm * pxPerKm;
-      const scaleX = margin + 15 * scale + scaleBarOffsetX * scale;
-      const scaleY = h - margin - 20 * scale + scaleBarOffsetY * scale;
+      const isDarkPanel = pStyle.text === "#ffffff";
+      const useCustomCol = scaleBarColor && scaleBarColor.toLowerCase() !== "#0f172a";
+      const primaryStroke = useCustomCol ? scaleBarColor : (isDarkPanel ? "#e2e8f0" : "#0f172a");
+      const altFill = isDarkPanel ? "#1e293b" : "#ffffff";
+      const textCol = useCustomCol ? scaleBarColor : pStyle.text;
+      const fontSizePx = Math.max(6, Math.min(14, scaleBarFontSize)) * scale;
+      const barH = Math.max(3, Math.min(12, scaleBarHeight)) * scale;
 
-      // Draw glassmorphic translucent background
-      ctx.fillStyle = pStyle.bg;
-      ctx.strokeStyle = pStyle.border;
-      ctx.lineWidth = 1 * scale;
-      ctx.fillRect(scaleX - 5 * scale, scaleY - 18 * scale, scaleW + 25 * scale, 30 * scale);
-      ctx.strokeRect(scaleX - 5 * scale, scaleY - 18 * scale, scaleW + 25 * scale, 30 * scale);
+      const boxX = spec.boxX * scale;
+      const boxY = spec.boxY * scale;
+      const boxW = spec.boxW * scale;
+      const boxH = spec.boxH * scale;
+      const barX = spec.barX * scale;
+      const barY = spec.barY * scale;
 
-      // Alternating black and white solid segments
-      ctx.strokeStyle = pStyle.text;
-      ctx.lineWidth = 1.2 * scale;
-      ctx.fillStyle = pStyle.text === "#ffffff" ? "#cbd5e1" : "#000000";
-      ctx.fillRect(scaleX, scaleY - 5 * scale, scaleW / 2, 5 * scale);
-      ctx.fillStyle = pStyle.text === "#ffffff" ? "#334155" : "#ffffff";
-      ctx.fillRect(scaleX + scaleW / 2, scaleY - 5 * scale, scaleW / 2, 5 * scale);
-      ctx.strokeRect(scaleX, scaleY - 5 * scale, scaleW, 5 * scale);
+      if (scaleBarShowBox) {
+        ctx.fillStyle = pStyle.bg;
+        ctx.strokeStyle = pStyle.border;
+        ctx.lineWidth = 1 * scale;
+        ctx.fillRect(boxX, boxY, boxW, boxH);
+        ctx.strokeRect(boxX, boxY, boxW, boxH);
+      }
 
-      // Ticks and labels (High density crisp text)
-      ctx.fillStyle = pStyle.text;
-      ctx.font = `bold ${8 * scale}px ${mapFontFamily}`;
-      ctx.textAlign = "center";
-      ctx.fillText("0", scaleX, scaleY + 10 * scale);
-      ctx.fillText(`${(targetKm / 2).toFixed(0)}`, scaleX + scaleW / 2, scaleY + 10 * scale);
-      ctx.fillText(`${targetKm} ${scaleBarUnit.toUpperCase()}`, scaleX + scaleW, scaleY + 10 * scale);
+      if (scaleBarShowRf) {
+        ctx.fillStyle = textCol;
+        ctx.font = `bold ${Math.max(6, scaleBarFontSize - 0.5) * scale}px ${mapFontFamily}`;
+        ctx.textAlign = "left";
+        ctx.fillText(`Scale  ${spec.rfLabel}`, barX, boxY + (Math.max(6, scaleBarFontSize) + 4) * scale);
+      }
+
+      const drawSingleBar = (
+        x0: number,
+        y0: number,
+        bw: number,
+        divisions: 2 | 4 | 5,
+        ticks: { frac: number; label: string }[]
+      ) => {
+        const segW = bw / divisions;
+        ctx.strokeStyle = primaryStroke;
+        ctx.lineWidth = 1.1 * scale;
+
+        if (scaleBarStyle === "alternating") {
+          for (let i = 0; i < divisions; i++) {
+            ctx.fillStyle = i % 2 === 0 ? primaryStroke : altFill;
+            ctx.fillRect(x0 + i * segW, y0, segW, barH);
+          }
+          ctx.strokeRect(x0, y0, bw, barH);
+        } else if (scaleBarStyle === "double-line") {
+          const halfH = barH / 2;
+          for (let i = 0; i < divisions; i++) {
+            ctx.fillStyle = i % 2 === 0 ? primaryStroke : altFill;
+            ctx.fillRect(x0 + i * segW, y0, segW, halfH);
+            ctx.fillStyle = i % 2 === 0 ? altFill : primaryStroke;
+            ctx.fillRect(x0 + i * segW, y0 + halfH, segW, halfH);
+          }
+          ctx.strokeRect(x0, y0, bw, barH);
+        } else if (scaleBarStyle === "line") {
+          const baselineY = y0 + barH;
+          ctx.beginPath();
+          ctx.moveTo(x0, baselineY);
+          ctx.lineTo(x0 + bw, baselineY);
+          for (let i = 0; i <= divisions; i++) {
+            const tx = x0 + i * segW;
+            const tickH = i === 0 || i === divisions ? barH : barH * 0.65;
+            ctx.moveTo(tx, baselineY);
+            ctx.lineTo(tx, baselineY - tickH);
+          }
+          ctx.stroke();
+        } else {
+          // boxed modern style
+          ctx.fillStyle = altFill;
+          ctx.fillRect(x0, y0, bw, barH);
+          for (let i = 0; i < divisions; i++) {
+            if (i % 2 === 0) {
+              ctx.fillStyle = primaryStroke;
+              ctx.globalAlpha = 0.85;
+              ctx.fillRect(x0 + i * segW + 0.5 * scale, y0 + 0.5 * scale, segW - 1 * scale, barH - 1 * scale);
+              ctx.globalAlpha = 1;
+            }
+          }
+          ctx.strokeRect(x0, y0, bw, barH);
+        }
+
+        // Tick labels
+        ctx.fillStyle = textCol;
+        ctx.font = `bold ${fontSizePx}px ${mapFontFamily}`;
+        ticks.forEach((tk, idx) => {
+          const tx = x0 + tk.frac * bw;
+          ctx.textAlign = idx === 0 ? "left" : idx === ticks.length - 1 ? "left" : "center";
+          const labelX = idx === ticks.length - 1 ? tx - 4 * scale : tx;
+          ctx.fillText(tk.label, labelX, y0 + barH + fontSizePx + 2 * scale);
+        });
+      };
+
+      drawSingleBar(barX, barY, spec.barWidthPx * scale, spec.divisions, spec.ticks);
+
+      if (spec.secondary) {
+        const secY = barY + barH + fontSizePx + 8 * scale;
+        drawSingleBar(barX, secY, spec.secondary.barWidthPx * scale, spec.divisions, spec.secondary.ticks);
+      }
+
       ctx.restore();
     }
 
@@ -3762,6 +4035,16 @@ export default function GisMapView({
     northArrowPos,
     showScaleBar,
     scaleBarUnit,
+    scaleBarStyle,
+    scaleBarMode,
+    scaleBarCustomLength,
+    scaleBarDivisions,
+    scaleBarShowRf,
+    scaleBarFontSize,
+    scaleBarHeight,
+    scaleBarColor,
+    scaleBarShowBox,
+    scaleBarPos,
     gridInterval,
     gridColor,
     gridOpacity,
@@ -3838,7 +4121,8 @@ export default function GisMapView({
     adminLabelShowHalo,
     adminLabelFontFamily,
     adminLabelWeight,
-    adminLabelItalic
+    adminLabelItalic,
+    importedGeoTiffs
   ]);
 
   // Fact Sheet map integration is powered directly by high-resolution exports and Fact Sheet's dedicated 2400x1400 engine
@@ -4297,33 +4581,90 @@ export default function GisMapView({
 
     let scaleBarElement = "";
     if (showScaleBar) {
-      const widthKm = finalLngSpan * 111 * Math.cos(centerLat * Math.PI / 180);
-      const pxPerKm = mw / widthKm;
-      const roundDivisions = [1, 2, 5, 10, 25, 50, 100, 200, 500];
-      const targetKmRaw = 120 / pxPerKm;
-      const targetKm = roundDivisions.reduce((prev, curr) => 
-        Math.abs(curr - targetKmRaw) < Math.abs(prev - targetKmRaw) ? curr : prev
-      );
-      const scaleW = targetKm * pxPerKm;
-      const scaleX = margin + 15 + scaleBarOffsetX;
-      const scaleY = h - margin - 20 + scaleBarOffsetY;
+      const spec = computeScaleBarSpec({
+        finalLngSpan,
+        centerLat,
+        canvasW: w,
+        canvasH: h,
+        margin,
+        settings: scaleBarSettings
+      });
 
-      const bgStroke = pStyle.border;
-      const bgFill = pStyle.bg;
-      const textCol = pStyle.text;
+      const isDarkPanel = pStyle.text === "#ffffff";
+      const useCustomCol = scaleBarColor && scaleBarColor.toLowerCase() !== "#0f172a";
+      const primaryStroke = useCustomCol ? scaleBarColor : (isDarkPanel ? "#e2e8f0" : "#0f172a");
+      const altFill = isDarkPanel ? "#1e293b" : "#ffffff";
+      const textCol = useCustomCol ? scaleBarColor : pStyle.text;
+      const fontSz = Math.max(6, Math.min(14, scaleBarFontSize));
+      const barH = Math.max(3, Math.min(12, scaleBarHeight));
 
-      const segmentFill1 = textCol === "#ffffff" ? "#cbd5e1" : "#000000";
-      const segmentFill2 = textCol === "#ffffff" ? "#334155" : "#ffffff";
+      const buildSvgBar = (
+        x0: number,
+        y0: number,
+        bw: number,
+        divisions: 2 | 4 | 5,
+        ticks: { frac: number; label: string }[]
+      ) => {
+        const segW = bw / divisions;
+        let parts = "";
+        if (scaleBarStyle === "alternating") {
+          for (let i = 0; i < divisions; i++) {
+            const fill = i % 2 === 0 ? primaryStroke : altFill;
+            parts += `<rect x="${(x0 + i * segW).toFixed(2)}" y="${y0.toFixed(2)}" width="${segW.toFixed(2)}" height="${barH}" fill="${fill}" />`;
+          }
+          parts += `<rect x="${x0.toFixed(2)}" y="${y0.toFixed(2)}" width="${bw.toFixed(2)}" height="${barH}" fill="none" stroke="${primaryStroke}" stroke-width="1.1" />`;
+        } else if (scaleBarStyle === "double-line") {
+          const halfH = barH / 2;
+          for (let i = 0; i < divisions; i++) {
+            const topFill = i % 2 === 0 ? primaryStroke : altFill;
+            const botFill = i % 2 === 0 ? altFill : primaryStroke;
+            parts += `<rect x="${(x0 + i * segW).toFixed(2)}" y="${y0.toFixed(2)}" width="${segW.toFixed(2)}" height="${halfH.toFixed(2)}" fill="${topFill}" />`;
+            parts += `<rect x="${(x0 + i * segW).toFixed(2)}" y="${(y0 + halfH).toFixed(2)}" width="${segW.toFixed(2)}" height="${halfH.toFixed(2)}" fill="${botFill}" />`;
+          }
+          parts += `<rect x="${x0.toFixed(2)}" y="${y0.toFixed(2)}" width="${bw.toFixed(2)}" height="${barH}" fill="none" stroke="${primaryStroke}" stroke-width="1.1" />`;
+        } else if (scaleBarStyle === "line") {
+          const baseY = y0 + barH;
+          parts += `<line x1="${x0.toFixed(2)}" y1="${baseY.toFixed(2)}" x2="${(x0 + bw).toFixed(2)}" y2="${baseY.toFixed(2)}" stroke="${primaryStroke}" stroke-width="1.2" />`;
+          for (let i = 0; i <= divisions; i++) {
+            const tx = x0 + i * segW;
+            const th = i === 0 || i === divisions ? barH : barH * 0.65;
+            parts += `<line x1="${tx.toFixed(2)}" y1="${baseY.toFixed(2)}" x2="${tx.toFixed(2)}" y2="${(baseY - th).toFixed(2)}" stroke="${primaryStroke}" stroke-width="1.1" />`;
+          }
+        } else {
+          parts += `<rect x="${x0.toFixed(2)}" y="${y0.toFixed(2)}" width="${bw.toFixed(2)}" height="${barH}" fill="${altFill}" stroke="${primaryStroke}" stroke-width="1.1" />`;
+          for (let i = 0; i < divisions; i++) {
+            if (i % 2 === 0) {
+              parts += `<rect x="${(x0 + i * segW + 0.5).toFixed(2)}" y="${(y0 + 0.5).toFixed(2)}" width="${Math.max(1, segW - 1).toFixed(2)}" height="${Math.max(1, barH - 1).toFixed(2)}" fill="${primaryStroke}" fill-opacity="0.85" />`;
+            }
+          }
+        }
+        ticks.forEach((tk, idx) => {
+          const tx = x0 + tk.frac * bw;
+          const anchor = idx === 0 || idx === ticks.length - 1 ? "start" : "middle";
+          const lx = idx === ticks.length - 1 ? tx - 4 : tx;
+          parts += `<text x="${lx.toFixed(2)}" y="${(y0 + barH + fontSz + 2).toFixed(2)}" font-size="${fontSz}" font-weight="bold" font-family="${mapFontFamily}" fill="${textCol}" text-anchor="${anchor}">${tk.label}</text>`;
+        });
+        return parts;
+      };
+
+      const boxSvg = scaleBarShowBox
+        ? `<rect x="${spec.boxX.toFixed(2)}" y="${spec.boxY.toFixed(2)}" width="${spec.boxW.toFixed(2)}" height="${spec.boxH.toFixed(2)}" fill="${pStyle.bg}" stroke="${pStyle.border}" stroke-width="1" rx="3" />`
+        : "";
+      const rfSvg = scaleBarShowRf
+        ? `<text x="${spec.barX.toFixed(2)}" y="${(spec.boxY + fontSz + 4).toFixed(2)}" font-size="${Math.max(6, fontSz - 0.5)}" font-weight="bold" font-family="${mapFontFamily}" fill="${textCol}" text-anchor="start">Scale  ${spec.rfLabel}</text>`
+        : "";
+      const primarySvg = buildSvgBar(spec.barX, spec.barY, spec.barWidthPx, spec.divisions, spec.ticks);
+      const secondarySvg = spec.secondary
+        ? buildSvgBar(spec.barX, spec.barY + barH + fontSz + 8, spec.secondary.barWidthPx, spec.divisions, spec.secondary.ticks)
+        : "";
 
       scaleBarElement = `
-    <!-- Dynamic Positionable Scale Bar -->
+    <!-- Dynamic Customizable Scale Bar -->
     <g id="scale-bar">
-      <rect x="${scaleX - 5}" y="${scaleY - 18}" width="${scaleW + 25}" height="30" fill="${bgFill}" stroke="${bgStroke}" stroke-width="1" rx="4" />
-      <rect x="${scaleX}" y="${scaleY - 5}" width="${scaleW / 2}" height="5" fill="${segmentFill1}" stroke="${textCol}" stroke-width="1.2" />
-      <rect x="${scaleX + scaleW / 2}" y="${scaleY - 5}" width="${scaleW / 2}" height="5" fill="${segmentFill2}" stroke="${textCol}" stroke-width="1.2" />
-      <text x="${scaleX}" y="${scaleY + 10}" font-size="8" font-weight="bold" fill="${textCol}" text-anchor="middle">0</text>
-      <text x="${scaleX + scaleW / 2}" y="${scaleY + 10}" font-size="8" font-weight="bold" fill="${textCol}" text-anchor="middle">${(targetKm / 2).toFixed(0)}</text>
-      <text x="${scaleX + scaleW}" y="${scaleY + 10}" font-size="8" font-weight="bold" fill="${textCol}" text-anchor="middle">${targetKm} ${scaleBarUnit.toUpperCase()}</text>
+      ${boxSvg}
+      ${rfSvg}
+      ${primarySvg}
+      ${secondarySvg}
     </g>
       `;
     }
@@ -4512,8 +4853,21 @@ ${svgStatsPanel}
     return svg;
   };
 
-  // Trigger downloads for High-DPI Lossless exports with adaptive canvas allocation guards
+  // Trigger downloads for Primary GIS Formats (GeoPackage / GeoTIFF) & High-DPI Publication Exports
   const exportMap = () => {
+    if (exportFormat === "gpkg") {
+      exportPointMapAsGeoPackage(false);
+      return;
+    }
+    if (exportFormat === "geotiff") {
+      exportInterpolationAsGeoTiff(geoTiffExportMode);
+      return;
+    }
+    if (exportFormat === "shapefile") {
+      exportMapAsShapefile("all");
+      return;
+    }
+
     // Adaptive resolution capping to avoid exceeding browser canvas allocation limits (prevents silent crash at 1200/2400/4800 DPI)
     const MAX_CANVAS_AREA = 110000000; // ~110 Megapixels is highly safe and performant across Chrome, Safari, and Firefox
     let multiplier = exportDpi / 96;
@@ -4699,11 +5053,6 @@ ${svgStatsPanel}
         showToast(`Successfully exported Georeferenced GeoTIFF and companion World File (.tfw)!`, "success");
         return;
       }
-    }
-
-    if (exportFormat === "shapefile") {
-      exportMapAsShapefile("all");
-      return;
     }
 
     // High quality raster format export
@@ -5281,14 +5630,499 @@ ${svgStatsPanel}
     return files;
   };
 
-  // Export current prepared map (Zones, Contours, Stations, Boundaries, GeoTIFF Raster) as ArcGIS & MapInfo Package (.zip)
-  const exportMapAsShapefile = async (type: "stations" | "boundaries" | "zones" | "all" = "all") => {
+  // Helper: build full non-truncated station Point GeoJSON features for GeoPackage (.gpkg) & GIS exports
+  const buildStationPointGeoFeatures = (activeData: any[], activeParamName: string) => {
+    const paramCol = headerMap[activeParamName] || activeParamName;
+    const activeParamConfig =
+      activeParamName === "STATIONS"
+        ? { b1: 0, b2: 0, unit: "", name: "Monitoring Stations" }
+        : PARAM_CONFIG[activeParamName] || { b1: 1, b2: 10, unit: "mg/L", name: activeParamName };
+    const { breaks, labels } = getClassColorsAndBreaks(activeParamConfig);
+
+    const getZoneLabelForVal = (val: number): { zoneName: string; exceeds: string } => {
+      if (activeParamName === "STATIONS") return { zoneName: "Monitoring Station", exceeds: "N/A" };
+      for (let i = 0; i < breaks.length; i++) {
+        if (val <= breaks[i]) {
+          return {
+            zoneName: labels[i] || `Class ${i + 1}`,
+            exceeds: val > activeParamConfig.b2 ? "Yes" : "No"
+          };
+        }
+      }
+      return {
+        zoneName: labels[labels.length - 1] || "Exceeded",
+        exceeds: val > activeParamConfig.b2 ? "Yes" : "No"
+      };
+    };
+
+    const excludedStationKeys = new Set([
+      "lat", "lng", "state", "district", "seasonGroup", "rawSeason", "year",
+      "_raw", "__EMPTY", "geom", "geometry"
+    ]);
+
+    return (activeData || [])
+      .filter((d) => Number.isFinite(d.lat) && Number.isFinite(d.lng))
+      .map((d, idx) => {
+        const numVal = activeParamName === "STATIONS" ? 1 : parseFloat(d[paramCol]);
+        const hasNum = Number.isFinite(numVal);
+        const colorMeta = normalizeExportColor(
+          hasNum ? getValueColor(numVal, false, activeParamName, true) : stationPointColor
+        );
+        const { zoneName, exceeds } = hasNum
+          ? getZoneLabelForVal(numVal)
+          : { zoneName: "Unmeasured", exceeds: "N/A" };
+
+        const props: Record<string, any> = {
+          ID: idx + 1,
+          WELL_ID: getStationFieldValue(d, "wellId", ["well_id", "well id", "well", "station_id", "site_id"]) || `STN_${idx + 1}`,
+          LOCATION: getStationFieldValue(d, "location", ["location", "village", "site", "place", "station"]),
+          BLOCK: getStationFieldValue(d, "block", ["block", "taluk", "tehsil", "mandal"]),
+          DISTRICT: d.district || getStationFieldValue(d, "district", ["district", "dist"]),
+          STATE: d.state || getStationFieldValue(d, "state", ["state", "st_nm"]),
+          SEASON: d.rawSeason || d.seasonGroup || "",
+          YEAR: d.year || "",
+          PARAMETER: activeParamName,
+          UNIT: activeParamConfig.unit || "",
+          VALUE: hasNum ? Number(numVal.toFixed(4)) : null,
+          ZONE_NAME: zoneName,
+          EXCEEDS_BIS: exceeds,
+          COLOR_HEX: colorMeta.hex,
+          LATITUDE: Number(d.lat.toFixed(6)),
+          LONGITUDE: Number(d.lng.toFixed(6))
+        };
+
+        Object.keys(d).forEach((k) => {
+          if (!excludedStationKeys.has(k) && !k.startsWith("_")) {
+            const v = d[k];
+            if (v === null || v === undefined || typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+              const up = k.replace(/[^a-zA-Z0-9_]/g, "_").toUpperCase();
+              if (!(up in props)) {
+                props[k] = v;
+              }
+            }
+          }
+        });
+
+        return {
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [d.lng, d.lat] },
+          properties: props
+        };
+      });
+  };
+
+  // PRIMARY FORMAT FOR POINT MAPS: OGC GeoPackage 1.3.1 (.gpkg)
+  const exportPointMapAsGeoPackage = async (includeAllMapLayers = false) => {
+    try {
+      const activeData = isComparisonActive ? (leftPanelData || parsedData) : parsedData;
+      const activeParamName = selectedParam;
+      const cleanParam = activeParamName.replace(/[^a-zA-Z0-9_-]/g, "_") || "Stations";
+      const areaSuffix = !isStateAll(selectedState)
+        ? `${selectedState}${!isDistrictAll(selectedDistrict) ? `_${selectedDistrict}` : ""}`
+        : "India";
+      const safeArea = areaSuffix.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 30);
+
+      showToast(
+        includeAllMapLayers
+          ? "Building multi-layer OGC GeoPackage (.gpkg)..."
+          : "Building OGC GeoPackage Point Map (.gpkg)...",
+        "info"
+      );
+
+      const stationFeatures = buildStationPointGeoFeatures(activeData, activeParamName);
+      const gpkgLayers: GeoPackageLayerInput[] = [];
+
+      if (stationFeatures.length > 0) {
+        gpkgLayers.push({
+          tableName: `${cleanParam.toLowerCase()}_point_map`,
+          identifier: `${activeParamName} Monitoring Stations (${areaSuffix})`,
+          description: `Groundwater Point Map for ${activeParamName} in WGS84 (EPSG:4326) with complete untruncated attributes`,
+          geoJson: { type: "FeatureCollection", features: stationFeatures },
+          srsId: 4326
+        });
+      }
+
+      if (includeAllMapLayers) {
+        const { zonesGeoJson, contoursGeoJson } = buildVectorizedZonesAndContours(
+          activeData,
+          activeParamName,
+          effectiveClipGeoJson
+        );
+        if (zonesGeoJson?.features?.length) {
+          gpkgLayers.push({
+            tableName: `${cleanParam.toLowerCase()}_interpolated_zones`,
+            identifier: `${activeParamName} Interpolated Zones`,
+            description: `Vectorized classification zones (${interpolationMethod.toUpperCase()})`,
+            geoJson: zonesGeoJson,
+            srsId: 4326
+          });
+        }
+        if (contoursGeoJson?.features?.length) {
+          gpkgLayers.push({
+            tableName: `${cleanParam.toLowerCase()}_contours`,
+            identifier: `${activeParamName} Contour Lines`,
+            description: `Iso-concentration contours (${interpolationMethod.toUpperCase()})`,
+            geoJson: contoursGeoJson,
+            srsId: 4326
+          });
+        }
+
+        const visibleLayers = (layers || []).filter((l) => l.visible && l.geoJson);
+        visibleLayers.forEach((layer, idx) => {
+          const allF = layer.geoJson.features || (layer.geoJson.type === "Feature" ? [layer.geoJson] : []);
+          const kept = allF.filter((f: any) =>
+            featureMatchesSelection(f, selectedState, selectedDistrict, districtStateMap)
+          );
+          const finalF = kept.length > 0 ? kept : allF;
+          if (finalF.length > 0) {
+            gpkgLayers.push({
+              tableName: `boundary_${idx + 1}_${(layer.name || "layer").replace(/\.[^/.]+$/, "")}`,
+              identifier: layer.name || `Boundary ${idx + 1}`,
+              description: "Administrative / study boundary layer (EPSG:4326)",
+              geoJson: { type: "FeatureCollection", features: finalF },
+              srsId: 4326
+            });
+          }
+        });
+
+        if (visibleLayers.length === 0 && effectiveClipGeoJson) {
+          const clipFeats = effectiveClipGeoJson.features || (effectiveClipGeoJson.type === "Feature" ? [effectiveClipGeoJson] : []);
+          if (clipFeats.length > 0) {
+            gpkgLayers.push({
+              tableName: "study_area_boundary",
+              identifier: `${areaSuffix} Boundary`,
+              description: "Active administrative boundary (EPSG:4326)",
+              geoJson: { type: "FeatureCollection", features: clipFeats },
+              srsId: 4326
+            });
+          }
+        }
+      }
+
+      if (gpkgLayers.length === 0) {
+        showToast("No station points or vector layers available to export as GeoPackage (.gpkg).", "info");
+        return;
+      }
+
+      const blob = await createGeoPackageBlob(gpkgLayers);
+      const fileName = includeAllMapLayers
+        ? `${cleanParam}_${safeArea}_CompleteMap.gpkg`
+        : `${cleanParam}_${safeArea}_PointMap.gpkg`;
+      downloadBlob(blob, fileName);
+
+      showToast(
+        `Exported OGC GeoPackage (.gpkg): ${gpkgLayers.length} layer(s), ${stationFeatures.length} points (EPSG:4326) — ready to verify in QGIS, ArcGIS Pro & MapInfo!`,
+        "success"
+      );
+    } catch (err: any) {
+      console.error("GeoPackage export error:", err);
+      showToast(err?.message || "Failed to export GeoPackage (.gpkg).", "error");
+    }
+  };
+
+  // PRIMARY FORMAT FOR INTERPOLATION MAPS: OGC GeoTIFF 1.1 (.tif) — Float32 Numeric or Styled RGBA
+  const exportInterpolationAsGeoTiff = async (mode: "float32" | "rgba" = geoTiffExportMode) => {
+    try {
+      const activeData = isComparisonActive ? (leftPanelData || parsedData) : parsedData;
+      const activeParamName = selectedParam;
+      if (!activeParamName || activeParamName === "STATIONS") {
+        showToast("Select a numeric water-quality parameter to export an Interpolation GeoTIFF (.tif), or use Point Map (.gpkg) for stations.", "info");
+        return;
+      }
+
+      const cleanParam = activeParamName.replace(/[^a-zA-Z0-9_-]/g, "_") || "Parameter";
+      const areaSuffix = !isStateAll(selectedState)
+        ? `${selectedState}${!isDistrictAll(selectedDistrict) ? `_${selectedDistrict}` : ""}`
+        : "India";
+      const safeArea = areaSuffix.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 30);
+      const bounds = {
+        minLng: baseMapExtent.mapMinLng,
+        maxLng: baseMapExtent.mapMaxLng,
+        minLat: baseMapExtent.mapMinLat,
+        maxLat: baseMapExtent.mapMaxLat
+      };
+
+      const rasterObj = getActiveRasterGridForExport(activeData, activeParamName);
+      if (!rasterObj || !rasterObj.grid || rasterObj.grid.length < 2) {
+        showToast("No interpolated raster grid available yet. Click 'Run Interpolation' first.", "info");
+        return;
+      }
+
+      if (mode === "float32") {
+        showToast(`Building 32-bit Float Scientific GeoTIFF (.tif) for ${activeParamName}...`, "info");
+        const floatGrid = buildInterpolationFloat32Grid(
+          rasterObj.grid,
+          bounds,
+          effectiveClipGeoJson,
+          -9999
+        );
+        const paramUnit = PARAM_CONFIG[activeParamName]?.unit || "";
+        const desc = `${activeParamName}${paramUnit ? ` (${paramUnit})` : ""} ${interpolationMethod.toUpperCase()} Interpolation | ${areaSuffix} | WGS84 EPSG:4326 | NoData=-9999`;
+        const blob = createFloat32GeoTiffBlob(
+          floatGrid.width,
+          floatGrid.height,
+          floatGrid.values,
+          bounds,
+          -9999,
+          desc
+        );
+        const fileName = `${cleanParam}_${safeArea}_Interpolation_Float32.tif`;
+        downloadBlob(blob, fileName);
+        showToast(
+          `Exported Float32 GeoTIFF (${floatGrid.width}x${floatGrid.height}, EPSG:4326, Range ${floatGrid.minVal.toFixed(2)}–${floatGrid.maxVal.toFixed(2)}, NoData=-9999) as ${fileName}!`,
+          "success"
+        );
+        return;
+      }
+
+      // Styled 4-Band RGBA GeoTIFF (with transparent exterior outside clipped polygon)
+      showToast(`Building Styled Transparent RGBA GeoTIFF (.tif) for ${activeParamName}...`, "info");
+      const { grid, colStep, rowStep } = rasterObj;
+      const aspect = Math.max(0.25, Math.min(4, baseMapExtent.finalLatSpan / Math.max(1e-6, baseMapExtent.finalLngSpan)));
+      const rasterW = Math.max(1200, colStep * 4);
+      const rasterH = Math.max(400, Math.round(rasterW * aspect));
+      const offCanvas = document.createElement("canvas");
+      offCanvas.width = rasterW;
+      offCanvas.height = rasterH;
+      const oCtx = offCanvas.getContext("2d");
+      if (!oCtx) throw new Error("Unable to allocate offscreen canvas for RGBA GeoTIFF.");
+
+      const mathCanvas = document.createElement("canvas");
+      mathCanvas.width = colStep;
+      mathCanvas.height = rowStep;
+      const mCtx = mathCanvas.getContext("2d");
+      if (!mCtx) throw new Error("Unable to allocate raster buffer canvas.");
+
+      const imgData = mCtx.createImageData(colStep, rowStep);
+      const buf = imgData.data;
+      for (let r = 0; r < rowStep; r++) {
+        const imgY = rowStep - 1 - r;
+        for (let c = 0; c < colStep; c++) {
+          const val = grid[r]?.[c];
+          const idx = (imgY * colStep + c) * 4;
+          if (val === undefined || !Number.isFinite(val)) {
+            buf[idx + 3] = 0;
+            continue;
+          }
+          const rgb = normalizeExportColor(getValueColor(val, false, activeParamName));
+          const parts = rgb.rgb.split(",").map(Number);
+          buf[idx] = parts[0] || 0;
+          buf[idx + 1] = parts[1] || 0;
+          buf[idx + 2] = parts[2] || 0;
+          buf[idx + 3] = 255;
+        }
+      }
+      mCtx.putImageData(imgData, 0, 0);
+
+      const getRx = (lng: number) => ((lng - bounds.minLng) / Math.max(1e-9, bounds.maxLng - bounds.minLng)) * rasterW;
+      const getRy = (lat: number) => ((bounds.maxLat - lat) / Math.max(1e-9, bounds.maxLat - bounds.minLat)) * rasterH;
+
+      oCtx.save();
+      if (effectiveClipGeoJson) {
+        oCtx.beginPath();
+        const traceRing = (ring: number[][]) => {
+          if (!ring || ring.length === 0) return;
+          oCtx.moveTo(getRx(ring[0][0]), getRy(ring[0][1]));
+          for (let i = 1; i < ring.length; i++) oCtx.lineTo(getRx(ring[i][0]), getRy(ring[i][1]));
+          oCtx.closePath();
+        };
+        const traceGeom = (g: any) => {
+          if (!g) return;
+          if (g.type === "Polygon") g.coordinates.forEach(traceRing);
+          else if (g.type === "MultiPolygon") g.coordinates.forEach((p: any) => p.forEach(traceRing));
+        };
+        const feats = effectiveClipGeoJson.features || (effectiveClipGeoJson.type === "Feature" ? [effectiveClipGeoJson] : []);
+        feats.forEach((f: any) => traceGeom(f?.geometry));
+        oCtx.clip();
+      }
+      oCtx.imageSmoothingEnabled = smoothBlending;
+      oCtx.imageSmoothingQuality = "high";
+      oCtx.drawImage(mathCanvas, 0, 0, rasterW, rasterH);
+      oCtx.restore();
+
+      const outPixels = oCtx.getImageData(0, 0, rasterW, rasterH).data;
+      const blob = createRgbaGeoTiffBlob(
+        rasterW,
+        rasterH,
+        outPixels,
+        bounds,
+        `${activeParamName} Styled RGBA Interpolation | ${areaSuffix} | WGS84 EPSG:4326`
+      );
+      const fileName = `${cleanParam}_${safeArea}_Interpolation_ColorRGBA.tif`;
+      downloadBlob(blob, fileName);
+      showToast(
+        `Exported Transparent RGBA GeoTIFF (${rasterW}x${rasterH}, EPSG:4326) as ${fileName}!`,
+        "success"
+      );
+    } catch (err: any) {
+      console.error("GeoTIFF export error:", err);
+      showToast(err?.message || "Failed to export Interpolation GeoTIFF (.tif).", "error");
+    }
+  };
+
+  // Zoom / Fit map viewport cleanly to an imported GeoTIFF verification raster's bounds
+  const handleZoomToGeoTiffBounds = (gt: ImportedGeoTiffLayer) => {
+    const baseCenterLat = (baseMapExtent.mapMinLat + baseMapExtent.mapMaxLat) / 2;
+    const baseCenterLng = (baseMapExtent.mapMinLng + baseMapExtent.mapMaxLng) / 2;
+    const targetCenterLat = (gt.bounds.minLat + gt.bounds.maxLat) / 2;
+    const targetCenterLng = (gt.bounds.minLng + gt.bounds.maxLng) / 2;
+    const spanLng = Math.max(0.01, gt.bounds.maxLng - gt.bounds.minLng);
+    const spanLat = Math.max(0.01, gt.bounds.maxLat - gt.bounds.minLat);
+    const ratioLng = (spanLng * 1.15) / Math.max(1e-6, baseMapExtent.finalLngSpan);
+    const ratioLat = (spanLat * 1.15) / Math.max(1e-6, baseMapExtent.finalLatSpan);
+    const idealZoom = Math.max(0.02, Math.min(8.0, Math.max(ratioLng, ratioLat)));
+
+    setPanOffsetLat(targetCenterLat - baseCenterLat);
+    setPanOffsetLng(targetCenterLng - baseCenterLng);
+    setZoomScaleFactor(idealZoom);
+    showToast(`Centered map on GeoTIFF "${gt.name}" (EPSG:${gt.epsgCode || 4326}).`, "info");
+  };
+
+  // Universal Spatial Verification Importer: .gpkg (GeoPackage), .tif/.tiff (GeoTIFF), .zip (Shapefile), .geojson/.json
+  const handleUniversalSpatialImport = async (files: FileList | File[] | null) => {
+    if (!files || files.length === 0) return;
+    const fileList = Array.from(files);
+
+    const paletteCombos = [
+      { stroke: "#2563eb", fill: "#60a5fa" },
+      { stroke: "#16a34a", fill: "#4ade80" },
+      { stroke: "#dc2626", fill: "#fca5a5" },
+      { stroke: "#d97706", fill: "#fcd34d" },
+      { stroke: "#7c3aed", fill: "#c084fc" },
+      { stroke: "#0d9488", fill: "#2dd4bf" },
+      { stroke: "#db2777", fill: "#f472b6" }
+    ];
+
+    const addVectorGeoJsonLayer = (geojson: any, layerDisplayName: string, rawFileName: string) => {
+      const keys = new Set<string>();
+      const features = geojson.features || (geojson.type === "Feature" ? [geojson] : []);
+      features.forEach((f: any) => {
+        if (f && f.properties) {
+          Object.keys(f.properties).forEach((k) => keys.add(k));
+        }
+      });
+      const propertyKeys = Array.from(keys);
+      const defaultLabelKey =
+        propertyKeys.find((k) => {
+          const l = k.toLowerCase();
+          return (
+            l.includes("well") ||
+            l.includes("location") ||
+            l.includes("name") ||
+            l.includes("state") ||
+            l.includes("dist") ||
+            l.includes("st_nm") ||
+            l.includes("dt_nm")
+          );
+        }) ||
+        propertyKeys[0] ||
+        "";
+
+      const autoColorAttr =
+        propertyKeys.find((k) => {
+          const l = k.toLowerCase();
+          return (
+            l.includes("zone_name") ||
+            l.includes("aquifer") ||
+            l.includes("aq_") ||
+            l.includes("aqtype") ||
+            l.includes("rock") ||
+            l.includes("litho")
+          );
+        }) || "";
+
+      const initialMapping = autoColorAttr ? getInitialColorMapping(geojson, autoColorAttr) : {};
+      const colorCombo = paletteCombos[Math.floor(Math.random() * paletteCombos.length)];
+      const isPointLayer = features.some(
+        (f: any) => f?.geometry?.type === "Point" || f?.geometry?.type === "MultiPoint"
+      );
+
+      const newLayer: ShapefileLayer = {
+        id: `layer-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        name: layerDisplayName,
+        visible: true,
+        geoJson: geojson,
+        strokeColor: isPointLayer ? "#0f172a" : colorCombo.stroke,
+        strokeWidth: isPointLayer ? 1.4 : 2.0,
+        fillColor: colorCombo.fill,
+        fillOpacity: isPointLayer ? 90 : 45,
+        showLabels: !isPointLayer,
+        labelKey: defaultLabelKey,
+        labelColor: "#1e293b",
+        labelSize: 11,
+        colorAttribute: autoColorAttr,
+        colorMapping: initialMapping,
+        showStroke: true,
+        showInLegend: true
+      };
+
+      setLayers((prev) => [...prev, newLayer]);
+      setShowShapefile(true);
+      setUploadedGeoJson(geojson);
+      setShapefileName(rawFileName);
+    };
+
+    for (const fileObj of fileList) {
+      const lower = fileObj.name.toLowerCase();
+      try {
+        if (lower.endsWith(".gpkg")) {
+          const buffer = await fileObj.arrayBuffer();
+          const parsed = await parseGeoPackageArrayBuffer(buffer, fileObj.name);
+          let totalFeatures = 0;
+          parsed.layers.forEach((l) => {
+            totalFeatures += l.featureCount;
+            const displayName =
+              parsed.layers.length > 1
+                ? `${fileObj.name.replace(/\.gpkg$/i, "")} • ${l.identifier}`
+                : l.identifier || fileObj.name.replace(/\.gpkg$/i, "");
+            addVectorGeoJsonLayer(l.geoJson, displayName, fileObj.name);
+          });
+          const srsList = Array.from(new Set(parsed.layers.map((l) => `EPSG:${l.srsId}`))).join(", ");
+          showToast(
+            `Verified GeoPackage "${fileObj.name}": ${parsed.layers.length} layer(s), ${totalFeatures} feature(s) (${srsList}${parsed.isValidGpkgSignature ? ", OGC GPKG valid" : ""}) loaded!`,
+            "success"
+          );
+        } else if (lower.endsWith(".tif") || lower.endsWith(".tiff")) {
+          const buffer = await fileObj.arrayBuffer();
+          const gtLayer = await parseGeoTiffArrayBuffer(buffer, fileObj.name);
+          setImportedGeoTiffs((prev) => [...prev, gtLayer]);
+          const modeLabel = gtLayer.isSingleBandNumeric
+            ? `Float32 Numeric (${gtLayer.minVal.toFixed(2)}–${gtLayer.maxVal.toFixed(2)}${gtLayer.nodata !== null ? `, NoData=${gtLayer.nodata}` : ""})`
+            : `${gtLayer.bands}-Band Visual (${gtLayer.bitsPerSample}-bit)`;
+          showToast(
+            `Verified GeoTIFF "${fileObj.name}": ${gtLayer.width}×${gtLayer.height} px, ${modeLabel}, EPSG:${gtLayer.epsgCode || "4326"} rendered on map!`,
+            "success"
+          );
+        } else if (lower.endsWith(".zip")) {
+          const buffer = await fileObj.arrayBuffer();
+          const geojson = (await shp(buffer)) as any;
+          addVectorGeoJsonLayer(geojson, fileObj.name.replace(/\.[^/.]+$/, ""), fileObj.name);
+          showToast(`Zipped Shapefile "${fileObj.name}" loaded as layer!`, "success");
+        } else {
+          const text = await fileObj.text();
+          const parsed = JSON.parse(text);
+          addVectorGeoJsonLayer(parsed, fileObj.name.replace(/\.[^/.]+$/, ""), fileObj.name);
+          showToast(`GeoJSON "${fileObj.name}" loaded as layer!`, "success");
+        }
+      } catch (err: any) {
+        console.error(`Import failed for ${fileObj.name}:`, err);
+        showToast(
+          err?.message || `Failed to import "${fileObj.name}". Verify file format and coordinate metadata.`,
+          "error"
+        );
+      }
+    }
+  };
+
+  // Export current prepared map (Zones, Contours, Stations, Boundaries, GeoPackage, GeoTIFF & ESRI ASCII Grid) as ArcGIS & MapInfo Package (.zip)
+  const exportMapAsShapefile = async (type: "stations" | "boundaries" | "zones" | "grid" | "all" = "all") => {
     try {
       const labelMap: Record<string, string> = {
-        all: "Full ArcGIS & MapInfo GIS Package (.zip)",
-        zones: "Interpolated Zones & Contours Shapefile (.zip)",
-        stations: "Monitoring Stations Point Shapefile (.zip)",
-        boundaries: "Boundary Polygon Shapefile (.zip)"
+        all: "Full ArcGIS & MapInfo GIS + Grid Package (.zip)",
+        zones: "Interpolated Zones & Contours GIS Package (.zip)",
+        stations: "Monitoring Stations GIS Package (.zip)",
+        boundaries: "Boundary Polygon GIS Package (.zip)",
+        grid: "Georeferenced Raster & ESRI ASCII Grid Package (.zip)"
       };
       showToast(`Preparing ${labelMap[type]}...`, "info");
 
@@ -5487,7 +6321,53 @@ ${svgStatsPanel}
         return;
       }
 
-      // 4. type === "all": Full Prepared GIS Package (.zip) for ArcGIS & MapInfo
+      // 3b. Grid / Georeferenced Raster-only export (.asc + .prj + .tif + .tfw + MapInfo .tab)
+      if (type === "grid") {
+        const gridExtraFiles: GisPackageExtraFile[] = [];
+        const rasterPrefix = `01_${cleanParam}_Georef_Surface`;
+        const rasterFiles = buildGeoreferencedRasterFiles(activeData, activeParamName, rasterPrefix);
+        gridExtraFiles.push(...rasterFiles);
+
+        const rasterObj =
+          activeParamName !== "STATIONS" ? getActiveRasterGridForExport(activeData, activeParamName) : null;
+        if (rasterObj && rasterObj.grid && rasterObj.grid.length > 1) {
+          const { asc } = buildEsriAsciiGrid(rasterObj.grid, {
+            minLng: baseMapExtent.mapMinLng,
+            maxLng: baseMapExtent.mapMaxLng,
+            minLat: baseMapExtent.mapMinLat,
+            maxLat: baseMapExtent.mapMaxLat
+          });
+          gridExtraFiles.push({ fileName: `02_${cleanParam}_Interpolated_Grid.asc`, content: asc });
+          gridExtraFiles.push({ fileName: `02_${cleanParam}_Interpolated_Grid.prj`, content: WGS84_PRJ });
+        }
+
+        if (classSummary.length > 0) {
+          const legendCsv = [
+            "ZONE_ID,ZONE_NAME,RANGE,COLOR_HEX,RGB_COLOR,AREA_SQKM,AREA_PCT",
+            ...classSummary.map(
+              (c) => `${c.zoneId},"${c.label.replace(/"/g, '""')}","${c.rangeText}",${c.hex},"${c.rgb}",${c.areaSqKm},${c.areaPct}`
+            )
+          ].join("\r\n");
+          gridExtraFiles.push({ fileName: `00_${cleanParam}_Symbology_Legend.csv`, content: legendCsv });
+        }
+
+        if (gridExtraFiles.length === 0) {
+          showToast("No raster or numeric grid available to export.", "info");
+          return;
+        }
+
+        const areaTag = !isStateAll(selectedState)
+          ? `${selectedState}${!isDistrictAll(selectedDistrict) ? `_${selectedDistrict}` : ""}`
+          : "India";
+        const safeTag = areaTag.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 30);
+        const blob = await createGisPackageZip([], gridExtraFiles);
+        const zipName = `${cleanParam}_${safeTag}_ArcGIS_MapInfo_Grid.zip`;
+        downloadBlob(blob, zipName);
+        showToast(`Exported Georeferenced GeoTIFF (.tif/.tab) & ESRI ASCII Grid (.asc/.prj) in ${zipName}!`, "success");
+        return;
+      }
+
+      // 4. type === "all": Full Prepared GIS + Grid Package (.zip) for ArcGIS & MapInfo
       const packageLayers: GisPackageLayerInput[] = [];
       const extraFiles: GisPackageExtraFile[] = [];
 
@@ -5507,10 +6387,72 @@ ${svgStatsPanel}
       const boundaryLayers = getBoundaryExportLayers();
       boundaryLayers.forEach((bl) => packageLayers.push(bl));
 
+      // Include OGC GeoPackage (.gpkg) with Stations & Vector Layers inside full GIS package
+      try {
+        const gpkgBundleLayers: GeoPackageLayerInput[] = [];
+        if (stationGeoFeatures.length > 0) {
+          gpkgBundleLayers.push({
+            tableName: `${cleanParam.toLowerCase()}_stations`,
+            identifier: `${activeParamName} Stations`,
+            description: "Monitoring stations Point layer (EPSG:4326)",
+            geoJson: { type: "FeatureCollection", features: stationGeoFeatures },
+            srsId: 4326
+          });
+        }
+        if (zonesGeoJson?.features?.length) {
+          gpkgBundleLayers.push({
+            tableName: `${cleanParam.toLowerCase()}_zones`,
+            identifier: `${activeParamName} Zones`,
+            description: "Interpolated classification zones (EPSG:4326)",
+            geoJson: zonesGeoJson,
+            srsId: 4326
+          });
+        }
+        if (gpkgBundleLayers.length > 0) {
+          const gpkgBlob = await createGeoPackageBlob(gpkgBundleLayers);
+          extraFiles.push({
+            fileName: `00_${cleanParam}_Primary_PointMap.gpkg`,
+            content: gpkgBlob
+          });
+        }
+      } catch (e) {
+        console.warn("Skipping bundled GeoPackage inside ZIP:", e);
+      }
+
       // Include borderless WGS84 GeoTIFF + World File (.tfw) + MapInfo Raster (.tab)
       const rasterPrefix = `05_${cleanParam}_Georef_Surface`;
       const rasterFiles = buildGeoreferencedRasterFiles(activeData, activeParamName, rasterPrefix);
       extraFiles.push(...rasterFiles);
+
+      // Include Scientific Float32 GeoTIFF (.tif) + numeric ESRI ASCII Grid (.asc + .prj) for ArcGIS Raster, QGIS & MapInfo Pro Raster
+      let hasAsciiGrid = false;
+      const asciiPrefix = `06_${cleanParam}_Interpolated_Grid`;
+      if (activeParamName !== "STATIONS" && isInterpolatedType) {
+        const rasterObj = getActiveRasterGridForExport(activeData, activeParamName);
+        if (rasterObj && rasterObj.grid && rasterObj.grid.length > 1) {
+          const gridBounds = {
+            minLng: baseMapExtent.mapMinLng,
+            maxLng: baseMapExtent.mapMaxLng,
+            minLat: baseMapExtent.mapMinLat,
+            maxLat: baseMapExtent.mapMaxLat
+          };
+          const floatGrid = buildInterpolationFloat32Grid(rasterObj.grid, gridBounds, effectiveClipGeoJson, -9999);
+          const floatTifBlob = createFloat32GeoTiffBlob(
+            floatGrid.width,
+            floatGrid.height,
+            floatGrid.values,
+            gridBounds,
+            -9999,
+            `${activeParamName} Float32 Interpolation (EPSG:4326)`
+          );
+          extraFiles.push({ fileName: `00_${cleanParam}_Primary_Interpolation_Float32.tif`, content: floatTifBlob });
+
+          const { asc } = buildEsriAsciiGrid(rasterObj.grid, gridBounds);
+          extraFiles.push({ fileName: `${asciiPrefix}.asc`, content: asc });
+          extraFiles.push({ fileName: `${asciiPrefix}.prj`, content: WGS84_PRJ });
+          hasAsciiGrid = true;
+        }
+      }
 
       // Symbology reference CSV for exact color matching in ArcGIS / MapInfo
       const legendCsvLines = [
@@ -5529,29 +6471,32 @@ ${svgStatsPanel}
         : "India";
       const readmeText = [
         "======================================================================",
-        `PREPARED GIS MAP PACKAGE - ${activeParamName} (${areaSuffix})`,
+        `PREPARED GIS & GRID MAP PACKAGE - ${activeParamName} (${areaSuffix})`,
         "Compatible with ArcGIS Desktop / ArcGIS Pro, MapInfo Pro, and QGIS",
         "Coordinate Reference System: GCS_WGS_1984 (EPSG:4326)",
+        `Active Map Scale (RF): ${formatScaleRF(currentMapScaleRF)}`,
         `Interpolation Method: ${interpolationMethod.toUpperCase()}`,
         "======================================================================",
         "",
-        "INCLUDED LAYERS:",
-        zonesGeoJson ? `1. 01_${cleanParam}_Zones.shp/.tab       -> Polygon classification zones (symbolize by ZONE_NAME / COLOR_HEX)` : "1. (Interpolated Zone Polygons omitted for Station-only / non-raster mode)",
-        contoursGeoJson ? `2. 02_${cleanParam}_Contours.shp/.tab    -> Iso-concentration PolyLine contours (attribute: CONTOUR)` : "",
-        stationGeoFeatures.length > 0 ? `3. 03_${cleanParam}_Stations.shp/.tab    -> Sample stations Point layer (${stationGeoFeatures.length} wells)` : "",
-        boundaryLayers.length > 0 ? `4. 04_Boundary_*.shp/.tab               -> Active administrative boundary polygons` : "",
-        rasterFiles.length > 0 ? `5. ${rasterPrefix}.tif / .tfw / .tab     -> Borderless WGS84 Georeferenced GeoTIFF raster` : "",
-        "6. 00_Symbology_Legend.csv              -> Exact class ranges, RGB/HEX colors & area sq.km breakdown",
+        "INCLUDED LAYERS (Each vector layer includes ESRI .shp/.shx/.dbf/.prj/.cpg + MapInfo .tab + .mif/.mid):",
+        zonesGeoJson ? `1. 01_${cleanParam}_Zones (.shp/.tab/.mif/.mid)      -> Polygon classification zones (symbolize by ZONE_NAME / COLOR_HEX)` : "1. (Interpolated Zone Polygons omitted for Station-only / non-raster mode)",
+        contoursGeoJson ? `2. 02_${cleanParam}_Contours (.shp/.tab/.mif/.mid)   -> Iso-concentration PolyLine contours (attribute: CONTOUR)` : "",
+        stationGeoFeatures.length > 0 ? `3. 03_${cleanParam}_Stations (.shp/.tab/.mif/.mid)   -> Sample stations Point layer (${stationGeoFeatures.length} wells)` : "",
+        boundaryLayers.length > 0 ? `4. 04_Boundary_* (.shp/.tab/.mif/.mid)              -> Active administrative boundary polygons` : "",
+        rasterFiles.length > 0 ? `5. ${rasterPrefix}.tif / .tfw / .prj / .tab         -> Borderless WGS84 Georeferenced GeoTIFF raster` : "",
+        hasAsciiGrid ? `6. ${asciiPrefix}.asc / .prj                        -> Numeric ESRI ASCII Raster Grid (WGS84)` : "",
+        "7. 00_Symbology_Legend.csv                          -> Exact class ranges, RGB/HEX colors & area sq.km breakdown",
         "",
         "HOW TO OPEN IN ARCGIS PRO / ARCMAP:",
         " - Extract this .zip folder completely.",
-        " - Drag and drop the .shp files and .tif file into your Map view.",
+        " - Drag and drop the .shp vector files, .tif raster, and .asc numeric grid into your Map view.",
         " - Open Symbology -> Unique Values -> select field 'ZONE_NAME' and match colors using 00_Symbology_Legend.csv (or COLOR_HEX / RGB_COLOR).",
         "",
         "HOW TO OPEN IN MAPINFO PROFESSIONAL:",
         " - Extract this .zip folder completely.",
-        " - Use Home > Open > Table and select all .tab files directly (every .shp and .tif includes a native .tab file).",
-        " - All layers share WGS84 (Earth Projection 1, 104) and stack with exact spatial alignment.",
+        " - Method A (Direct): Use Home > Open > Table and select the .tab files directly (every .shp and .tif includes a native .tab file).",
+        " - Method B (Universal MIF/MID): Use Table > Import and select any .mif file (paired .mid attributes import automatically in WGS84 Earth Projection 1, 104).",
+        " - For the numeric grid (.asc), use MapInfo Pro Raster > Open Raster and select the .asc file.",
         ""
       ]
         .filter(Boolean)
@@ -5569,18 +6514,20 @@ ${svgStatsPanel}
 
       const blob = await createGisPackageZip(packageLayers, extraFiles);
       const safeArea = areaSuffix.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 30);
-      const packageFileName = `${cleanParam}_${safeArea}_ArcGIS_MapInfo_Package.zip`;
+      const packageFileName = `${cleanParam}_${safeArea}_ArcGIS_MapInfo_GIS.zip`;
       downloadBlob(blob, packageFileName);
 
       const summaryParts: string[] = [];
-      if (zonesGeoJson) summaryParts.push(`${zonesGeoJson.features.length} Zone Polygons`);
+      if (zonesGeoJson) summaryParts.push(`${zonesGeoJson.features.length} Zones`);
       if (contoursGeoJson) summaryParts.push(`${contoursGeoJson.features.length} Contours`);
       if (stationGeoFeatures.length > 0) summaryParts.push(`${stationGeoFeatures.length} Stations`);
       if (boundaryLayers.length > 0) summaryParts.push(`${boundaryLayers.length} Boundary`);
       if (rasterFiles.length > 0) summaryParts.push("GeoTIFF+TAB");
+      if (hasAsciiGrid) summaryParts.push("ASCII Grid .asc");
+      summaryParts.push("MapInfo MIF/MID");
 
       showToast(
-        `Exported Full ArcGIS/MapInfo GIS Package (${summaryParts.join(" + ")}) in ${packageFileName}!`,
+        `Exported ArcGIS/MapInfo GIS ZIP (${summaryParts.join(" + ")}) as ${packageFileName}!`,
         "success"
       );
     } catch (err: any) {
@@ -6330,6 +7277,110 @@ ${svgStatsPanel}
                   )}
                 </div>
 
+                {/* Imported GeoTIFF (.tif) Verification Raster Layers */}
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3">
+                  <span className="text-xs font-extrabold text-slate-800 tracking-wide uppercase text-[10px] flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Grid3X3 className="w-3.5 h-3.5 text-emerald-600" />
+                      Imported GeoTIFF Rasters (.tif)
+                    </span>
+                    {importedGeoTiffs.length > 0 && (
+                      <span className="bg-emerald-100 text-emerald-800 text-[9px] px-2 py-0.5 rounded-full font-bold">
+                        {importedGeoTiffs.length} {importedGeoTiffs.length === 1 ? "raster" : "rasters"}
+                      </span>
+                    )}
+                  </span>
+
+                  {importedGeoTiffs.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center p-4 bg-white/50 rounded-2xl border border-dashed border-slate-200 text-center">
+                      <p className="text-[11px] text-slate-500 font-medium">
+                        Import any Float32 or RGBA GeoTIFF (.tif) to verify interpolated rasters on the map.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => document.getElementById("geojson-file-input")?.click()}
+                        className="mt-2 text-[10px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+                      >
+                        Import .tif / .gpkg
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {importedGeoTiffs.map((gt) => (
+                        <div
+                          key={gt.id}
+                          className={`flex flex-col gap-2 p-2.5 rounded-2xl border shadow-sm transition-all ${
+                            gt.visible
+                              ? "bg-emerald-50/40 border-emerald-200/70"
+                              : "bg-slate-50/60 border-slate-200/60 opacity-70"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0 flex flex-col">
+                              <span className="text-xs font-bold text-slate-800 truncate">{gt.name}.tif</span>
+                              <span className="text-[9px] font-mono text-slate-500 tabular-nums">
+                                {gt.width}×{gt.height}px • {gt.isSingleBandNumeric ? `Float32 (${gt.minVal.toFixed(1)}–${gt.maxVal.toFixed(1)})` : `${gt.bands}-band RGB/A`} • EPSG:{gt.epsgCode || 4326}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleZoomToGeoTiffBounds(gt)}
+                                title="Zoom to GeoTIFF Extent"
+                                className="p-1 rounded-lg text-emerald-700 hover:bg-emerald-100 cursor-pointer transition-colors"
+                              >
+                                <Maximize2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setImportedGeoTiffs((prev) =>
+                                    prev.map((item) => (item.id === gt.id ? { ...item, visible: !item.visible } : item))
+                                  )
+                                }
+                                title={gt.visible ? "Hide GeoTIFF" : "Show GeoTIFF"}
+                                className="p-1 rounded-lg text-slate-600 hover:bg-slate-200/60 cursor-pointer transition-colors"
+                              >
+                                {gt.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  geoTiffCanvasCacheRef.current.delete(gt.id);
+                                  setImportedGeoTiffs((prev) => prev.filter((item) => item.id !== gt.id));
+                                }}
+                                title="Remove GeoTIFF"
+                                className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 cursor-pointer transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] font-bold text-slate-500 uppercase">Opacity</span>
+                            <input
+                              type="range"
+                              min="10"
+                              max="100"
+                              value={gt.opacity}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                setImportedGeoTiffs((prev) =>
+                                  prev.map((item) => (item.id === gt.id ? { ...item, opacity: val } : item))
+                                );
+                              }}
+                              className="flex-1 cursor-pointer accent-emerald-600 h-1.5"
+                            />
+                            <span className="text-[9px] font-mono font-bold text-emerald-700 tabular-nums w-8 text-right">
+                              {gt.opacity}%
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3.5">
                   <span className="text-xs font-extrabold text-slate-800 tracking-wide uppercase text-[10px]">Transparency Control</span>
                   
@@ -6509,177 +7560,66 @@ ${svgStatsPanel}
                 <div className="flex flex-col gap-1">
                   <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                     <Upload className="w-3.5 h-3.5 text-indigo-500" />
-                    Multi-Layer Shapefiles & Boundaries
+                    Import & Verify GIS Layers (.gpkg / .tif / .shp)
                   </span>
                   <p className="text-slate-500 text-[11px] leading-relaxed">
-                    Upload multiple <b>GeoJSON</b> or <b>Zipped Shapefiles</b> as vector layers. Toggle visibility, edit styles, select attribute-level labels, and set the raster clipping mask dynamically.
+                    Import <b>GeoPackage (.gpkg)</b> point/vector maps, <b>GeoTIFF (.tif / .tiff)</b> Float32 or RGB rasters, <b>GeoJSON</b>, or <b>Zipped Shapefiles</b> to overlay and verify maps across QGIS, ArcGIS Pro, and MapInfo.
                   </p>
                 </div>
 
-                {/* Drag-and-drop file uploader */}
+                {/* Drag-and-drop universal GIS file uploader */}
                 <div
                   onClick={() => document.getElementById("geojson-file-input")?.click()}
                   className="border-2 border-dashed border-slate-200 hover:border-indigo-500/80 rounded-[2rem] p-6 text-center cursor-pointer bg-white/40 hover:bg-white hover:scale-[1.01] hover:shadow-[0_12px_24px_-10px_rgba(79,70,229,0.15)] transition-all duration-300 flex flex-col items-center justify-center gap-3 group relative overflow-hidden"
                 >
-                  <input
-                    id="geojson-file-input"
-                    type="file"
-                    accept=".json,.geojson,.zip"
-                    multiple
-                    className="hidden"
-                    onChange={async (e) => {
-                      const files = e.target.files;
-                      if (files && files.length > 0) {
-                        const fileList = Array.from(files);
-                        for (const file of fileList) {
-                          await new Promise<void>((resolve) => {
-                            const fileObj = file as any;
-                            if (fileObj.name.toLowerCase().endsWith(".zip")) {
-                              const reader = new FileReader();
-                              reader.onload = async (evt) => {
-                                try {
-                                  const buffer = evt.target?.result as ArrayBuffer;
-                                  const geojson = (await shp(buffer)) as any;
-                                  
-                                  // Extract properties
-                                  const keys = new Set<string>();
-                                  const features = geojson.features || (geojson.type === "Feature" ? [geojson] : []);
-                                  features.forEach((f: any) => {
-                                    if (f && f.properties) {
-                                      Object.keys(f.properties).forEach(k => keys.add(k));
-                                    }
-                                  });
-                                  const propertyKeys = Array.from(keys);
-                                  const defaultLabelKey = propertyKeys.find(k => {
-                                    const l = k.toLowerCase();
-                                    return l.includes("name") || l.includes("state") || l.includes("dist") || l.includes("st_nm") || l.includes("dt_nm");
-                                  }) || propertyKeys[0] || "";
-
-                                  const autoColorAttr = propertyKeys.find(k => {
-                                    const l = k.toLowerCase();
-                                    return l.includes("aquifer") || l.includes("aq_") || l.includes("aqtype") || l.includes("rock") || l.includes("litho");
-                                  }) || "";
-
-                                  const initialMapping = autoColorAttr ? getInitialColorMapping(geojson, autoColorAttr) : {};
-
-                                  // Nice color combo
-                                  const colors = [
-                                    { stroke: "#2563eb", fill: "#60a5fa" }, // Blue
-                                    { stroke: "#16a34a", fill: "#4ade80" }, // Green
-                                    { stroke: "#dc2626", fill: "#fca5a5" }, // Red
-                                    { stroke: "#d97706", fill: "#fcd34d" }, // Yellow/Amber
-                                    { stroke: "#7c3aed", fill: "#c084fc" }, // Violet
-                                    { stroke: "#0d9488", fill: "#2dd4bf" }, // Teal
-                                    { stroke: "#db2777", fill: "#f472b6" }, // Pink
-                                  ];
-                                  const colorCombo = colors[Math.floor(Math.random() * colors.length)];
-
-                                  const newLayer: ShapefileLayer = {
-                                    id: `layer-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                                    name: fileObj.name.replace(/\.[^/.]+$/, ""), // remove extension
-                                    visible: true,
-                                    geoJson: geojson,
-                                    strokeColor: colorCombo.stroke,
-                                    strokeWidth: 2.0,
-                                    fillColor: colorCombo.fill,
-                                    fillOpacity: 45, // default opacity slightly higher for filled aquifers
-                                    showLabels: true,
-                                    labelKey: defaultLabelKey,
-                                    labelColor: "#1e293b",
-                                    labelSize: 11,
-                                    colorAttribute: autoColorAttr,
-                                    colorMapping: initialMapping,
-                                    showStroke: true,
-                                    showInLegend: true
-                                  };
-                                  setLayers(prev => [...prev, newLayer]);
-                                  setUploadedGeoJson(geojson);
-                                  setShapefileName(fileObj.name);
-                                  showToast(`Zipped Shapefile "${fileObj.name}" loaded as layer!`, "success");
-                                } catch (err) {
-                                  console.error(err);
-                                  showToast(`Error parsing zipped shapefile "${fileObj.name}". Verify .shp and .dbf files are present.`, "error");
-                                }
-                                resolve();
-                              };
-                              reader.readAsArrayBuffer(fileObj);
-                            } else {
-                              const reader = new FileReader();
-                              reader.onload = (evt) => {
-                                try {
-                                  const parsed = JSON.parse(evt.target?.result as string);
-                                  
-                                  const keys = new Set<string>();
-                                  const features = parsed.features || (parsed.type === "Feature" ? [parsed] : []);
-                                  features.forEach((f: any) => {
-                                    if (f && f.properties) {
-                                      Object.keys(f.properties).forEach(k => keys.add(k));
-                                    }
-                                  });
-                                  const propertyKeys = Array.from(keys);
-                                  const defaultLabelKey = propertyKeys.find(k => {
-                                    const l = k.toLowerCase();
-                                    return l.includes("name") || l.includes("state") || l.includes("dist") || l.includes("st_nm") || l.includes("dt_nm");
-                                  }) || propertyKeys[0] || "";
-
-                                  const autoColorAttr = propertyKeys.find(k => {
-                                    const l = k.toLowerCase();
-                                    return l.includes("aquifer") || l.includes("aq_") || l.includes("aqtype") || l.includes("rock") || l.includes("litho");
-                                  }) || "";
-
-                                  const initialMapping = autoColorAttr ? getInitialColorMapping(parsed, autoColorAttr) : {};
-
-                                  const colors = [
-                                    { stroke: "#2563eb", fill: "#60a5fa" },
-                                    { stroke: "#16a34a", fill: "#4ade80" },
-                                    { stroke: "#dc2626", fill: "#fca5a5" },
-                                    { stroke: "#d97706", fill: "#fcd34d" },
-                                    { stroke: "#7c3aed", fill: "#c084fc" },
-                                    { stroke: "#0d9488", fill: "#2dd4bf" },
-                                    { stroke: "#db2777", fill: "#f472b6" },
-                                  ];
-                                  const colorCombo = colors[Math.floor(Math.random() * colors.length)];
-
-                                  const newLayer: ShapefileLayer = {
-                                    id: `layer-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                                    name: fileObj.name.replace(/\.[^/.]+$/, ""),
-                                    visible: true,
-                                    geoJson: parsed,
-                                    strokeColor: colorCombo.stroke,
-                                    strokeWidth: 2.0,
-                                    fillColor: colorCombo.fill,
-                                    fillOpacity: 45,
-                                    showLabels: true,
-                                    labelKey: defaultLabelKey,
-                                    labelColor: "#1e293b",
-                                    labelSize: 11,
-                                    colorAttribute: autoColorAttr,
-                                    colorMapping: initialMapping,
-                                    showStroke: true,
-                                    showInLegend: true
-                                  };
-                                  setLayers(prev => [...prev, newLayer]);
-                                  setUploadedGeoJson(parsed);
-                                  setShapefileName(fileObj.name);
-                                  showToast(`Boundary "${fileObj.name}" loaded as layer!`, "success");
-                                } catch (err) {
-                                  showToast(`Invalid GeoJSON in "${fileObj.name}".`, "error");
-                                }
-                                resolve();
-                              };
-                              reader.readAsText(fileObj);
-                            }
-                          });
-                        }
-                      }
-                    }}
-                  />
                   <div className="p-3 bg-slate-100/80 rounded-full group-hover:bg-indigo-600 group-hover:text-white transition-all duration-300 shadow-inner group-hover:scale-110">
                     <Plus className="w-5 h-5 text-indigo-600 group-hover:text-white transition-colors" />
                   </div>
-                  <span className="text-xs font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">Add New Layer (GeoJSON / Zip)</span>
-                  <span className="text-[10px] text-slate-400">Supports .json, .geojson, or zipped .shp files</span>
+                  <span className="text-xs font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">
+                    Import GeoPackage (.gpkg), GeoTIFF (.tif) or Shapefile
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    Supports .gpkg, .tif, .tiff, .geojson, .json, and zipped .shp files
+                  </span>
                 </div>
+
+                {importedGeoTiffs.length > 0 && (
+                  <div className="bg-emerald-50/50 backdrop-blur-md p-3.5 rounded-2xl border border-emerald-200/70 flex flex-col gap-2">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-800 flex items-center justify-between">
+                      <span>Loaded GeoTIFF Verification Rasters</span>
+                      <span>{importedGeoTiffs.length}</span>
+                    </span>
+                    {importedGeoTiffs.map((gt) => (
+                      <div key={gt.id} className="flex items-center justify-between gap-2 bg-white/80 rounded-xl px-2.5 py-2 border border-emerald-100">
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-bold text-slate-800 truncate">{gt.name}.tif</div>
+                          <div className="text-[9px] font-mono text-slate-500 tabular-nums">
+                            {gt.width}×{gt.height} • EPSG:{gt.epsgCode || 4326} • {gt.isSingleBandNumeric ? `Float32 [${gt.minVal.toFixed(2)}..${gt.maxVal.toFixed(2)}]` : `${gt.bands}-Band`}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleZoomToGeoTiffBounds(gt)}
+                            className="px-2 py-1 text-[9px] font-bold bg-emerald-100 text-emerald-800 hover:bg-emerald-200 rounded-lg cursor-pointer"
+                          >
+                            Fit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              geoTiffCanvasCacheRef.current.delete(gt.id);
+                              setImportedGeoTiffs((prev) => prev.filter((item) => item.id !== gt.id));
+                            }}
+                            className="p-1 text-rose-500 hover:bg-rose-50 rounded-lg cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Clip Target Selection Mask */}
                 <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-1.5">
@@ -8572,6 +9512,236 @@ ${svgStatsPanel}
                   </div>
                 </div>
 
+                {/* Custom Map Scale & Scale Bar Customization */}
+                <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Ruler className="w-4 h-4 text-indigo-500" />
+                      Custom Map Scale &amp; Scale Bar
+                    </span>
+                    <span className="text-[10px] font-mono font-bold tabular-nums text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200/70">
+                      {formatScaleRF(currentMapScaleRF)}
+                    </span>
+                  </div>
+
+                  <div className="bg-white/65 p-3 rounded-2xl border border-slate-100 shadow-inner flex flex-col gap-3">
+                    {/* Representative Fraction (RF) Map Scale Control */}
+                    <div className="flex flex-col gap-2">
+                      <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wide">
+                        Lock Exact Map Scale (RF)
+                      </label>
+                      <select
+                        value={
+                          MAP_SCALE_PRESETS.includes(Math.round(currentMapScaleRF))
+                            ? String(Math.round(currentMapScaleRF))
+                            : ""
+                        }
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          if (val > 0) applyCustomMapScale(val);
+                        }}
+                        className="w-full text-xs font-semibold tabular-nums bg-white border border-slate-200/80 rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800 cursor-pointer"
+                      >
+                        <option value="">Custom ({formatScaleRF(currentMapScaleRF)})</option>
+                        {MAP_SCALE_PRESETS.map((preset) => (
+                          <option key={preset} value={preset}>
+                            {formatScaleRF(preset)}
+                          </option>
+                        ))}
+                      </select>
+
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-mono font-bold text-slate-500 pl-1">1 :</span>
+                        <input
+                          type="number"
+                          min={500}
+                          max={100000000}
+                          step={5000}
+                          placeholder={String(currentMapScaleRF)}
+                          value={customScaleInput}
+                          onChange={(e) => setCustomScaleInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              const parsed = Number(customScaleInput);
+                              if (parsed > 0) applyCustomMapScale(parsed);
+                            }
+                          }}
+                          className="flex-1 text-xs font-mono font-semibold tabular-nums bg-white border border-slate-200/80 rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const parsed = Number(customScaleInput || currentMapScaleRF);
+                            if (parsed > 0) applyCustomMapScale(parsed);
+                          }}
+                          className="cursor-pointer whitespace-nowrap bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl transition-colors"
+                        >
+                          Apply
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Visibility toggles */}
+                    <div className="grid grid-cols-1 gap-1.5 pt-2 border-t border-slate-100">
+                      <label className="flex items-center justify-between cursor-pointer px-2 py-1.5 rounded-xl bg-white/80 hover:bg-white border border-slate-100">
+                        <span className="text-xs font-semibold text-slate-700">Show Scale Bar on Map</span>
+                        <input
+                          type="checkbox"
+                          checked={showScaleBar}
+                          onChange={(e) => setShowScaleBar(e.target.checked)}
+                          className="cursor-pointer h-4 w-4 rounded border-slate-300 text-indigo-600"
+                        />
+                      </label>
+                      <label className="flex items-center justify-between cursor-pointer px-2 py-1.5 rounded-xl bg-white/80 hover:bg-white border border-slate-100">
+                        <span className="text-xs font-semibold text-slate-700">Show RF Scale Text (1 : N)</span>
+                        <input
+                          type="checkbox"
+                          checked={scaleBarShowRf}
+                          onChange={(e) => setScaleBarShowRf(e.target.checked)}
+                          className="cursor-pointer h-4 w-4 rounded border-slate-300 text-indigo-600"
+                        />
+                      </label>
+                      <label className="flex items-center justify-between cursor-pointer px-2 py-1.5 rounded-xl bg-white/80 hover:bg-white border border-slate-100">
+                        <span className="text-xs font-semibold text-slate-700">Show Background Frame</span>
+                        <input
+                          type="checkbox"
+                          checked={scaleBarShowBox}
+                          onChange={(e) => setScaleBarShowBox(e.target.checked)}
+                          className="cursor-pointer h-4 w-4 rounded border-slate-300 text-indigo-600"
+                        />
+                      </label>
+                    </div>
+
+                    {/* Style, Unit, Position & Divisions */}
+                    <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-slate-100">
+                      <div>
+                        <label className="block text-[10px] text-slate-500 font-bold mb-1 uppercase">Units</label>
+                        <select
+                          value={scaleBarUnit}
+                          onChange={(e) => setScaleBarUnit(e.target.value as ScaleBarUnit)}
+                          className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-1.5 text-slate-800 cursor-pointer"
+                        >
+                          <option value="km">Kilometers (km)</option>
+                          <option value="m">Meters (m)</option>
+                          <option value="mi">Miles (mi)</option>
+                          <option value="dual">Dual (km + mi)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] text-slate-500 font-bold mb-1 uppercase">Bar Style</label>
+                        <select
+                          value={scaleBarStyle}
+                          onChange={(e) => setScaleBarStyle(e.target.value as ScaleBarStyle)}
+                          className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-1.5 text-slate-800 cursor-pointer"
+                        >
+                          <option value="alternating">Alternating (ArcGIS)</option>
+                          <option value="double-line">Double-Tier (MapInfo)</option>
+                          <option value="line">Tick Line</option>
+                          <option value="boxed">Modern Boxed</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] text-slate-500 font-bold mb-1 uppercase">Anchor Corner</label>
+                        <select
+                          value={scaleBarPos}
+                          onChange={(e) => {
+                            setScaleBarPos(e.target.value as ScaleBarPos);
+                            setScaleBarOffsetX(0);
+                            setScaleBarOffsetY(0);
+                          }}
+                          className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-1.5 text-slate-800 cursor-pointer"
+                        >
+                          <option value="bottom-left">Bottom-Left</option>
+                          <option value="bottom-center">Bottom-Center</option>
+                          <option value="bottom-right">Bottom-Right</option>
+                          <option value="top-left">Top-Left</option>
+                          <option value="top-right">Top-Right</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] text-slate-500 font-bold mb-1 uppercase">Segments</label>
+                        <select
+                          value={scaleBarDivisions}
+                          onChange={(e) => setScaleBarDivisions(Number(e.target.value) as 2 | 4 | 5)}
+                          className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-1.5 text-slate-800 cursor-pointer"
+                        >
+                          <option value={2}>2 Divisions</option>
+                          <option value={4}>4 Divisions</option>
+                          <option value={5}>5 Divisions</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Auto vs Custom Bar Distance */}
+                    <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-slate-100 items-end">
+                      <div>
+                        <label className="block text-[10px] text-slate-500 font-bold mb-1 uppercase">Bar Length Mode</label>
+                        <select
+                          value={scaleBarMode}
+                          onChange={(e) => setScaleBarMode(e.target.value as "auto" | "custom")}
+                          className="w-full text-xs font-semibold bg-white border border-slate-200/80 rounded-xl p-1.5 text-slate-800 cursor-pointer"
+                        >
+                          <option value="auto">Auto Rounded</option>
+                          <option value="custom">Custom Length</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] text-slate-500 font-bold mb-1 uppercase">
+                          Length ({scaleBarUnit === "dual" ? "km" : scaleBarUnit})
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          step={5}
+                          disabled={scaleBarMode !== "custom"}
+                          value={scaleBarCustomLength}
+                          onChange={(e) => setScaleBarCustomLength(Math.max(1, Number(e.target.value) || 10))}
+                          className="w-full text-xs font-mono font-semibold tabular-nums bg-white disabled:bg-slate-100 disabled:text-slate-400 border border-slate-200/80 rounded-xl p-1.5 text-center text-slate-800"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Sizing & Color */}
+                    <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100 items-end">
+                      <div>
+                        <label className="block text-[9px] text-slate-500 font-bold mb-1 text-center uppercase">Font (px)</label>
+                        <input
+                          type="number"
+                          min={6}
+                          max={14}
+                          value={scaleBarFontSize}
+                          onChange={(e) => setScaleBarFontSize(Math.max(6, Math.min(14, Number(e.target.value) || 8)))}
+                          className="w-full text-xs font-semibold tabular-nums bg-white border border-slate-200/80 rounded-xl p-1.5 text-center"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] text-slate-500 font-bold mb-1 text-center uppercase">Bar Ht</label>
+                        <input
+                          type="number"
+                          min={3}
+                          max={12}
+                          value={scaleBarHeight}
+                          onChange={(e) => setScaleBarHeight(Math.max(3, Math.min(12, Number(e.target.value) || 5)))}
+                          className="w-full text-xs font-semibold tabular-nums bg-white border border-slate-200/80 rounded-xl p-1.5 text-center"
+                        />
+                      </div>
+                      <div className="flex flex-col items-center">
+                        <label className="block text-[9px] text-slate-500 font-bold mb-1 uppercase">Color</label>
+                        <input
+                          type="color"
+                          value={scaleBarColor}
+                          onChange={(e) => setScaleBarColor(e.target.value)}
+                          className="w-9 h-8 cursor-pointer border border-slate-200 rounded-xl p-0.5 bg-white"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Colors Customization */}
                 <div className="bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/50 shadow-sm flex flex-col gap-3">
                   <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
@@ -9167,6 +10337,61 @@ ${svgStatsPanel}
                 </button>
               </div>
 
+              {/* Quick Custom Map Scale (RF) Selector & Input */}
+              <div
+                className="flex items-center gap-1.5 bg-slate-100/90 border border-slate-200/80 rounded-2xl px-2.5 py-1 shadow-inner"
+                title="View or set an exact Representative Fraction (1 : N) Map Scale"
+              >
+                <Ruler className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <select
+                  aria-label="Map Scale Presets"
+                  value={
+                    MAP_SCALE_PRESETS.includes(Math.round(currentMapScaleRF))
+                      ? String(Math.round(currentMapScaleRF))
+                      : ""
+                  }
+                  onChange={(e) => {
+                    const val = Number(e.target.value);
+                    if (val > 0) applyCustomMapScale(val);
+                  }}
+                  className="text-[11px] font-mono font-bold tabular-nums bg-transparent border-none text-slate-800 focus:outline-none cursor-pointer pr-1"
+                >
+                  <option value="">{formatScaleRF(currentMapScaleRF)}</option>
+                  {MAP_SCALE_PRESETS.map((preset) => (
+                    <option key={preset} value={preset}>
+                      {formatScaleRF(preset)}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-[10px] font-mono font-bold text-slate-400 border-l border-slate-300 pl-1.5">1:</span>
+                <input
+                  type="number"
+                  min={500}
+                  max={100000000}
+                  step={5000}
+                  aria-label="Custom Map Scale Denominator"
+                  placeholder={String(currentMapScaleRF)}
+                  value={customScaleInput}
+                  onChange={(e) => setCustomScaleInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      const parsed = Number(customScaleInput);
+                      if (parsed > 0) applyCustomMapScale(parsed);
+                    }
+                  }}
+                  className="w-20 text-[11px] font-mono font-semibold tabular-nums bg-white border border-slate-200 rounded-lg px-1.5 py-0.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const parsed = Number(customScaleInput || currentMapScaleRF);
+                    if (parsed > 0) applyCustomMapScale(parsed);
+                  }}
+                  className="cursor-pointer whitespace-nowrap bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold px-2 py-1 rounded-lg transition-colors"
+                >
+                  Set
+                </button>
+              </div>
 
               {/* Spatial Interpolation Engine Action Button (User Requirement 2) */}
               <button
@@ -9179,7 +10404,20 @@ ${svgStatsPanel}
               </button>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
+            {/* Always-mounted universal GIS file input for .gpkg, .tif/.tiff, .geojson, .zip */}
+            <input
+              id="geojson-file-input"
+              type="file"
+              accept=".gpkg,.tif,.tiff,.json,.geojson,.zip"
+              multiple
+              className="hidden"
+              onChange={async (e) => {
+                await handleUniversalSpatialImport(e.target.files);
+                e.target.value = "";
+              }}
+            />
+
+            <div className="flex flex-wrap items-center gap-2.5">
               <div className="flex flex-col gap-1">
                 <div className="flex items-center gap-1.5 bg-slate-50/80 backdrop-blur-md border border-slate-200/60 rounded-xl p-1.5 hover:border-indigo-500/50 transition-all shadow-sm">
                   <select
@@ -9193,14 +10431,20 @@ ${svgStatsPanel}
                   </select>
                   <select
                     value={exportFormat}
-                    onChange={(e) => setExportFormat(e.target.value as "jpeg" | "png" | "tiff" | "svg" | "shapefile")}
-                    className="text-xs font-bold bg-transparent border-none text-indigo-600 focus:outline-none cursor-pointer"
+                    onChange={(e) =>
+                      setExportFormat(
+                        e.target.value as "gpkg" | "geotiff" | "jpeg" | "png" | "tiff" | "svg" | "shapefile"
+                      )
+                    }
+                    className="text-xs font-bold bg-transparent border-none text-indigo-700 focus:outline-none cursor-pointer"
                   >
-                    <option value="png">PNG (Lossless)</option>
-                    <option value="jpeg">JPEG (High)</option>
-                    <option value="tiff">TIFF (Georeferenced)</option>
+                    <option value="gpkg">GeoPackage (.gpkg) — Primary Point Map</option>
+                    <option value="geotiff">GeoTIFF (.tif) — Primary Interpolation</option>
+                    <option value="png">PNG (Lossless Image)</option>
+                    <option value="jpeg">JPEG (High Quality)</option>
+                    <option value="tiff">Layout TIFF + .tfw</option>
                     <option value="svg">SVG (Vector First)</option>
-                    <option value="shapefile">Shapefile (.zip ESRI)</option>
+                    <option value="shapefile">ArcGIS / MapInfo (.zip)</option>
                   </select>
                 </div>
                 {exportDpi >= 1200 && (
@@ -9211,9 +10455,76 @@ ${svgStatsPanel}
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                {/* PRIMARY FORMAT 1: Point Map GeoPackage (.gpkg) */}
+                <div
+                  className={`inline-flex rounded-xl shadow-md overflow-hidden border transition-all ${
+                    isPointMapPrimary
+                      ? "border-blue-500 ring-2 ring-blue-500/30"
+                      : "border-blue-600/40"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => exportPointMapAsGeoPackage(false)}
+                    className="cursor-pointer whitespace-nowrap shrink-0 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3 py-2 text-xs font-bold flex items-center gap-1.5 transition-all"
+                    title="Primary Point Map Format: Export OGC GeoPackage 1.3.1 (.gpkg) in WGS84 (EPSG:4326) with complete non-truncated attributes — opens natively in QGIS, ArcGIS Pro & MapInfo Pro"
+                  >
+                    <Database className="w-3.5 h-3.5 text-blue-100" />
+                    Point Map (.gpkg)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => exportPointMapAsGeoPackage(true)}
+                    className="cursor-pointer whitespace-nowrap shrink-0 bg-indigo-800 hover:bg-indigo-900 text-blue-100 hover:text-white px-2 py-2 text-[10px] font-bold border-l border-blue-400/30 transition-colors"
+                    title="Export complete multi-layer GeoPackage (.gpkg) containing Point Stations + Zones + Contours + Boundaries"
+                  >
+                    +All Layers
+                  </button>
+                </div>
+
+                {/* PRIMARY FORMAT 2: Interpolation Map GeoTIFF (.tif) */}
+                <div
+                  className={`inline-flex rounded-xl shadow-md overflow-hidden border transition-all ${
+                    !isPointMapPrimary
+                      ? "border-emerald-500 ring-2 ring-emerald-500/30"
+                      : "border-emerald-600/40"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => exportInterpolationAsGeoTiff(geoTiffExportMode)}
+                    className="cursor-pointer whitespace-nowrap shrink-0 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white px-3 py-2 text-xs font-bold flex items-center gap-1.5 transition-all"
+                    title="Primary Interpolation Format: Export WGS84 (EPSG:4326) GeoTIFF (.tif) with exact Float32 numeric cell values & NoData=-9999 (or transparent Color RGBA) for QGIS, ArcGIS Pro & MapInfo Pro"
+                  >
+                    <Grid3X3 className="w-3.5 h-3.5 text-emerald-100" />
+                    Interpolation (.tif)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setGeoTiffExportMode((m) => (m === "float32" ? "rgba" : "float32"))
+                    }
+                    className="cursor-pointer whitespace-nowrap shrink-0 bg-teal-800 hover:bg-teal-900 text-emerald-100 hover:text-white px-2 py-2 text-[10px] font-bold border-l border-emerald-400/30 transition-colors"
+                    title="Toggle GeoTIFF mode: Float32 (exact numeric pixel values for GIS analysis) vs RGBA (styled transparent visual raster)"
+                  >
+                    {geoTiffExportMode === "float32" ? "Float32" : "Color RGBA"}
+                  </button>
+                </div>
+
+                {/* VERIFICATION IMPORT: Load .gpkg or .tif right back onto map */}
+                <button
+                  type="button"
+                  onClick={() => document.getElementById("geojson-file-input")?.click()}
+                  className="cursor-pointer whitespace-nowrap shrink-0 bg-white hover:bg-slate-50 text-slate-800 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm border border-slate-300 hover:border-indigo-400 transition-all"
+                  title="Import GeoPackage (.gpkg), GeoTIFF (.tif/.tiff), Shapefile (.zip) or GeoJSON directly onto the map to verify exported or external GIS layers"
+                >
+                  <Upload className="w-3.5 h-3.5 text-indigo-600" />
+                  Import .gpkg / .tif
+                </button>
+
                 <button
                   onClick={sendToBulletin}
-                  className="cursor-pointer bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md border border-emerald-600/50 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                  className="cursor-pointer whitespace-nowrap shrink-0 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md border border-emerald-600/50 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                   title="Send current parameter map to Annual Report"
                 >
                   <CheckCircle className="w-3.5 h-3.5 text-emerald-100" /> Send Map to Report
@@ -9221,7 +10532,7 @@ ${svgStatsPanel}
 
                 <button
                   onClick={sendToFactSheet}
-                  className="cursor-pointer bg-gradient-to-r from-teal-700 to-cyan-800 hover:from-teal-800 hover:to-cyan-900 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md border border-teal-600/50 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                  className="cursor-pointer whitespace-nowrap shrink-0 bg-gradient-to-r from-teal-700 to-cyan-800 hover:from-teal-800 hover:to-cyan-900 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md border border-teal-600/50 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                   title="Send current high-density cropped map directly to State Fact Sheet"
                 >
                   <Sparkles className="w-3.5 h-3.5 text-cyan-200" /> Send to State Fact Sheet
@@ -9229,7 +10540,7 @@ ${svgStatsPanel}
 
                 <button
                   onClick={sendPointAndParameterMapsToBulletin}
-                  className="cursor-pointer bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md border border-indigo-500/50 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                  className="cursor-pointer whitespace-nowrap shrink-0 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md border border-indigo-500/50 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                   title="Send BOTH Point Map (Stations) AND All Parameter Maps simultaneously to Annual Report once formatted"
                 >
                   <Layers className="w-3.5 h-3.5 text-indigo-100" /> Send Point & Parameter Maps
@@ -9237,8 +10548,8 @@ ${svgStatsPanel}
 
                 <button
                   onClick={exportMap}
-                  className="cursor-pointer bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-900 hover:to-black text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md border border-slate-800/80 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
-                  title="Export rendered map image or shapefile"
+                  className="cursor-pointer whitespace-nowrap shrink-0 bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-900 hover:to-black text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md border border-slate-800/80 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                  title="Export using the selected format above (defaults to .gpkg for Point Maps and .tif for Interpolation Maps)"
                 >
                   <FileDown className="w-3.5 h-3.5 text-slate-300" /> Export Map
                 </button>
@@ -9246,31 +10557,38 @@ ${svgStatsPanel}
                 <div className="inline-flex rounded-xl shadow-md border border-teal-600/40 overflow-hidden">
                   <button
                     onClick={() => exportMapAsShapefile("all")}
-                    className="cursor-pointer bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white px-3 py-2 text-xs font-bold flex items-center gap-1.5 transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
-                    title="Export complete ArcGIS & MapInfo GIS Package (.zip): Interpolated Zones, Contours, Stations, Boundaries, and Georeferenced GeoTIFF + .tab files"
+                    className="cursor-pointer whitespace-nowrap bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white px-3 py-2 text-xs font-bold flex items-center gap-1.5 transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
+                    title="Download complete GIS + Grid Package (.zip): GeoPackage (.gpkg), Float32 GeoTIFF (.tif), ESRI Shapefiles (.shp/.dbf/.prj), MapInfo (.tab/.mif/.mid), and ESRI ASCII Grid (.asc)"
                   >
-                    <Download className="w-3.5 h-3.5 text-teal-100" /> Full GIS Package (.zip)
+                    <Download className="w-3.5 h-3.5 text-teal-100" /> Download GIS / Grid (.zip)
                   </button>
                   <button
                     onClick={() => exportMapAsShapefile("zones")}
-                    className="cursor-pointer bg-teal-700 hover:bg-teal-800 text-teal-100 hover:text-white px-2 py-2 text-[10px] font-bold border-l border-teal-500/40 transition-colors"
-                    title="Export Interpolated Classification Zones & Contours as Shapefile + MapInfo .tab (.zip)"
+                    className="cursor-pointer whitespace-nowrap bg-teal-700 hover:bg-teal-800 text-teal-100 hover:text-white px-2 py-2 text-[10px] font-bold border-l border-teal-500/40 transition-colors"
+                    title="Export Interpolated Classification Zones & Contours (.shp + MapInfo .tab/.mif/.mid) as .zip"
                   >
                     Zones
                   </button>
                   <button
                     onClick={() => exportMapAsShapefile("stations")}
-                    className="cursor-pointer bg-teal-700 hover:bg-teal-800 text-teal-100 hover:text-white px-2 py-2 text-[10px] font-bold border-l border-teal-500/40 transition-colors"
-                    title="Export sample stations as Point Shapefile + MapInfo .tab (.zip)"
+                    className="cursor-pointer whitespace-nowrap bg-teal-700 hover:bg-teal-800 text-teal-100 hover:text-white px-2 py-2 text-[10px] font-bold border-l border-teal-500/40 transition-colors"
+                    title="Export sample stations as Point Shapefile + MapInfo .tab/.mif/.mid (.zip)"
                   >
                     Stations
                   </button>
                   <button
                     onClick={() => exportMapAsShapefile("boundaries")}
-                    className="cursor-pointer bg-teal-700 hover:bg-teal-800 text-teal-100 hover:text-white px-2 py-2 text-[10px] font-bold border-l border-teal-500/40 transition-colors"
-                    title="Export active polygon boundaries as Polygon Shapefile + MapInfo .tab (.zip)"
+                    className="cursor-pointer whitespace-nowrap bg-teal-700 hover:bg-teal-800 text-teal-100 hover:text-white px-2 py-2 text-[10px] font-bold border-l border-teal-500/40 transition-colors"
+                    title="Export active polygon boundaries as Polygon Shapefile + MapInfo .tab/.mif/.mid (.zip)"
                   >
                     Boundary
+                  </button>
+                  <button
+                    onClick={() => exportMapAsShapefile("grid")}
+                    className="cursor-pointer whitespace-nowrap bg-teal-800 hover:bg-teal-900 text-emerald-100 hover:text-white px-2 py-2 text-[10px] font-bold border-l border-teal-500/40 transition-colors"
+                    title="Export Georeferenced GeoTIFF (.tif/.tfw/.tab) + Numeric ESRI ASCII Grid (.asc/.prj) for ArcGIS & MapInfo (.zip)"
+                  >
+                    Grid (.asc)
                   </button>
                 </div>
 
@@ -9291,7 +10609,7 @@ ${svgStatsPanel}
             
             {/* Left/Single Panel */}
             <div className="flex flex-col gap-3 bg-gradient-to-b from-slate-50 to-slate-100/85 p-5 rounded-[2.5rem] border border-slate-200/50 shadow-[0_16px_36px_rgba(15,23,42,0.03),inset_0_1px_2px_rgba(255,255,255,0.9)] items-stretch relative overflow-hidden group">
-              <div className="flex justify-between items-center px-2">
+              <div className="flex flex-wrap justify-between items-center gap-2 px-2">
                 <span className="text-xs font-extrabold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
                   <span className="relative flex h-2 w-2">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
@@ -9299,9 +10617,16 @@ ${svgStatsPanel}
                   </span>
                   {isComparisonActive ? "Panel A: Pre-Monsoon" : "Primary Output Map"}
                 </span>
-                <span className="text-[10px] font-mono font-bold text-indigo-600 bg-indigo-50/80 px-2.5 py-0.5 rounded-full border border-indigo-100/50">
-                  {interpolationMethod.toUpperCase()} | Sync Extent
-                </span>
+                <div className="flex items-center gap-2">
+                  {hoveredRasterSample && (
+                    <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200 tabular-nums">
+                      GeoTIFF [{hoveredRasterSample.layerName}]: {hoveredRasterSample.value !== null ? hoveredRasterSample.value.toFixed(3) : "NoData"} ({hoveredRasterSample.lat.toFixed(4)}°N, {hoveredRasterSample.lng.toFixed(4)}°E)
+                    </span>
+                  )}
+                  <span className="text-[10px] font-mono font-bold text-indigo-600 bg-indigo-50/80 px-2.5 py-0.5 rounded-full border border-indigo-100/50">
+                    Primary: {isPointMapPrimary ? "GeoPackage (.gpkg)" : `GeoTIFF (.tif ${geoTiffExportMode === "float32" ? "Float32" : "RGBA"})`} | {interpolationMethod.toUpperCase()}
+                  </span>
+                </div>
               </div>
 
               <div

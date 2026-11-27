@@ -16,6 +16,7 @@ import {
   type AiLimitsConfig,
   type ChatMessage,
 } from "./aiEngine.ts";
+import { createMusicRouter } from "./musicRouter.ts";
 
 export interface AiExecutorInput {
   kind: "chat" | "quick-audit";
@@ -394,6 +395,7 @@ Format with crisp headings, bullet points, and bold metric callouts.`;
   });
 
   app.use("/api/ai", apiRouter);
+  app.use("/api/music", createMusicRouter());
 
   return app;
 }

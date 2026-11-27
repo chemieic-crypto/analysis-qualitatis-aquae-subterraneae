@@ -40,6 +40,18 @@ import { isStateAll, isDistrictAll, norm } from "./utils/shapefileFilter";
 import { downloadWaterQualityTemplate } from "./utils/templateGenerator";
 import { INDIA_BOUNDARY } from "./data/india_boundary";
 import MonsoonRainCanvas from "./components/MonsoonRainCanvas";
+import IndianMusicPlayer from "./components/IndianMusicPlayer";
+import {
+  GUI_THEMES,
+  GUI_THEME_LIST,
+  GUI_TAB_LABELS,
+  DEFAULT_TAB_THEMES,
+  GuiThemeId,
+  GuiThemeMode,
+  loadGuiThemeState,
+  saveGuiThemeState,
+  resolveActiveGuiTheme,
+} from "./utils/guiThemes";
 
 import {
   Database,
@@ -70,7 +82,10 @@ import {
   Calculator,
   Award,
   GitMerge,
-  Target
+  Target,
+  Palette,
+  RotateCcw,
+  SlidersHorizontal
 } from "lucide-react";
 
 import Highcharts from "highcharts";
@@ -128,6 +143,60 @@ export default function App() {
   // Live modern date and time state with high precision
   const [currentDateTime, setCurrentDateTime] = useState<Date>(new Date());
   const [tableFont, setTableFont] = useState<string>(() => localStorage.getItem("table_num_font") || "Inter");
+
+  // App-Wide & Per-GUI Color-Coding Theme Studio State
+  const initialThemeState = useMemo(() => loadGuiThemeState(), []);
+  const [guiThemeMode, setGuiThemeMode] = useState<GuiThemeMode>(initialThemeState.mode);
+  const [globalGuiTheme, setGlobalGuiTheme] = useState<GuiThemeId>(initialThemeState.globalTheme);
+  const [tabGuiThemes, setTabGuiThemes] = useState<Partial<Record<string, GuiThemeId>>>(initialThemeState.tabThemes);
+  const [showAllGuiThemeMatrix, setShowAllGuiThemeMatrix] = useState<boolean>(false);
+
+  const activeGuiTheme = useMemo(
+    () => resolveActiveGuiTheme(activeTab, guiThemeMode, globalGuiTheme, tabGuiThemes),
+    [activeTab, guiThemeMode, globalGuiTheme, tabGuiThemes]
+  );
+
+  // Persist GUI theme configuration
+  useEffect(() => {
+    saveGuiThemeState({
+      mode: guiThemeMode,
+      globalTheme: globalGuiTheme,
+      tabThemes: tabGuiThemes,
+    });
+  }, [guiThemeMode, globalGuiTheme, tabGuiThemes]);
+
+  // Apply active GUI theme CSS variables onto root document cleanly
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--gui-body-bg", activeGuiTheme.bodyBg);
+    root.style.setProperty("--gui-header-bg", activeGuiTheme.headerBg);
+    root.style.setProperty("--gui-header-border", activeGuiTheme.headerBorder);
+    root.style.setProperty("--gui-workspace-bg", activeGuiTheme.workspaceBg);
+    root.style.setProperty("--gui-workspace-border", activeGuiTheme.workspaceBorder);
+    root.style.setProperty("--gui-top-accent", activeGuiTheme.topAccentGradient);
+    root.style.setProperty("--gui-accent", activeGuiTheme.accentHex);
+    root.style.setProperty("--gui-accent-soft", activeGuiTheme.accentSoftHex);
+    root.style.setProperty("--gui-accent-border", activeGuiTheme.accentBorderHex);
+  }, [activeGuiTheme]);
+
+  const handleSelectGuiTheme = (themeId: GuiThemeId, targetTab?: string) => {
+    const tabKey = targetTab || activeTab;
+    if (!targetTab && guiThemeMode === "global") {
+      setGlobalGuiTheme(themeId);
+      showToast(`Applied "${GUI_THEMES[themeId].name}" across all GUIs`, "success");
+    } else {
+      setTabGuiThemes((prev) => ({ ...prev, [tabKey]: themeId }));
+      const label = GUI_TAB_LABELS[tabKey] || tabKey;
+      showToast(`${label} color-coded with "${GUI_THEMES[themeId].name}"`, "success");
+    }
+  };
+
+  const handleResetGuiThemes = () => {
+    setGuiThemeMode("per-gui");
+    setGlobalGuiTheme("royal-indigo");
+    setTabGuiThemes({});
+    showToast("Restored distinct default color-coding for every GUI", "success");
+  };
 
   useEffect(() => {
     localStorage.setItem("table_num_font", tableFont);
@@ -1120,6 +1189,7 @@ export default function App() {
             };
 
             const style = colorMap[tabItem.baseColor] || colorMap.blue;
+            const tabAssignedTheme = resolveActiveGuiTheme(tabItem.id, guiThemeMode, globalGuiTheme, tabGuiThemes);
 
             return (
               <button
@@ -1132,9 +1202,15 @@ export default function App() {
                     : `bg-gradient-to-b from-white/95 via-white/80 to-slate-100/90 text-slate-800 border-white/95 backdrop-blur-md shadow-[0_6px_16px_rgba(15,23,42,0.06),inset_0_2px_0_rgba(255,255,255,1),inset_0_0_10px_rgba(255,255,255,0.8),inset_0_-1.5px_0_rgba(0,0,0,0.05)] hover:border-indigo-300 hover:text-indigo-950 hover:translate-y-[-1.5px] hover:shadow-[0_10px_22px_rgba(79,70,229,0.18),inset_0_2px_0_rgba(255,255,255,1)] active:translate-y-[1px]`
                   }
                 `}
+                title={`${tabItem.label} — Theme: ${tabAssignedTheme.name}`}
               >
                 <IconComponent className={`w-4 h-4 transition-transform ${isActive ? "scale-110 opacity-100 text-white" : `${style.iconColor} opacity-90`}`} />
-                {tabItem.label}
+                <span>{tabItem.label}</span>
+                <span
+                  aria-hidden="true"
+                  className="w-2 h-2 rounded-full shrink-0 border border-white/80 shadow-2xs"
+                  style={{ backgroundColor: tabAssignedTheme.swatchHex }}
+                />
               </button>
             );
           })}
@@ -1192,8 +1268,197 @@ export default function App() {
           </div>
         </div>
 
+        {/* GUI Theme & Per-GUI Color-Coding Studio Bar (Visible across every GUI tab) */}
+        <div className="mb-5 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl px-3.5 py-2.5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
+            {/* Active GUI Identity & Current Theme */}
+            <div className="flex items-center gap-2 min-w-0">
+              <div
+                className="w-7 h-7 rounded-xl flex items-center justify-center text-white shadow-xs shrink-0"
+                style={{ backgroundColor: activeGuiTheme.swatchHex }}
+              >
+                <Palette className="w-3.5 h-3.5" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-800 whitespace-nowrap">
+                    GUI Color Code:
+                  </span>
+                  <span className="text-xs font-extrabold text-slate-900 truncate">
+                    {GUI_TAB_LABELS[activeTab] || activeTab}
+                  </span>
+                  <span
+                    className="text-[10px] font-extrabold px-2 py-0.5 rounded-md border whitespace-nowrap"
+                    style={{
+                      backgroundColor: activeGuiTheme.accentSoftHex,
+                      borderColor: activeGuiTheme.accentBorderHex,
+                      color: activeGuiTheme.swatchHex,
+                    }}
+                  >
+                    {activeGuiTheme.name}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Instant 8-Theme Swatch Picker */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {GUI_THEME_LIST.map((theme) => {
+                const isSelected = activeGuiTheme.id === theme.id;
+                return (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    onClick={() => handleSelectGuiTheme(theme.id)}
+                    className={`group flex items-center gap-1.5 px-2 py-1 rounded-xl border text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                      isSelected
+                        ? "bg-slate-900 text-white border-slate-950 shadow-xs"
+                        : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
+                    }`}
+                    title={
+                      guiThemeMode === "global"
+                        ? `Apply ${theme.name} theme to all GUIs`
+                        : `Color-code ${GUI_TAB_LABELS[activeTab] || activeTab} with ${theme.name}`
+                    }
+                  >
+                    <span
+                      className={`w-3 h-3 rounded-full shrink-0 border ${
+                        isSelected ? "border-white ring-1 ring-white/60" : "border-black/15"
+                      }`}
+                      style={{ backgroundColor: theme.swatchHex }}
+                    />
+                    <span className="hidden sm:inline">{theme.shortLabel}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Mode Toggle + All-GUIs Customizer + Reset */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setGuiThemeMode("per-gui")}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                    guiThemeMode === "per-gui"
+                      ? "bg-white text-slate-900 shadow-xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                  title="Each GUI tab keeps its own unique color-coded theme"
+                >
+                  Per-GUI Theme
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGuiThemeMode("global")}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                    guiThemeMode === "global"
+                      ? "bg-white text-slate-900 shadow-xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                  title="Apply one shared theme to every GUI tab"
+                >
+                  All GUIs Same
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowAllGuiThemeMatrix((prev) => !prev)}
+                className={`px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold border flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                  showAllGuiThemeMatrix
+                    ? "bg-indigo-600 text-white border-indigo-700"
+                    : "bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-300"
+                }`}
+                title="Assign different color themes to every GUI module in one view"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <span>Map All GUIs</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleResetGuiThemes}
+                className="px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap shrink-0"
+                title="Reset all GUIs to their distinct default color themes"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Reset</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Expandable Per-GUI Theme Assignment Matrix (Color-Code Every GUI Individually) */}
+          {showAllGuiThemeMatrix && (
+            <div className="mt-3 pt-3 border-t border-slate-200">
+              <div className="flex items-center justify-between gap-2 mb-2.5">
+                <span className="text-[11px] font-black uppercase tracking-wider text-slate-700">
+                  Assign Individual Color Theme to Each GUI ({Object.keys(DEFAULT_TAB_THEMES).length} Modules)
+                </span>
+                {guiThemeMode === "global" && (
+                  <button
+                    type="button"
+                    onClick={() => setGuiThemeMode("per-gui")}
+                    className="text-[11px] font-extrabold text-indigo-700 hover:underline cursor-pointer"
+                  >
+                    Switch to Per-GUI Mode to activate individual colors
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2">
+                {Object.keys(DEFAULT_TAB_THEMES).map((tabKey) => {
+                  const effective = resolveActiveGuiTheme(tabKey, "per-gui", globalGuiTheme, tabGuiThemes);
+                  const isCurrent = activeTab === tabKey;
+                  return (
+                    <div
+                      key={tabKey}
+                      className={`flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs ${
+                        isCurrent
+                          ? "bg-slate-900/5 border-slate-400 ring-1 ring-slate-300"
+                          : "bg-slate-50/80 border-slate-200"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab(tabKey as ActiveTab)}
+                        className="flex items-center gap-1.5 min-w-0 text-left cursor-pointer"
+                        title={`Open ${GUI_TAB_LABELS[tabKey] || tabKey}`}
+                      >
+                        <span
+                          className="w-2.5 h-2.5 rounded-full shrink-0"
+                          style={{ backgroundColor: effective.swatchHex }}
+                        />
+                        <span className="text-[11px] font-extrabold text-slate-800 truncate">
+                          {GUI_TAB_LABELS[tabKey] || tabKey}
+                        </span>
+                      </button>
+                      <select
+                        value={effective.id}
+                        onChange={(e) => {
+                          if (guiThemeMode === "global") setGuiThemeMode("per-gui");
+                          handleSelectGuiTheme(e.target.value as GuiThemeId, tabKey);
+                        }}
+                        aria-label={`Theme for ${GUI_TAB_LABELS[tabKey] || tabKey}`}
+                        className="bg-white text-slate-800 font-bold text-[10px] px-1.5 py-0.5 rounded-lg border border-slate-300 focus:outline-none cursor-pointer shrink-0"
+                      >
+                        {GUI_THEME_LIST.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.shortLabel}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Tab Canvas Content Blocks */}
-        <div className="glass-tab-view space-y-6">
+        <div className="gui-themed-workspace">
+          <div className="gui-themed-accent-strip" />
+          <div className="glass-tab-view space-y-6 p-2 sm:p-4">
           
           {/* Default Upload Placement Helper */}
           {rawData.length === 0 && activeTab !== "about" && activeTab !== "guidelines" && activeTab !== "hotspot" && (
@@ -1523,6 +1788,8 @@ export default function App() {
               choroplethClasses={choroplethClasses}
               setChoroplethClasses={setChoroplethClasses}
               showToast={showToast}
+              externalThemeId={activeGuiTheme.id}
+              onExternalThemeChange={(themeId) => handleSelectGuiTheme(themeId, "kpi")}
             />
           )}
 
@@ -1548,9 +1815,13 @@ export default function App() {
             </ErrorBoundary>
           )}
 
+          </div>
         </div>
 
       </div>
+
+      {/* Persistent Trending Indian Music Player with Volume Control */}
+      <IndianMusicPlayer />
     </div>
   );
 }

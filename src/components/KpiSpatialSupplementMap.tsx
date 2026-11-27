@@ -13,9 +13,7 @@ import {
   computeSpatialExtent,
   computeHighDensityIdwGrid,
   getEcColorRgba,
-  extractIsoContourSegments,
   EC_CONTOUR_LEVELS,
-  EC_ISO_THRESHOLDS,
   POINT_RANGE_COLORS,
   SpatialSamplePoint,
 } from "../utils/kpiSpatialHelpers";
@@ -51,9 +49,12 @@ interface KpiSpatialSupplementMapProps {
   baseMapType?: BaseMapType;
   setBaseMapType?: (val: BaseMapType) => void;
   showToast?: (message: string, type?: "success" | "error") => void;
+  fitBoundaryTrigger?: number;
+  themeHeaderClass?: string;
 }
 
-type SpatialMapMode = "idw-contour" | "exceedance-points";
+type SpatialMapMode = "idw-interpolation" | "exceedance-points";
+type HdGridResolution = 320 | 480 | 640;
 
 // Unified 4:3 Height:Width (3:4 Portrait) Frame Geometry (identical to Choropleth Map)
 const PORTRAIT_W = 600;
@@ -92,6 +93,8 @@ export default function KpiSpatialSupplementMap({
   baseMapType = "vector",
   setBaseMapType,
   showToast,
+  fitBoundaryTrigger = 0,
+  themeHeaderClass,
 }: KpiSpatialSupplementMapProps) {
   const paramName = activeConfig?.name || activeParam;
   const b1 = activeConfig?.b1 ?? 0;
@@ -100,11 +103,11 @@ export default function KpiSpatialSupplementMap({
 
   const isEcDefault = isEcParameter(activeParam, headerMap, paramName);
 
-  // Automatic mode: IDW High Density Contour for EC; Exceedance Point Map for other parameters
-  const [mapMode, setMapMode] = useState<SpatialMapMode>(isEcDefault ? "idw-contour" : "exceedance-points");
+  // Default to High-Definition (HD) Interpolation Map across all parameters (no contour map)
+  const [mapMode, setMapMode] = useState<SpatialMapMode>("idw-interpolation");
   useEffect(() => {
-    setMapMode(isEcDefault ? "idw-contour" : "exceedance-points");
-  }, [activeParam, isEcDefault]);
+    setMapMode("idw-interpolation");
+  }, [activeParam]);
 
   // Block filter inside KPI spatial view for India / State / District / Block drilldown
   const [selectedBlock, setSelectedBlock] = useState<string>("ALL");
@@ -112,10 +115,19 @@ export default function KpiSpatialSupplementMap({
     setSelectedBlock("ALL");
   }, [selectedState, selectedDistrict]);
 
-  // IDW Contour Controls (default classified Blue-Yellow-Red ranges from Geospatial Map Module)
+  // Re-frame to selected State or District boundary when triggered from KpiView
+  useEffect(() => {
+    if (fitBoundaryTrigger > 0) {
+      setSelectedBlock("ALL");
+      setSelectedPoint(null);
+    }
+  }, [fitBoundaryTrigger]);
+
+  // HD Interpolation Controls (Smooth HD continuous raster by default, no contour lines)
   const [idwPower, setIdwPower] = useState<number>(2);
-  const [smoothBlend, setSmoothBlend] = useState<boolean>(false);
-  const [showIsoContours, setShowIsoContours] = useState<boolean>(true);
+  const [smoothBlend, setSmoothBlend] = useState<boolean>(true);
+  const [hdResolution, setHdResolution] = useState<HdGridResolution>(480);
+  const [exportDpi, setExportDpi] = useState<600 | 800>(600);
   const [showStationOverlayOnIdw, setShowStationOverlayOnIdw] = useState<boolean>(false);
 
   // Exceedance Point Map Controls (default point size = 0.3 matching Geospatial Map Module)
@@ -212,28 +224,50 @@ export default function KpiSpatialSupplementMap({
     [boundaryFeatures, samplePoints]
   );
 
-  // Active EC BIS thresholds (defaulting to 750 and 3000)
-  const ecB1 = isEcDefault && b1 > 0 ? b1 : 750;
-  const ecB2 = isEcDefault && b2 > 0 ? b2 : 3000;
+  // Active BIS / Data-Derived Interpolation Thresholds for any selected parameter
+  const { interpB1, interpB2 } = useMemo(() => {
+    if (b1 > 0 && b2 > 0) {
+      return { interpB1: b1, interpB2: b2 };
+    }
+    if (b2 > 0) {
+      return { interpB1: Number((b2 * 0.5).toFixed(2)), interpB2: b2 };
+    }
+    if (isEcDefault) {
+      return { interpB1: 750, interpB2: 3000 };
+    }
+    if (activeParam.toLowerCase() === "ph") {
+      return { interpB1: 6.5, interpB2: 8.5 };
+    }
+    const vals = samplePoints.map((p) => p.val).filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+    if (vals.length >= 2) {
+      const low = vals[Math.floor(vals.length * 0.33)];
+      const high = vals[Math.floor(vals.length * 0.75)];
+      if (high > low) {
+        return { interpB1: Number(low.toFixed(2)), interpB2: Number(high.toFixed(2)) };
+      }
+    }
+    return { interpB1: 100, interpB2: 500 };
+  }, [b1, b2, isEcDefault, activeParam, samplePoints]);
 
-  const ecContourLevels = useMemo(
+  const unitSuffix = unit ? ` ${unit}` : "";
+
+  const interpZoneLevels = useMemo(
     () => [
-      { max: ecB1, color: EC_CONTOUR_LEVELS[0].color, label: `Acceptable (≤ ${ecB1} µS/cm)` },
-      { max: ecB2, color: EC_CONTOUR_LEVELS[1].color, label: `Permissible (${ecB1} – ${ecB2} µS/cm)` },
-      { max: Infinity, color: EC_CONTOUR_LEVELS[2].color, label: `Exceeded (> ${ecB2} µS/cm)` },
+      { max: interpB1, color: EC_CONTOUR_LEVELS[0].color, label: `Acceptable (≤ ${interpB1}${unitSuffix})` },
+      { max: interpB2, color: EC_CONTOUR_LEVELS[1].color, label: `Permissible (${interpB1} – ${interpB2}${unitSuffix})` },
+      { max: Infinity, color: EC_CONTOUR_LEVELS[2].color, label: `Exceeded (> ${interpB2}${unitSuffix})` },
     ],
-    [ecB1, ecB2]
+    [interpB1, interpB2, unitSuffix]
   );
 
-  // Ultra-High-Density IDW Raster & Marching Squares Iso-Contour computation
-  const idwGridSize = 360;
+  // High-Definition (HD) Continuous IDW Interpolation Raster (No Contour Lines)
   const idwData = useMemo(() => {
-    if (mapMode !== "idw-contour" || samplePoints.length === 0) return null;
+    if (mapMode !== "idw-interpolation" || samplePoints.length === 0) return null;
     const lngSpan = Math.max(0.001, bounds.maxLng - bounds.minLng);
     const latSpan = Math.max(0.001, bounds.maxLat - bounds.minLat);
     const aspect = lngSpan / latSpan;
-    const cols = aspect >= 1 ? idwGridSize : Math.max(120, Math.round(idwGridSize * aspect));
-    const rows = aspect >= 1 ? Math.max(120, Math.round(idwGridSize / aspect)) : idwGridSize;
+    const cols = aspect >= 1 ? hdResolution : Math.max(160, Math.round(hdResolution * aspect));
+    const rows = aspect >= 1 ? Math.max(160, Math.round(hdResolution / aspect)) : hdResolution;
 
     const grid = computeHighDensityIdwGrid({
       points: samplePoints,
@@ -242,13 +276,6 @@ export default function KpiSpatialSupplementMap({
       rows,
       power: idwPower,
     });
-
-    const thresholds = isEcDefault
-      ? [ecB1, Math.round((ecB1 + ecB2) * 0.5), ecB2]
-      : EC_ISO_THRESHOLDS;
-    const segments = showIsoContours
-      ? extractIsoContourSegments(grid, cols, rows, thresholds)
-      : [];
 
     const mathCanvas = document.createElement("canvas");
     mathCanvas.width = cols;
@@ -261,7 +288,7 @@ export default function KpiSpatialSupplementMap({
         const imgY = rows - 1 - r;
         for (let c = 0; c < cols; c++) {
           const val = grid[r * cols + c];
-          const [rr, gg, bb, aa] = getEcColorRgba(val, smoothBlend, ecB1, ecB2);
+          const [rr, gg, bb, aa] = getEcColorRgba(val, smoothBlend, interpB1, interpB2);
           const idx = (imgY * cols + c) * 4;
           buf[idx] = rr;
           buf[idx + 1] = gg;
@@ -272,20 +299,20 @@ export default function KpiSpatialSupplementMap({
       mathCtx.putImageData(imgData, 0, 0);
     }
 
-    return { grid, cols, rows, segments, mathCanvas };
-  }, [mapMode, samplePoints, bounds, idwPower, smoothBlend, showIsoContours, ecB1, ecB2, isEcDefault]);
+    return { grid, cols, rows, mathCanvas };
+  }, [mapMode, samplePoints, bounds, idwPower, smoothBlend, hdResolution, interpB1, interpB2]);
 
-  // Compliance / EC Zone Statistics for Legend
+  // Compliance / HD Interpolation Zone Statistics for Legend
   const spatialSummary = useMemo(() => {
     const exceedPts = samplePoints.filter((p) => p.isExceed);
     const acceptableToPermPts = samplePoints.filter((p) => !p.isExceed && p.isAboveAcceptable);
     const withinAccPts = samplePoints.filter((p) => !p.isExceed && !p.isAboveAcceptable);
 
-    const ecZoneCounts = ecContourLevels.map((z) => ({ ...z, count: 0 }));
+    const interpZoneCounts = interpZoneLevels.map((z) => ({ ...z, count: 0 }));
     for (const p of samplePoints) {
-      for (let i = 0; i < ecContourLevels.length; i++) {
-        if (p.val <= ecContourLevels[i].max) {
-          ecZoneCounts[i].count++;
+      for (let i = 0; i < interpZoneLevels.length; i++) {
+        if (p.val <= interpZoneLevels[i].max) {
+          interpZoneCounts[i].count++;
           break;
         }
       }
@@ -296,9 +323,9 @@ export default function KpiSpatialSupplementMap({
       exceedCount: exceedPts.length,
       permWarnCount: acceptableToPermPts.length,
       withinAccCount: withinAccPts.length,
-      ecZoneCounts,
+      interpZoneCounts,
     };
-  }, [samplePoints, ecContourLevels]);
+  }, [samplePoints, interpZoneLevels]);
 
   // Human-readable active scope label
   const scopeLabel = useMemo(() => {
@@ -383,17 +410,18 @@ export default function KpiSpatialSupplementMap({
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     const pubTitle =
-      mapMode === "idw-contour"
-        ? `IDW Contour Map of ${toProperCase(paramName)} (${activeParam}) — ${scopeLabel}`
+      mapMode === "idw-interpolation"
+        ? `HD Interpolation Map of ${toProperCase(paramName)} (${activeParam}) — ${scopeLabel}`
         : `Spatial Exceedance Point Map of ${toProperCase(paramName)} (${activeParam}) — ${scopeLabel}`;
     ctx.fillText(pubTitle, PORTRAIT_W / 2, 16, PORTRAIT_W - 24);
 
     ctx.fillStyle = "#475569";
     ctx.font = `600 9.8px ${MODERN_SANS}`;
+    const hdTag = hdResolution >= 640 ? "Ultra HD" : hdResolution >= 480 ? "HD" : "Standard";
     const subTitle =
-      mapMode === "idw-contour"
-        ? `BIS IS 10500:2012 (Acc. ≤ ${ecB1}, Perm. ${ecB1}–${ecB2}, Exc. > ${ecB2} ${unit})  •  n = ${samplePoints.length}`
-        : `BIS IS 10500:2012 (PL: ${activeParam.toLowerCase() === "ph" ? "6.5–8.5" : `${b2} ${unit}`})  •  Exceeding: ${spatialSummary.exceedCount} / ${spatialSummary.total}`;
+      mapMode === "idw-interpolation"
+        ? `BIS IS 10500:2012 (Acc. ≤ ${interpB1}, Perm. ${interpB1}–${interpB2}, Exc. > ${interpB2}${unitSuffix})  •  ${hdTag} IDW  •  n = ${samplePoints.length}`
+        : `BIS IS 10500:2012 (PL: ${activeParam.toLowerCase() === "ph" ? "6.5–8.5" : `${b2}${unitSuffix}`})  •  Exceeding: ${spatialSummary.exceedCount} / ${spatialSummary.total}`;
     ctx.fillText(subTitle, PORTRAIT_W / 2, 31.5, PORTRAIT_W - 24);
 
     // Subtle Gradient Accent Hairline Under Subtitle
@@ -522,9 +550,9 @@ export default function KpiSpatialSupplementMap({
       ctx.restore();
     }
 
-    // 5A. MODE 1: ULTRA-HD IDW CONTOUR MAP (EC — Geospatial Map Module Colors + Glossy Sheen)
-    if (mapMode === "idw-contour" && idwData && samplePoints.length > 0) {
-      const { cols, rows, segments, mathCanvas } = idwData;
+    // 5A. MODE 1: HIGH-DEFINITION (HD) IDW INTERPOLATION MAP (Smooth Continuous Raster — No Contour Lines)
+    if (mapMode === "idw-interpolation" && idwData && samplePoints.length > 0) {
+      const { mathCanvas } = idwData;
       const xMin = toX(bounds.minLng);
       const xMax = toX(bounds.maxLng);
       const yTop = toY(bounds.maxLat);
@@ -538,65 +566,19 @@ export default function KpiSpatialSupplementMap({
 
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = "high";
-      ctx.globalAlpha = baseMapType === "vector" ? 0.94 : 0.78;
+      ctx.globalAlpha = baseMapType === "vector" ? 0.96 : 0.80;
       ctx.drawImage(mathCanvas, xMin, yTop, xMax - xMin, yBottom - yTop);
       ctx.globalAlpha = 1;
 
-      // Subtle Glossy Enamel Specular Highlight Clipped Inside Boundary
+      // Subtle Glossy Specular Finish Clipped Inside Boundary
       if (baseMapType === "vector") {
         const glossGrad = ctx.createLinearGradient(INNER_LEFT, INNER_TOP, INNER_LEFT + INNER_W, INNER_TOP + INNER_H);
-        glossGrad.addColorStop(0, "rgba(255, 255, 255, 0.24)");
-        glossGrad.addColorStop(0.38, "rgba(255, 255, 255, 0.06)");
+        glossGrad.addColorStop(0, "rgba(255, 255, 255, 0.18)");
+        glossGrad.addColorStop(0.38, "rgba(255, 255, 255, 0.04)");
         glossGrad.addColorStop(0.7, "rgba(255, 255, 255, 0)");
-        glossGrad.addColorStop(1, "rgba(15, 23, 42, 0.05)");
+        glossGrad.addColorStop(1, "rgba(15, 23, 42, 0.04)");
         ctx.fillStyle = glossGrad;
         ctx.fillRect(INNER_LEFT, INNER_TOP, INNER_W, INNER_H);
-      }
-
-      // Sleek Marching Squares Iso-Contour Lines with Ultra-Crisp Labels
-      if (showIsoContours && segments.length > 0) {
-        const cellW = (xMax - xMin) / Math.max(1, cols - 1);
-        const cellH = (yBottom - yTop) / Math.max(1, rows - 1);
-
-        const byLevel = new Map<number, typeof segments>();
-        segments.forEach((s) => {
-          const arr = byLevel.get(s.level);
-          if (arr) arr.push(s);
-          else byLevel.set(s.level, [s]);
-        });
-
-        byLevel.forEach((segs, lvl) => {
-          const isBisLimit = lvl === ecB1 || lvl === ecB2;
-          ctx.beginPath();
-          ctx.lineJoin = "round";
-          ctx.lineCap = "round";
-          ctx.strokeStyle = isBisLimit ? "rgba(15, 23, 42, 0.88)" : "rgba(15, 23, 42, 0.42)";
-          ctx.lineWidth = isBisLimit ? 0.9 : 0.5;
-          if (lvl === ecB2) ctx.setLineDash([4, 3]);
-          else ctx.setLineDash([]);
-
-          for (const s of segs) {
-            ctx.moveTo(xMin + s.x1 * cellW, yBottom - s.y1 * cellH);
-            ctx.lineTo(xMin + s.x2 * cellW, yBottom - s.y2 * cellH);
-          }
-          ctx.stroke();
-          ctx.setLineDash([]);
-
-          if (segs.length >= 4) {
-            const rep = segs[Math.floor(segs.length / 2)];
-            const lx = xMin + ((rep.x1 + rep.x2) * 0.5) * cellW;
-            const ly = yBottom - ((rep.y1 + rep.y2) * 0.5) * cellH;
-            ctx.font = `800 9.5px ${MODERN_SANS}`;
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.lineWidth = 2.8;
-            ctx.lineJoin = "round";
-            ctx.strokeStyle = "rgba(255,255,255,0.95)";
-            ctx.strokeText(String(lvl), lx, ly);
-            ctx.fillStyle = "#0f172a";
-            ctx.fillText(String(lvl), lx, ly);
-          }
-        });
       }
 
       if (showStationOverlayOnIdw) {
@@ -933,7 +915,7 @@ export default function KpiSpatialSupplementMap({
     mapMode,
     idwData,
     samplePoints,
-    showIsoContours,
+    hdResolution,
     showStationOverlayOnIdw,
     exceedingOnly,
     showPointLabels,
@@ -944,10 +926,11 @@ export default function KpiSpatialSupplementMap({
     activeParam,
     paramName,
     scopeLabel,
-    ecB1,
-    ecB2,
+    interpB1,
+    interpB2,
     b2,
     unit,
+    unitSuffix,
     spatialSummary.exceedCount,
     spatialSummary.total,
   ]);
@@ -988,7 +971,7 @@ export default function KpiSpatialSupplementMap({
     }
 
     let interpVal: number | undefined;
-    if (mapMode === "idw-contour" && idwData) {
+    if (mapMode === "idw-interpolation" && idwData) {
       const colFrac = (res.lng - bounds.minLng) / (bounds.maxLng - bounds.minLng || 1);
       const rowFrac = (res.lat - bounds.minLat) / (bounds.maxLat - bounds.minLat || 1);
       if (colFrac >= 0 && colFrac <= 1 && rowFrac >= 0 && rowFrac <= 1) {
@@ -1023,22 +1006,22 @@ export default function KpiSpatialSupplementMap({
     }
   };
 
-  // High-Density 600 DPI JPEG Export
+  // High-Definition 600/800 DPI JPEG Export
   const handleExportJpeg = async () => {
     if (!exportContainerRef.current) return;
     setIsExporting(true);
     try {
-      if (showToast) showToast("Rendering Publication 600 DPI Spatial Map JPEG...", "success");
+      if (showToast) showToast(`Rendering HD ${exportDpi} DPI Spatial Map JPEG...`, "success");
       const canvas = await captureGlossyCanvas(exportContainerRef.current, {
-        scale: dpiToCaptureScale(600),
+        scale: dpiToCaptureScale(exportDpi),
         backgroundColor: "#ffffff",
       });
 
-      const modeTag = mapMode === "idw-contour" ? "IDW_Contour" : "Exceedance_Points";
+      const modeTag = mapMode === "idw-interpolation" ? "HD_Interpolation" : "Exceedance_Points";
       const scopeTag = scopeLabel.replace(/[^a-zA-Z0-9]+/g, "_");
-      const filename = `${modeTag}_${activeParam}_${scopeTag}_600DPI.jpg`;
+      const filename = `${modeTag}_${activeParam}_${scopeTag}_${exportDpi}DPI.jpg`;
 
-      const blob = await canvasToJpegBlobWithDpi(canvas, 600, 0.96);
+      const blob = await canvasToJpegBlobWithDpi(canvas, exportDpi, 0.96);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.download = filename;
@@ -1047,7 +1030,7 @@ export default function KpiSpatialSupplementMap({
       a.click();
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 8000);
-      if (showToast) showToast("Publication Map downloaded successfully!", "success");
+      if (showToast) showToast(`HD ${exportDpi} DPI Map downloaded successfully!`, "success");
     } catch (err) {
       console.error("Failed to export KPI spatial map:", err);
       if (showToast) showToast("Export failed. Switch to Vector base map for offline capture.", "error");
@@ -1057,9 +1040,11 @@ export default function KpiSpatialSupplementMap({
   };
 
   const headerTitle =
-    mapMode === "idw-contour"
-      ? `IDW Contour Map: ${toProperCase(paramName)} (${scopeLabel})`
+    mapMode === "idw-interpolation"
+      ? `HD Interpolation Map: ${toProperCase(paramName)} (${scopeLabel})`
       : `Exceedance Point Map: ${toProperCase(paramName)} (${scopeLabel})`;
+
+  const bannerGradient = themeHeaderClass || "bg-gradient-to-r from-[#17204e] via-[#1a2356] to-[#233175]";
 
   return (
     <div
@@ -1067,9 +1052,9 @@ export default function KpiSpatialSupplementMap({
       className="flex flex-col space-y-2.5 font-sans relative bg-white p-3 rounded-2xl border border-slate-200/90 shadow-xs h-full"
     >
       {/* MAP HEADER BANNER (IDENTICAL HEIGHT TO CHOROPLETH MAP) */}
-      <div className="min-h-[54px] flex items-center justify-between gap-2 bg-gradient-to-r from-[#17204e] via-[#1a2356] to-[#233175] text-white py-2 px-4 rounded-2xl shadow-[0_6px_16px_-4px_rgba(26,35,86,0.35),inset_0_1px_0_rgba(255,255,255,0.22)] relative overflow-hidden">
+      <div className={`min-h-[54px] flex items-center justify-between gap-2 ${bannerGradient} text-white py-2 px-4 rounded-2xl shadow-[0_6px_16px_-4px_rgba(26,35,86,0.35),inset_0_1px_0_rgba(255,255,255,0.22)] relative overflow-hidden`}>
         <div className="flex items-center gap-2 min-w-0 relative z-10">
-          {mapMode === "idw-contour" ? (
+          {mapMode === "idw-interpolation" ? (
             <Sparkles className="w-4 h-4 text-amber-300 shrink-0" />
           ) : (
             <MapPin className="w-4 h-4 text-rose-400 shrink-0" />
@@ -1082,36 +1067,51 @@ export default function KpiSpatialSupplementMap({
         <div data-export-hide="true" className="flex items-center gap-1.5 shrink-0">
           <div className="flex items-center bg-slate-950/50 p-0.5 rounded-xl border border-white/15">
             <button
-              onClick={() => setMapMode("idw-contour")}
-              className={`px-2 py-1 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer ${
-                mapMode === "idw-contour"
+              onClick={() => setMapMode("idw-interpolation")}
+              className={`px-2 py-1 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                mapMode === "idw-interpolation"
                   ? "bg-amber-400 text-slate-950 shadow-xs"
                   : "text-slate-200 hover:text-white"
               }`}
+              title="High-Definition Smooth IDW Interpolation Map"
             >
-              IDW
+              HD Interp
             </button>
             <button
               onClick={() => setMapMode("exceedance-points")}
-              className={`px-2 py-1 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer ${
+              className={`px-2 py-1 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                 mapMode === "exceedance-points"
                   ? "bg-rose-500 text-white shadow-xs"
                   : "text-slate-200 hover:text-white"
               }`}
+              title="Station Exceedance Point Map"
             >
               Points
             </button>
           </div>
 
-          <button
-            onClick={handleExportJpeg}
-            disabled={isExporting}
-            className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-60 shrink-0"
-            title="Save Publication Map as High-Density 600 DPI JPEG"
-          >
-            {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileImage className="w-3.5 h-3.5" />}
-            <span>{isExporting ? "Exporting..." : "Save 600 DPI JPEG"}</span>
-          </button>
+          <div className="flex items-center bg-amber-500/20 p-0.5 rounded-xl border border-amber-300/35 shrink-0">
+            <select
+              value={exportDpi}
+              onChange={(e) => setExportDpi(Number(e.target.value) as 600 | 800)}
+              disabled={isExporting}
+              aria-label="HD Interpolation Export DPI"
+              className="bg-slate-950/70 text-amber-200 font-black text-[11px] px-1.5 py-1 rounded-lg border border-white/15 focus:outline-none cursor-pointer mr-1"
+              title="Select HD Export Resolution"
+            >
+              <option value={600}>600 DPI</option>
+              <option value={800}>800 DPI</option>
+            </select>
+            <button
+              onClick={handleExportJpeg}
+              disabled={isExporting}
+              className="px-2.5 py-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-lg shadow-md flex items-center gap-1 cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0"
+              title={`Save HD Map as ${exportDpi} DPI JPEG`}
+            >
+              {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileImage className="w-3.5 h-3.5" />}
+              <span>{isExporting ? "Exporting..." : "HD JPEG"}</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1140,15 +1140,15 @@ export default function KpiSpatialSupplementMap({
             </div>
           )}
 
-          {mapMode === "idw-contour" ? (
+          {mapMode === "idw-interpolation" ? (
             <>
-              <div className="flex items-center gap-0.5 font-bold text-slate-700">
+              <div className="flex items-center gap-0.5 font-bold text-slate-700" title="IDW Distance Decay Power">
                 <SlidersHorizontal className="w-3 h-3 text-indigo-600 mr-0.5" />
                 {[1.5, 2, 2.5, 3].map((p) => (
                   <button
                     key={p}
                     onClick={() => setIdwPower(p)}
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold cursor-pointer border ${
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold cursor-pointer border whitespace-nowrap shrink-0 ${
                       idwPower === p
                         ? "bg-indigo-600 text-white border-indigo-700"
                         : "bg-white text-slate-700 border-slate-300"
@@ -1158,25 +1158,39 @@ export default function KpiSpatialSupplementMap({
                   </button>
                 ))}
               </div>
+              <div className="flex items-center gap-0.5" title="HD Interpolation Grid Quality">
+                {(
+                  [
+                    { res: 320, label: "Fast" },
+                    { res: 480, label: "HD" },
+                    { res: 640, label: "UHD" },
+                  ] as const
+                ).map((tier) => (
+                  <button
+                    key={tier.res}
+                    onClick={() => setHdResolution(tier.res)}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold cursor-pointer border whitespace-nowrap shrink-0 ${
+                      hdResolution === tier.res
+                        ? "bg-slate-900 text-amber-300 border-slate-950"
+                        : "bg-white text-slate-700 border-slate-300"
+                    }`}
+                  >
+                    {tier.label}
+                  </button>
+                ))}
+              </div>
               <button
                 onClick={() => setSmoothBlend(!smoothBlend)}
-                className={`px-2 py-0.5 rounded text-[10px] font-extrabold cursor-pointer border ${
+                className={`px-2 py-0.5 rounded text-[10px] font-extrabold cursor-pointer border whitespace-nowrap shrink-0 ${
                   smoothBlend ? "bg-cyan-600 text-white border-cyan-700" : "bg-white text-slate-700 border-slate-300"
                 }`}
+                title="Toggle Smooth HD Gradient vs BIS Classified Zones"
               >
-                {smoothBlend ? "Smooth" : "GIS Classes"}
-              </button>
-              <button
-                onClick={() => setShowIsoContours(!showIsoContours)}
-                className={`px-2 py-0.5 rounded text-[10px] font-extrabold cursor-pointer border ${
-                  showIsoContours ? "bg-slate-800 text-amber-300 border-slate-900" : "bg-white text-slate-700 border-slate-300"
-                }`}
-              >
-                Contours
+                {smoothBlend ? "HD Smooth" : "BIS Zones"}
               </button>
               <button
                 onClick={() => setShowStationOverlayOnIdw(!showStationOverlayOnIdw)}
-                className={`px-2 py-0.5 rounded text-[10px] font-extrabold cursor-pointer border flex items-center gap-1 ${
+                className={`px-2 py-0.5 rounded text-[10px] font-extrabold cursor-pointer border flex items-center gap-1 whitespace-nowrap shrink-0 ${
                   showStationOverlayOnIdw ? "bg-emerald-600 text-white border-emerald-700" : "bg-white text-slate-700 border-slate-300"
                 }`}
               >
@@ -1316,11 +1330,11 @@ export default function KpiSpatialSupplementMap({
               </div>
             ) : (
               <div className="space-y-0.5">
-                <div className="font-extrabold text-cyan-300">IDW Interpolated EC</div>
-                <div className="font-black text-white text-sm">
-                  {hoverInfo.interpVal !== undefined ? `${hoverInfo.interpVal.toFixed(1)} µS/cm` : "—"}
+                <div className="font-extrabold text-cyan-300">HD Interpolated {activeParam}</div>
+                <div className="font-black text-white text-sm tabular-nums">
+                  {hoverInfo.interpVal !== undefined ? `${hoverInfo.interpVal.toFixed(1)}${unitSuffix}` : "—"}
                 </div>
-                <div className="text-[10px] text-slate-400">
+                <div className="text-[10px] text-slate-400 tabular-nums">
                   {hoverInfo.lat.toFixed(3)}°N, {hoverInfo.lng.toFixed(3)}°E
                 </div>
               </div>
@@ -1329,22 +1343,22 @@ export default function KpiSpatialSupplementMap({
         )}
       </div>
 
-      {/* PUBLICATION LEGEND & SELECTED STATION POINT INSPECTOR (NO HOTSPOTS) */}
+      {/* PUBLICATION LEGEND & SELECTED STATION POINT INSPECTOR (NO CONTOURS) */}
       <div className="bg-white rounded-2xl border border-slate-200 p-3 shadow-xs space-y-2.5">
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs font-black text-slate-800 uppercase tracking-wider">
-            {mapMode === "idw-contour"
-              ? "EC Contour Legend (Geospatial Module Defaults)"
+            {mapMode === "idw-interpolation"
+              ? `HD Interpolation Legend (${activeParam})`
               : `BIS IS 10500:2012 Point Legend (${activeParam})`}
           </span>
-          <span className="text-[11px] font-bold text-slate-500">
+          <span className="text-[11px] font-bold text-slate-500 tabular-nums">
             {spatialSummary.total} Mapped Stations{nonGeocodedCount > 0 ? ` (${nonGeocodedCount} w/o coords)` : ""}
           </span>
         </div>
 
-        {mapMode === "idw-contour" ? (
+        {mapMode === "idw-interpolation" ? (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center text-xs font-bold">
-            {spatialSummary.ecZoneCounts.map((z) => (
+            {spatialSummary.interpZoneCounts.map((z) => (
               <div key={z.label} className="bg-white border border-slate-300 rounded-xl p-2 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <span
@@ -1353,7 +1367,7 @@ export default function KpiSpatialSupplementMap({
                   />
                   <span className="font-extrabold text-slate-800 text-[11px] truncate">{z.label}</span>
                 </div>
-                <span className="text-[11px] font-black text-slate-700 shrink-0">{z.count} pts</span>
+                <span className="text-[11px] font-black text-slate-700 shrink-0 tabular-nums">{z.count} pts</span>
               </div>
             ))}
           </div>

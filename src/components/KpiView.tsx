@@ -37,7 +37,8 @@ import {
   Palette,
   Upload,
   Percent,
-  Mountain
+  Mountain,
+  Focus
 } from "lucide-react";
 import {
   BarChart,
@@ -53,6 +54,13 @@ import {
 } from "recharts";
 import KpiChoroplethMap, { BaseMapType } from "./KpiChoroplethMap";
 import KpiSpatialSupplementMap from "./KpiSpatialSupplementMap";
+import {
+  GUI_THEMES,
+  GUI_THEME_LIST,
+  GuiThemeId,
+  GuiThemeConfig,
+  normalizeGuiThemeId,
+} from "../utils/guiThemes";
 
 interface KpiViewProps {
   rawData: any[];
@@ -69,6 +77,8 @@ interface KpiViewProps {
   choroplethClasses?: { limit: number; color: string; label: string }[];
   setChoroplethClasses?: React.Dispatch<React.SetStateAction<{ limit: number; color: string; label: string }[]>>;
   showToast?: (message: string, type?: "success" | "error") => void;
+  externalThemeId?: GuiThemeId;
+  onExternalThemeChange?: (themeId: GuiThemeId) => void;
 }
 
 interface Donut3DProps {
@@ -268,94 +278,9 @@ const Compliance3DDonutChart: React.FC<Donut3DProps> = ({
   );
 };
 
-export type KpiThemeId =
-  | "royal-indigo"
-  | "emerald-biosphere"
-  | "obsidian-dark"
-  | "crimson-amber"
-  | "amethyst-purple"
-  | "titanium-slate";
-
-export interface KpiThemeConfig {
-  id: KpiThemeId;
-  name: string;
-  badge: string;
-  containerBg: string;
-  headerBanner: string;
-  headerAccentLine: string;
-  cardHeader: string;
-  footerBanner: string;
-  mapWrapperBg: string;
-}
-
-export const KPI_THEMES: Record<KpiThemeId, KpiThemeConfig> = {
-  "royal-indigo": {
-    id: "royal-indigo",
-    name: "Royal Indigo",
-    badge: "bg-indigo-600 text-white",
-    containerBg: "bg-slate-50/50",
-    headerBanner: "bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 border-indigo-800/80 shadow-[0_12px_30px_rgba(15,23,42,0.35),inset_0_1.5px_0_rgba(255,255,255,0.3)]",
-    headerAccentLine: "from-cyan-400 via-sky-300 to-indigo-400",
-    cardHeader: "bg-gradient-to-r from-[#1a2356] via-[#28357a] to-[#1a2356]",
-    footerBanner: "bg-gradient-to-r from-[#141b3d] via-[#1e295d] to-[#141b3d] border-indigo-900/80",
-    mapWrapperBg: "bg-gradient-to-b from-amber-50/50 via-amber-50/20 to-white border-amber-200/90 shadow-[0_16px_36px_-6px_rgba(217,119,6,0.18),inset_0_2px_1px_0_rgba(255,255,255,0.95)]"
-  },
-  "emerald-biosphere": {
-    id: "emerald-biosphere",
-    name: "Emerald Biosphere",
-    badge: "bg-emerald-600 text-white",
-    containerBg: "bg-emerald-50/30",
-    headerBanner: "bg-gradient-to-r from-slate-950 via-emerald-950 to-teal-950 border-emerald-800/80 shadow-[0_12px_30px_rgba(6,78,59,0.35),inset_0_1.5px_0_rgba(255,255,255,0.3)]",
-    headerAccentLine: "from-emerald-400 via-teal-300 to-emerald-400",
-    cardHeader: "bg-gradient-to-r from-[#064e3b] via-[#047857] to-[#064e3b]",
-    footerBanner: "bg-gradient-to-r from-[#022c22] via-[#064e3b] to-[#022c22] border-emerald-900/80",
-    mapWrapperBg: "bg-gradient-to-b from-emerald-50/50 via-teal-50/20 to-white border-emerald-200/90 shadow-[0_16px_36px_-6px_rgba(5,150,105,0.18),inset_0_2px_1px_0_rgba(255,255,255,0.95)]"
-  },
-  "obsidian-dark": {
-    id: "obsidian-dark",
-    name: "Obsidian Midnight",
-    badge: "bg-cyan-600 text-white",
-    containerBg: "bg-slate-950 text-slate-100",
-    headerBanner: "bg-gradient-to-r from-black via-slate-950 to-zinc-950 border-slate-700/80 shadow-[0_12px_30px_rgba(0,0,0,0.8),inset_0_1.5px_0_rgba(255,255,255,0.2)]",
-    headerAccentLine: "from-cyan-400 via-indigo-400 to-fuchsia-400",
-    cardHeader: "bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border border-slate-700",
-    footerBanner: "bg-gradient-to-r from-black via-slate-900 to-black border-slate-800",
-    mapWrapperBg: "bg-gradient-to-b from-slate-900/80 via-slate-950 to-slate-900 border-slate-800 shadow-[0_16px_36px_-6px_rgba(0,0,0,0.6),inset_0_2px_1px_0_rgba(255,255,255,0.1)]"
-  },
-  "crimson-amber": {
-    id: "crimson-amber",
-    name: "Sunset Amber",
-    badge: "bg-amber-600 text-white",
-    containerBg: "bg-amber-50/30",
-    headerBanner: "bg-gradient-to-r from-slate-950 via-rose-950 to-amber-950 border-rose-800/80 shadow-[0_12px_30px_rgba(136,19,55,0.35),inset_0_1.5px_0_rgba(255,255,255,0.3)]",
-    headerAccentLine: "from-amber-400 via-rose-400 to-yellow-300",
-    cardHeader: "bg-gradient-to-r from-[#881337] via-[#9f1239] to-[#881337]",
-    footerBanner: "bg-gradient-to-r from-[#4c0519] via-[#881337] to-[#4c0519] border-rose-900/80",
-    mapWrapperBg: "bg-gradient-to-b from-amber-50/60 via-rose-50/20 to-white border-rose-200/90 shadow-[0_16px_36px_-6px_rgba(225,29,72,0.18),inset_0_2px_1px_0_rgba(255,255,255,0.95)]"
-  },
-  "amethyst-purple": {
-    id: "amethyst-purple",
-    name: "Amethyst Violet",
-    badge: "bg-purple-600 text-white",
-    containerBg: "bg-purple-50/30",
-    headerBanner: "bg-gradient-to-r from-slate-950 via-purple-950 to-indigo-950 border-purple-800/80 shadow-[0_12px_30px_rgba(88,28,135,0.35),inset_0_1.5px_0_rgba(255,255,255,0.3)]",
-    headerAccentLine: "from-purple-400 via-fuchsia-300 to-pink-400",
-    cardHeader: "bg-gradient-to-r from-[#581c87] via-[#6b21a8] to-[#581c87]",
-    footerBanner: "bg-gradient-to-r from-[#3b0764] via-[#581c87] to-[#3b0764] border-purple-900/80",
-    mapWrapperBg: "bg-gradient-to-b from-purple-50/50 via-fuchsia-50/20 to-white border-purple-200/90 shadow-[0_16px_36px_-6px_rgba(147,51,234,0.18),inset_0_2px_1px_0_rgba(255,255,255,0.95)]"
-  },
-  "titanium-slate": {
-    id: "titanium-slate",
-    name: "Titanium Slate",
-    badge: "bg-slate-700 text-white",
-    containerBg: "bg-slate-100/60",
-    headerBanner: "bg-gradient-to-r from-slate-800 via-slate-900 to-zinc-800 border-slate-700/80 shadow-[0_12px_30px_rgba(15,23,42,0.25),inset_0_1.5px_0_rgba(255,255,255,0.2)]",
-    headerAccentLine: "from-slate-300 via-zinc-200 to-slate-400",
-    cardHeader: "bg-gradient-to-r from-[#1e293b] via-[#334155] to-[#1e293b]",
-    footerBanner: "bg-gradient-to-r from-[#0f172a] via-[#1e293b] to-[#0f172a] border-slate-800",
-    mapWrapperBg: "bg-gradient-to-b from-slate-50 via-white to-slate-50 border-slate-300 shadow-[0_16px_36px_-6px_rgba(15,23,42,0.12),inset_0_2px_1px_0_rgba(255,255,255,0.95)]"
-  }
-};
+export type KpiThemeId = GuiThemeId;
+export type KpiThemeConfig = GuiThemeConfig;
+export const KPI_THEMES = GUI_THEMES;
 
 export default function KpiView({
   rawData,
@@ -371,7 +296,9 @@ export default function KpiView({
   setSharedLayers,
   choroplethClasses,
   setChoroplethClasses,
-  showToast
+  showToast,
+  externalThemeId,
+  onExternalThemeChange,
 }: KpiViewProps) {
   // 1. Available Mapped Parameters List (excluding non-BIS parameters)
   const availableParams = useMemo(() => {
@@ -391,22 +318,21 @@ export default function KpiView({
     return "EC";
   });
 
-  // KPI GUI Theme State (Stored in localStorage)
-  const [kpiTheme, setKpiTheme] = useState<KpiThemeId>(() => {
-    const saved = localStorage.getItem("kpi_gui_theme");
-    if (saved && KPI_THEMES[saved as KpiThemeId]) {
-      return saved as KpiThemeId;
-    }
-    return "royal-indigo";
-  });
+  // KPI GUI Theme State (Synced with App-Wide GUI Theme Studio & localStorage)
+  const [localKpiTheme, setLocalKpiTheme] = useState<GuiThemeId>(() =>
+    normalizeGuiThemeId(localStorage.getItem("kpi_gui_theme"), "royal-indigo")
+  );
 
-  const activeTheme = KPI_THEMES[kpiTheme] || KPI_THEMES["royal-indigo"];
+  const effectiveThemeId: GuiThemeId = externalThemeId || localKpiTheme;
+  const activeTheme = GUI_THEMES[effectiveThemeId] || GUI_THEMES["royal-indigo"];
 
-  const handleThemeChange = (themeId: KpiThemeId) => {
-    setKpiTheme(themeId);
+  const handleThemeChange = (themeId: GuiThemeId) => {
+    setLocalKpiTheme(themeId);
     localStorage.setItem("kpi_gui_theme", themeId);
-    if (showToast) {
-      showToast(`KPI Theme switched to ${KPI_THEMES[themeId].name}`, "success");
+    if (onExternalThemeChange) {
+      onExternalThemeChange(themeId);
+    } else if (showToast) {
+      showToast(`KPI Theme switched to ${GUI_THEMES[themeId].name}`, "success");
     }
   };
 
@@ -416,6 +342,7 @@ export default function KpiView({
   const [showExceedancePct, setShowExceedancePct] = useState<boolean>(true);
   const [baseMapType, setBaseMapType] = useState<BaseMapType>("vector");
   const [isRangeModalOpen, setIsRangeModalOpen] = useState<boolean>(false);
+  const [fitBoundaryTrigger, setFitBoundaryTrigger] = useState<number>(0);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   // JPEG Download Ref & Handler (600–800 DPI)
@@ -814,17 +741,16 @@ export default function KpiView({
           <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-300/80 shadow-2xs">
             <Palette className="w-3.5 h-3.5 text-slate-700 ml-1" />
             <select
-              value={kpiTheme}
-              onChange={(e) => handleThemeChange(e.target.value as KpiThemeId)}
+              value={effectiveThemeId}
+              onChange={(e) => handleThemeChange(e.target.value as GuiThemeId)}
               className="bg-white text-slate-900 font-extrabold text-xs px-2.5 py-1 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-xs"
               title="Change KPI GUI Theme"
             >
-              <option value="royal-indigo">Royal Indigo (Default)</option>
-              <option value="emerald-biosphere">Emerald Biosphere</option>
-              <option value="obsidian-dark">Obsidian Midnight</option>
-              <option value="crimson-amber">Sunset Amber</option>
-              <option value="amethyst-purple">Amethyst Violet</option>
-              <option value="titanium-slate">Titanium Slate</option>
+              {GUI_THEME_LIST.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -869,6 +795,28 @@ export default function KpiView({
           >
             <Palette className="w-3.5 h-3.5" />
             <span>Range Colors</span>
+          </button>
+
+          {/* AUTO-ZOOM TO SELECTED STATE OR DISTRICT BOUNDARY BUTTON */}
+          <button
+            onClick={() => setFitBoundaryTrigger((prev) => prev + 1)}
+            className="bg-sky-600 hover:bg-sky-700 text-white font-extrabold text-xs px-3 py-1.5 rounded-xl border border-sky-700 flex items-center gap-1.5 shadow-xs transition-all cursor-pointer whitespace-nowrap shrink-0"
+            title={
+              isDistrictSelected
+                ? `Auto-zoom map to perfectly frame ${toProperCase(selectedDistrict)} District boundary`
+                : isStateSelected
+                ? `Auto-zoom map to perfectly frame ${toProperCase(selectedState)} boundary`
+                : "Auto-zoom map to perfectly frame India boundary"
+            }
+          >
+            <Focus className="w-3.5 h-3.5" />
+            <span>
+              {isDistrictSelected
+                ? `Zoom to ${toProperCase(selectedDistrict)}`
+                : isStateSelected
+                ? `Zoom to ${toProperCase(selectedState)}`
+                : "Fit Boundary"}
+            </span>
           </button>
 
           {/* BASE MAP SELECTION PILL SELECTOR */}
@@ -1343,9 +1291,9 @@ export default function KpiView({
         </div>
       </div>
 
-      {/* SIDE-BY-SIDE PUBLICATION MAPS ROW: CHOROPLETH MAP (LEFT) + IDW CONTOUR / EXCEEDANCE POINT MAP (RIGHT) */}
+      {/* SIDE-BY-SIDE PUBLICATION MAPS ROW: CHOROPLETH MAP (LEFT) + HD INTERPOLATION / EXCEEDANCE POINT MAP (RIGHT) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch transition-all">
-        <div className="bg-white rounded-2xl p-2 border border-slate-300/90 shadow-sm flex flex-col">
+        <div className={`rounded-2xl p-2 border shadow-sm flex flex-col ${activeTheme.mapWrapperBg}`}>
           <KpiChoroplethMap
             rawData={rawData}
             setRawData={setRawData}
@@ -1370,10 +1318,11 @@ export default function KpiView({
             isRangeModalOpen={isRangeModalOpen}
             setIsRangeModalOpen={setIsRangeModalOpen}
             externalFileInputRef={fileInputRef}
+            fitBoundaryTrigger={fitBoundaryTrigger}
           />
         </div>
 
-        <div className="bg-white rounded-2xl p-2 border border-slate-300/90 shadow-sm flex flex-col">
+        <div className={`rounded-2xl p-2 border shadow-sm flex flex-col ${activeTheme.mapWrapperBg}`}>
           <KpiSpatialSupplementMap
             rawData={rawData}
             headers={headers}
@@ -1388,6 +1337,8 @@ export default function KpiView({
             baseMapType={baseMapType}
             setBaseMapType={setBaseMapType}
             showToast={showToast}
+            fitBoundaryTrigger={fitBoundaryTrigger}
+            themeHeaderClass={activeTheme.cardHeader}
           />
         </div>
       </div>

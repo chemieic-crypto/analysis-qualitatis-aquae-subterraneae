@@ -154,26 +154,32 @@ export function createGeoTiffBlob(
   const numPixels = width * height;
   const pixelDataOffset = 8;
   const pixelDataSize = numPixels * 3;
+  // Pad to 4-byte boundary before double/rational arrays
+  const alignedDataEnd = pixelDataOffset + pixelDataSize + ((4 - ((pixelDataOffset + pixelDataSize) % 4)) % 4);
 
-  const tiepointsOffset = pixelDataOffset + pixelDataSize;
+  const tiepointsOffset = alignedDataEnd;
   const tiepointsSize = 6 * 8;
 
   const pixelScaleOffset = tiepointsOffset + tiepointsSize;
   const pixelScaleSize = 3 * 8;
 
   const geoKeysOffset = pixelScaleOffset + pixelScaleSize;
+  // GeoTIFF 1.1 GeoKeyDirectoryTag: Header (v1.1.0, 4 keys) + 4 valid WGS84 EPSG:4326 keys
   const geoKeys = [
     1, 1, 0, 4,
-    1024, 0, 1, 2,
-    1025, 0, 1, 1,
-    2048, 0, 1, 4326
+    1024, 0, 1, 2,    // GTModelTypeGeoKey = ModelTypeGeographic
+    1025, 0, 1, 1,    // GTRasterTypeGeoKey = RasterPixelIsArea
+    2048, 0, 1, 4326, // GeographicTypeGeoKey = GCS_WGS_84
+    2054, 0, 1, 9102  // GeogAngularUnitsGeoKey = Angular_Degree
   ];
   const geoKeysSize = geoKeys.length * 2;
 
   const bitsPerSampleOffset = geoKeysOffset + geoKeysSize;
   const bitsPerSampleSize = 3 * 2;
+  const xResOffset = bitsPerSampleOffset + bitsPerSampleSize + 2; // 4-byte aligned
+  const yResOffset = xResOffset + 8;
 
-  const ifdOffset = bitsPerSampleOffset + bitsPerSampleSize;
+  const ifdOffset = yResOffset + 8;
 
   const totalSize = ifdOffset + 2 + (14 * 12) + 4;
   const buffer = new ArrayBuffer(totalSize);
@@ -212,6 +218,12 @@ export function createGeoTiffBlob(
   view.setUint16(bitsPerSampleOffset + 2, 8, true);
   view.setUint16(bitsPerSampleOffset + 4, 8, true);
 
+  // RATIONAL 96/1 DPI for XResolution and YResolution
+  view.setUint32(xResOffset, 96, true);
+  view.setUint32(xResOffset + 4, 1, true);
+  view.setUint32(yResOffset, 96, true);
+  view.setUint32(yResOffset + 4, 1, true);
+
   let curIfd = ifdOffset;
   const numEntries = 14;
   view.setUint16(curIfd, numEntries, true);
@@ -227,8 +239,8 @@ export function createGeoTiffBlob(
     { tag: 277, type: 3, count: 1, val: 3 },
     { tag: 278, type: 4, count: 1, val: height },
     { tag: 279, type: 4, count: 1, val: pixelDataSize },
-    { tag: 282, type: 5, count: 1, val: 0 },
-    { tag: 283, type: 5, count: 1, val: 0 },
+    { tag: 282, type: 5, count: 1, val: xResOffset },
+    { tag: 283, type: 5, count: 1, val: yResOffset },
     { tag: 33550, type: 12, count: 3, val: pixelScaleOffset },
     { tag: 33922, type: 12, count: 6, val: tiepointsOffset },
     { tag: 34735, type: 3, count: geoKeys.length, val: geoKeysOffset }
