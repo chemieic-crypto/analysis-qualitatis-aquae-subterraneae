@@ -33,6 +33,13 @@ function githubPagesPlugin(): Plugin {
           if (fs.existsSync(indexPath)) {
             fs.copyFileSync(indexPath, path.join(distDir, '404.html'));
           }
+
+          // 3. Ensure sql-wasm.wasm is present in dist/ for GeoPackage (.gpkg) support on GitHub Pages
+          const distWasm = path.join(distDir, 'sql-wasm.wasm');
+          const srcWasm = path.resolve(__dirname, 'node_modules/sql.js/dist/sql-wasm.wasm');
+          if (!fs.existsSync(distWasm) && fs.existsSync(srcWasm)) {
+            fs.copyFileSync(srcWasm, distWasm);
+          }
         }
       } catch (err) {
         console.error('Failed to write GitHub Pages deployment files:', err);
@@ -67,7 +74,13 @@ export default defineConfig(({ command }) => {
             ) {
               return 'vendor-sheets';
             }
-            if (id.includes('node_modules/leaflet') || id.includes('node_modules/@turf') || id.includes('node_modules/shpjs')) {
+            if (
+              id.includes('node_modules/leaflet') ||
+              id.includes('node_modules/@turf') ||
+              id.includes('node_modules/shpjs') ||
+              id.includes('node_modules/geotiff') ||
+              id.includes('node_modules/sql.js')
+            ) {
               return 'vendor-geo';
             }
             if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/lucide-react')) {
